@@ -15,11 +15,19 @@ on by hand, or how the thing was actually built.
 carries **no patches of its own**: to move it forward, push to the branch and
 update `_commit`, so the package and the branch cannot drift apart.
 
-That branch is the union of the topic branches — `fp3-7.0.9-audio` (the audio
-series), nine IMX363 commits, `fp3-7.0.9-charger` (PMI632) and
-`fp3-7.0.9-voice` (call audio over SLIMbus). Every topic branch starts from the
-same upstream base, so any one of them can be pointed at on its own: for audio
-without the rest, set `_commit` to a commit on `fp3-7.0.9-audio`.
+That branch is the union of four topic branches, each starting from the same
+upstream base so that any one of them can be pointed at on its own — set
+`_commit` to a commit on the branch you want:
+
+| branch | what it adds |
+|---|---|
+| `fp3-7.0.9-audio` | WCD9335 over SLIMbus: playback, and the four built-in digital microphones |
+| `fp3-7.0.9-camera` | the Sony IMX363 rear sensor |
+| `fp3-7.0.9-charger` | the PMI632 charger, via `qcom_smbx` |
+| `fp3-7.0.9-voice` | call audio, by routing the voice mixers over SLIMbus |
+
+The audio series is the one written for submission; the camera commits are
+still the working history and would need rewriting before they go anywhere.
 
 Deployed states are tagged, so a snapshot stays reachable while the branch moves
 on — e.g. `fp3-7.0.9-2026-07-24-camera+audio+charger` is what this package built
@@ -127,10 +135,9 @@ build warning; check that the symbols you rely on still exist.
 
 ## Related
 
-* <https://github.com/llg179/linux> — the kernel: `fp3-7.0.9-audio`,
-  `fp3-7.0.9-charger` and `fp3-7.0.9-voice` (the submittable topic series, each
-  on the same upstream base), `fp3-integration` (everything that runs on the
-  device), plus a tag per deployed snapshot
+* <https://github.com/llg179/linux> — the kernel: the four topic branches
+  above, each on the same upstream base, `fp3-integration` (everything that
+  runs on the device), plus a tag per deployed snapshot
 * <https://github.com/llg179/Claude-skills-Fairphone3> — the method: bring-up
   notes, ground-truth techniques, and the guard-railed test loop
 
