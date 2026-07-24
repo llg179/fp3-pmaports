@@ -1,0 +1,65 @@
+# Maintainer: Lajosházi, László Gergely <lajoshazilg@gmail.com>
+#
+# Test kernel for the Fairphone 3 on mainline: msm8953-mainline 7.0.9 plus the
+# WCD9335 SLIMbus audio and Sony IMX363 camera work.
+#
+# The sources are the fp3-audio-camera branch of the fork, pinned by commit, so
+# this package carries no patches of its own - update _commit to move it.
+_flavor="fp3-709"
+_commit="be471d0407d8eb71f4e4b535e4f6fdcce7e577dc"
+pkgname=linux-$_flavor
+pkgver=7.0.9
+pkgrel=0
+pkgdesc="msm8953-mainline for the Fairphone 3: WCD9335 SLIMbus audio + IMX363 camera"
+arch="aarch64"
+_carch="arm64"
+url="https://github.com/llg179/linux"
+license="GPL-2.0-only"
+options="!strip !check !tracedeps pmb:cross-native"
+makedepends="bash bison findutils flex openssl-dev perl postmarketos-installkernel python3"
+source="
+	$pkgname-$_commit.tar.gz::https://github.com/llg179/linux/archive/$_commit.tar.gz
+	config-$_flavor.aarch64
+"
+builddir="$srcdir/linux-$_commit"
+
+prepare() {
+	default_prepare
+	cp "$srcdir/config-$_flavor.$arch" .config
+	make ARCH="$_carch" CC="${CC:-gcc}" olddefconfig
+
+	# Everything this device needs that the inherited config does not enable.
+	# CONFIG_DRM_PANEL_HIMAX_HX83112B is the panel: it was renamed from
+	# CONFIG_DRM_PANEL_FAIRPHONE_FP3_HX83112B after 6.13, and with the stale
+	# name the driver silently is not built - the display then never comes up
+	# and the compositor loops on "Found 0 GPUs".
+	for c in CONFIG_SLIMBUS CONFIG_SLIM_QCOM_NGD_CTRL CONFIG_REGMAP_SLIMBUS \
+		 CONFIG_SND_SOC_WCD9335 CONFIG_SND_SOC_WCD_CLASSH CONFIG_QCOM_BAM_DMA \
+		 CONFIG_SND_SOC_AW8898 CONFIG_VIDEO_IMX363 \
+		 CONFIG_DRM_PANEL_HIMAX_HX83112B; do
+		./scripts/config --module "$c"
+	done
+	./scripts/config --enable MODULE_COMPRESS_NONE \
+		--disable MODULE_COMPRESS_ZSTD --disable MODULE_COMPRESS_XZ \
+		--disable MODULE_COMPRESS_GZIP
+	make ARCH="$_carch" CC="${CC:-gcc}" olddefconfig
+}
+
+build() {
+	unset LDFLAGS
+	make ARCH="$_carch" CC="${CC:-gcc}" KBUILD_BUILD_VERSION="$((pkgrel + 1 ))-$_flavor"
+}
+
+package() {
+	mkdir -p "$pkgdir"/boot
+	make zinstall modules_install dtbs_install \
+		ARCH="$_carch" INSTALL_PATH="$pkgdir"/boot INSTALL_MOD_PATH="$pkgdir" \
+		INSTALL_MOD_STRIP=1 INSTALL_DTBS_PATH="$pkgdir/boot/dtbs"
+	rm -f "$pkgdir"/lib/modules/*/build "$pkgdir"/lib/modules/*/source
+	install -Dm644 "$builddir/include/config/kernel.release" \
+		"$pkgdir/usr/share/kernel/$_flavor/kernel.release"
+}
+sha512sums="
+0155a929a07ae56aa733732329f090ff032d93867ac33e6bbbc43638cfeb2053f4f0ee9f2134e0868b4744ecef865a0b448c2e9f34a3a35eea8c328f9919186c  $pkgname-$_commit.tar.gz
+e9eae2ad4cce5440863bc842c7b711d986e4e560563d59fbc30069d46f3291f52b5238d9699fd6acfb95a7f3fa124fcebdf4347aaf04e895a4ac8a861034feca  config-$_flavor.aarch64
+"
