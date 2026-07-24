@@ -6,11 +6,11 @@
 # The sources are the fp3-integration branch of the fork, pinned by commit, so
 # this package carries no patches of its own - update _commit to move it.
 _flavor="fp3-709"
-_commit="be471d0407d8eb71f4e4b535e4f6fdcce7e577dc"
+_commit="5d86587443fb9928d0991eba90692b513973519f"
 pkgname=linux-$_flavor
 pkgver=7.0.9
-pkgrel=0
-pkgdesc="msm8953-mainline for the Fairphone 3: WCD9335 SLIMbus audio + IMX363 camera"
+pkgrel=2
+pkgdesc="msm8953-mainline for the Fairphone 3: WCD9335 audio, IMX363 camera, PMI632 charger"
 arch="aarch64"
 _carch="arm64"
 url="https://github.com/llg179/linux"
@@ -36,7 +36,7 @@ prepare() {
 	for c in CONFIG_SLIMBUS CONFIG_SLIM_QCOM_NGD_CTRL CONFIG_REGMAP_SLIMBUS \
 		 CONFIG_SND_SOC_WCD9335 CONFIG_SND_SOC_WCD_CLASSH CONFIG_QCOM_BAM_DMA \
 		 CONFIG_SND_SOC_AW8898 CONFIG_VIDEO_IMX363 \
-		 CONFIG_DRM_PANEL_HIMAX_HX83112B; do
+		 CONFIG_DRM_PANEL_HIMAX_HX83112B CONFIG_CHARGER_QCOM_SMB2; do
 		./scripts/config --module "$c"
 	done
 	./scripts/config --enable MODULE_COMPRESS_NONE \
@@ -60,6 +60,6 @@ package() {
 		"$pkgdir/usr/share/kernel/$_flavor/kernel.release"
 }
 sha512sums="
-0155a929a07ae56aa733732329f090ff032d93867ac33e6bbbc43638cfeb2053f4f0ee9f2134e0868b4744ecef865a0b448c2e9f34a3a35eea8c328f9919186c  $pkgname-$_commit.tar.gz
+8622cff24c399cd3f465b15d7769000c722deee5e85021d98a8b9ab99dd0e0a8f2012ea2cd3e9d8efc851ac16435987e7dccb41d84d47059f5474d72b359869e  $pkgname-$_commit.tar.gz
 e9eae2ad4cce5440863bc842c7b711d986e4e560563d59fbc30069d46f3291f52b5238d9699fd6acfb95a7f3fa124fcebdf4347aaf04e895a4ac8a861034feca  config-$_flavor.aarch64
 "

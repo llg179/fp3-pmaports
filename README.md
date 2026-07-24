@@ -1,7 +1,8 @@
 # fp3-pmaports
 
 The postmarketOS package that builds the Fairphone 3 test kernel — mainline
-`msm8953` with the WCD9335 SLIMbus audio work and the Sony IMX363 rear camera.
+`msm8953` with the WCD9335 SLIMbus audio work, the Sony IMX363 rear camera and
+the PMI632 charger.
 
 Without this, the [kernel branches](https://github.com/llg179/linux) are only
 source: nothing records which config was used, which symbols had to be turned
@@ -14,12 +15,15 @@ on by hand, or how the thing was actually built.
 carries **no patches of its own**: to move it forward, push to the branch and
 update `_commit`, so the package and the branch cannot drift apart.
 
-That branch is `fp3-7.0.9-audio` (the audio series) plus nine IMX363 commits. If
-you want audio without the camera, point `_commit` at `fp3-7.0.9-audio` instead.
+That branch is the union of the topic branches — `fp3-7.0.9-audio` (the audio
+series), nine IMX363 commits, `fp3-7.0.9-charger` (PMI632) and
+`fp3-7.0.9-voice` (call audio over SLIMbus). Every topic branch starts from the
+same upstream base, so any one of them can be pointed at on its own: for audio
+without the rest, set `_commit` to a commit on `fp3-7.0.9-audio`.
 
 Deployed states are tagged, so a snapshot stays reachable while the branch moves
-on — e.g. `fp3-7.0.9-2026-07-24-camera+audio` is what this package built and what
-was verified on the device that day.
+on — e.g. `fp3-7.0.9-2026-07-24-camera+audio+charger` is what this package built
+and what was verified on the device that day.
 
 ## Building
 
@@ -32,15 +36,63 @@ pmbootstrap build linux-fp3-709
 ```
 
 The source tarball is ~250 MB straight from GitHub, so the first fetch takes a
-minute or two. A warm ccache rebuild is around four minutes.
+minute or two. A warm ccache rebuild is around four minutes; a new `_commit`
+means a new source directory and therefore a cold ccache, which is 20–35.
 
-Deploying: for a driver-only change, copy the `.ko` out of the built apk and
-`depmod -a`; for a device-tree change, copy `boot/dtbs/qcom/sdm632-fairphone-fp3.dtb`
-to `/boot` — extlinux loads the fdt separately, so no kernel flash is needed.
+⚠️ **Push the branch before you bump `_commit`.** The package fetches the
+tarball from GitHub, so a commit that only exists locally gives a 404 during
+`pmbootstrap checksum`. If you skip the checksum step, the build fails one step
+later with the far less helpful
+
+```
+ERROR: linux-fp3-709-<sha>.tar.gz is missing in checksums
+```
+
+which points at the checksums rather than at the missing push.
+
+## Deploying
+
+The built package lands in `~/.local/var/pmbootstrap/packages/edge/aarch64/`
+(`$PMB_WORK/packages/...` if you moved the work dir). An apk is a gzipped tar,
+so unpack it and take the pieces you need:
+
+```sh
+APK=~/.local/var/pmbootstrap/packages/edge/aarch64/linux-fp3-709-7.0.9-r2.apk
+mkdir -p /tmp/apk && tar xzf "$APK" -C /tmp/apk
+
+tar tzf "$APK" | grep q6voice-dai        # check the module is actually in there
+```
+
+**Device tree only** — extlinux loads the fdt separately, so no kernel flash and
+no module rebuild is needed. Roughly a two-minute round trip:
+
+```sh
+scp /tmp/apk/boot/dtbs/qcom/sdm632-fairphone-fp3.dtb fp3@$FP3_DEV_IP:/tmp/
+ssh fp3@$FP3_DEV_IP 'sudo cp /tmp/sdm632-fairphone-fp3.dtb /boot/ && sudo sync && sudo reboot'
+```
+
+**A driver change** — copy the module in beside the others and refresh the
+dependency list:
+
+```sh
+KREL=$(ssh fp3@$FP3_DEV_IP uname -r)
+scp /tmp/apk/lib/modules/$KREL/kernel/sound/soc/qcom/qdsp6/q6voice-dai.ko \
+    fp3@$FP3_DEV_IP:/tmp/
+ssh fp3@$FP3_DEV_IP "sudo cp /tmp/q6voice-dai.ko \
+    /lib/modules/$KREL/kernel/sound/soc/qcom/qdsp6/ && sudo depmod -a && sudo reboot"
+```
+
+A full kernel change (vmlinuz, or a config change) means installing the whole
+apk and reflashing boot — `pmbootstrap install` / `pmbootstrap flasher`.
 
 ⚠️ Take the DTB from the **built package**, not from your source tree — a stale
 locally-built DTB is an easy way to spend an hour debugging a device tree that
-was never deployed.
+was never deployed. The symptom is silent: the driver loads, the node it needs
+simply is not there.
+
+⚠️ The slot_b rootfs is 2.4 GB and normally sits around 93% full. At 100% the
+graphical session does not come up at all, which looks like a kernel
+regression and is not one — check `df -h /` before blaming the build.
 
 ## The config
 
@@ -55,6 +107,7 @@ forward to 7.0.9. `prepare()` then turns on what that config misses:
 | `CONFIG_SND_SOC_AW8898` | speaker amplifier |
 | `CONFIG_VIDEO_IMX363` | rear camera sensor |
 | `CONFIG_DRM_PANEL_HIMAX_HX83112B` | the display panel |
+| `CONFIG_CHARGER_QCOM_SMB2` | the PMI632 charger |
 
 ### The panel symbol is a trap worth knowing about
 
@@ -74,8 +127,9 @@ build warning; check that the symbols you rely on still exist.
 
 ## Related
 
-* <https://github.com/llg179/linux> — the kernel: `fp3-7.0.9-audio` (the
-  submittable audio series), `fp3-integration` (everything that runs on the
+* <https://github.com/llg179/linux> — the kernel: `fp3-7.0.9-audio`,
+  `fp3-7.0.9-charger` and `fp3-7.0.9-voice` (the submittable topic series, each
+  on the same upstream base), `fp3-integration` (everything that runs on the
   device), plus a tag per deployed snapshot
 * <https://github.com/llg179/Claude-skills-Fairphone3> — the method: bring-up
   notes, ground-truth techniques, and the guard-railed test loop
