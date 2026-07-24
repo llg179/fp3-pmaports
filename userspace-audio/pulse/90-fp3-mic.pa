@@ -1,0 +1,9 @@
+#!/usr/bin/pulseaudio -nF
+#
+# The FP3 codec capture PCM (MultiMedia2, hw:N,1) cannot be wrapped by
+# pulseaudio's UCM layer on this card, so it is exposed as a plain source.
+# The capture routing (handset DMIC0 -> DEC0 -> SLIMBUS_0_TX) is set by the
+# HiFi UCM verb's EnableSequence when the card profile activates.
+.nofail
+load-module module-alsa-source device=hw:0,1 source_name=fp3-handset-mic source_properties=device.description="Handset\ Microphone" rate=48000 channels=1 tsched=no
+.fail
