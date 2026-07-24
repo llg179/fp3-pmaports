@@ -3,7 +3,7 @@
 # Test kernel for the Fairphone 3 on mainline: msm8953-mainline 7.0.9 plus the
 # WCD9335 SLIMbus audio and Sony IMX363 camera work.
 #
-# The sources are the fp3-audio-camera branch of the fork, pinned by commit, so
+# The sources are the fp3-integration branch of the fork, pinned by commit, so
 # this package carries no patches of its own - update _commit to move it.
 _flavor="fp3-709"
 _commit="be471d0407d8eb71f4e4b535e4f6fdcce7e577dc"

@@ -10,12 +10,16 @@ on by hand, or how the thing was actually built.
 ## What it builds
 
 `linux-fp3-709` — kernel 7.0.9, sources pinned to a commit on the
-`fp3-audio-camera` branch of <https://github.com/llg179/linux>. The package
+`fp3-integration` branch of <https://github.com/llg179/linux>. The package
 carries **no patches of its own**: to move it forward, push to the branch and
 update `_commit`, so the package and the branch cannot drift apart.
 
-That branch is `fp3-709` (audio) plus nine IMX363 commits. If you want audio
-without the camera, point `_commit` at `fp3-709` instead.
+That branch is `fp3-7.0.9-audio` (the audio series) plus nine IMX363 commits. If
+you want audio without the camera, point `_commit` at `fp3-7.0.9-audio` instead.
+
+Deployed states are tagged, so a snapshot stays reachable while the branch moves
+on — e.g. `fp3-7.0.9-2026-07-24-camera+audio` is what this package built and what
+was verified on the device that day.
 
 ## Building
 
@@ -70,8 +74,9 @@ build warning; check that the symbols you rely on still exist.
 
 ## Related
 
-* <https://github.com/llg179/linux> — the kernel branches (`fp3-709`,
-  `fp3-audio-camera`)
+* <https://github.com/llg179/linux> — the kernel: `fp3-7.0.9-audio` (the
+  submittable audio series), `fp3-integration` (everything that runs on the
+  device), plus a tag per deployed snapshot
 * <https://github.com/llg179/Claude-skills-Fairphone3> — the method: bring-up
   notes, ground-truth techniques, and the guard-railed test loop
 
