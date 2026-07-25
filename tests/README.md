@@ -106,6 +106,14 @@ the audio block together, suspend last.
 - **`hwtest` needs root**, and its reference cannot live in `/tmp`:
   `fs.protected_regular` stops root writing over another user's file in a sticky
   directory. Installing it also pulls 13 packages and regenerates `/boot`.
+- **Any `apk` operation can silently replace your device tree.** Installing an
+  unrelated package fires the postmarketos-mkinitfs trigger, which reinstalls
+  `/boot/<board>.dtb` **from the kernel package** over a hand-deployed one.
+  Installing `hwtest` cost the camera exactly this way on 2026-07-25: the
+  installed package predated the camera DT work, the sensor node disappeared,
+  and the driver then never probed — with *no* dmesg lines to find, because
+  there was nothing to bind to. `40-camera` now tells this apart from a probe
+  failure by checking the live device tree first.
 - **The sudo prompt has no trailing newline**, so it prepends itself to the
   first line of output. Send it to `/dev/null`; filtering it with `grep` deletes
   that line *including* your own first line of output.

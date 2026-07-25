@@ -31,6 +31,8 @@ ACOUSTIC=0
 DEVICE_DIR="/tmp/fp3-selftest"
 RESULT_DIR="/var/log/fp3-selftest"
 OFFLINE=0
+ALLOW_DRIFT=0
+DRIFTED=0
 PREFLIGHT_APK=""
 ONLY=""
 SKIP=""
@@ -70,6 +72,9 @@ Coverage:
                        permit an overall PASS while this fp3-integration
                        category has no check result
   --offline            skip the topic-branch/CATEGORIES cross-check
+  --allow-drift        run even though the versioned recipe and the build
+                       working copy disagree - use while a build is in flight.
+                       The drift is still reported and the run cannot pass.
 
 Paths:
   --pmaports DIR       build working directory (default /mnt/1TB/pmos/pmaports)
@@ -101,6 +106,7 @@ while [ $# -gt 0 ]; do
 	--skip) SKIP=$2; shift 2 ;;
 	--allow-uncovered) ALLOW_UNCOVERED="$ALLOW_UNCOVERED $2"; shift 2 ;;
 	--offline) OFFLINE=1; shift ;;
+	--allow-drift) ALLOW_DRIFT=1; shift ;;
 	--pmaports) PMAPORTS=$2; shift 2 ;;
 	--apkbuild) APKBUILD=$2; shift 2 ;;
 	--kernel-pkg) KERNEL_PKG=$2; shift 2 ;;
@@ -332,7 +338,19 @@ main() {
 	log_line "-- recipe drift"
 	_guard=$(check_mirror_drift)
 	printf '%s\n' "$_guard" | tee -a "$RUN_LOG"
-	case "$_guard" in *FAIL:*) _fatal=1 ;; esac
+	case "$_guard" in *FAIL:*)
+		DRIFTED=1
+		# --allow-drift is for a build in flight: the mirror is legitimately
+		# behind while someone is still working. The run proceeds so the rest
+		# of the battery is still worth something, but it can never report
+		# PASS, because nothing here can be attributed to a versioned recipe.
+		if [ "$ALLOW_DRIFT" -eq 1 ]; then
+			log_line "      (continuing anyway: --allow-drift)"
+		else
+			_fatal=1
+		fi
+		;;
+	esac
 
 	log_line "-- device"
 	device_reachable || die "device $FP3_HOST unreachable"
@@ -446,7 +464,8 @@ summarise() {
 	fi
 	log_line "log: $RUN_LOG  (device copy: $RESULT_DIR/$RUN_ID.log)"
 
-	if [ "$_failed" -gt 0 ] || [ -n "$_gaps" ]; then
+	[ "$DRIFTED" -eq 1 ] && log_line "NOTE: the versioned recipe and the build workdir disagree - this run is not attributable"
+	if [ "$_failed" -gt 0 ] || [ -n "$_gaps" ] || [ "$DRIFTED" -eq 1 ]; then
 		log_line "FAIL - $_ok ok, $_failed failed, $_skipped skipped"
 		exit 1
 	fi
