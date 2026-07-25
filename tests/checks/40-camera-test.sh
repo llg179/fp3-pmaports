@@ -19,8 +19,11 @@
 fail=0
 
 # 1. Is the sensor even described to the kernel?
+# The node is named camera@<addr>; "imx363" only appears in the *value* of its
+# 'compatible' property (sony,imx363), so grep the property contents rather than
+# node/property *names* (find -iname would never match, on any kernel).
 if [ -d /proc/device-tree ]; then
-	if find /proc/device-tree -iname '*imx363*' 2>/dev/null | grep -q .; then
+	if grep -rla 'imx363' /proc/device-tree/ 2>/dev/null | grep -q .; then
 		echo "PASS: the live device tree describes the imx363 sensor"
 	else
 		echo "FAIL: no imx363 node in the live device tree"

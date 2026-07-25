@@ -220,10 +220,11 @@ check_categories() {
 	for _ref in $(printf '%s\n' "$_heads" | awk '{print $2}'); do
 		_branch=${_ref#refs/heads/}
 		case "$_branch" in
-		fp3-integration | fp3-*.*.*-*) ;;
+		*-wip) continue ;;		# debug branch, carries no category
+		fp3-integration) continue ;;
+		fp3-*.*.*-*) ;;			# a real topic branch
 		*) continue ;;
 		esac
-		[ "$_branch" = "fp3-integration" ] && continue
 		# fp3-7.0.9-audio -> audio
 		_cat=${_branch##*-}
 		if ! categories | grep -qx "$_cat"; then
