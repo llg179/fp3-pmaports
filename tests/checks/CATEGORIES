@@ -1,0 +1,11 @@
+# The fp3-integration topic-branch categories, one per line.
+#
+# Every category listed here must have at least one check declaring
+# "# Category: <name>", and every fp3-7.0.9-* branch on the kernel fork must
+# appear here. The runner enforces both directions, so test coverage cannot
+# quietly fall behind the kernel work: adding a topic branch means adding a
+# line here, which means writing a check.
+audio
+voice
+camera
+charger

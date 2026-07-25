@@ -1,0 +1,93 @@
+#!/bin/sh
+# Device-side helper: take exclusive control of the sound card, then give it
+# back exactly as it was.
+#
+# Two problems it solves. First, the sound server holds the card, so a raw ALSA
+# open fails with EBUSY. Second, a check that sets mixer controls and then dies
+# halfway leaves the device muted or misrouted - so the restore runs from a trap
+# and not from the happy path.
+#
+# Usage:
+#   . "$DEVICE_DIR/lib/audio-state.sh"
+#   audio_grab            # save state, stop the sound server
+#   ... raw ALSA work ...
+#   audio_release         # (also runs automatically on exit)
+
+AUDIO_STATE_FILE=""
+AUDIO_SERVER_USER=""
+AUDIO_HELD=0
+
+# Note: busybox ps has no -C, so match by pid. Using `ps -C` here silently
+# returned nothing, which made this helper report "no sound server" and skip the
+# stop entirely - the card then stayed busy and every raw ALSA open failed for a
+# reason that looked like a kernel fault.
+_audio_server_user() {
+	# Derive it rather than hardcode it: this used to be a system greeter
+	# account and is now the ordinary user session, and it will move again.
+	for p in pipewire wireplumber pulseaudio; do
+		_pid=$(pgrep -x "$p" 2>/dev/null | head -1)
+		if [ -n "$_pid" ]; then
+			awk '/^Uid:/ {print $2}' "/proc/$_pid/status" 2>/dev/null |
+				while read -r _u; do getent passwd "$_u" | cut -d: -f1; done
+			return
+		fi
+	done
+}
+
+# Only the units that actually exist here: this session has pipewire.service,
+# pipewire.socket and wireplumber.service. There is no pulseaudio unit - the
+# process calling itself pulseaudio is pipewire-pulse - so asking systemd to
+# stop pulseaudio.service just fails and leaves the card held.
+AUDIO_UNITS="wireplumber.service pipewire.service pipewire.socket"
+
+audio_grab() {
+	AUDIO_STATE_FILE=$(mktemp /tmp/fp3-alsa-state.XXXXXX)
+	alsactl store -f "$AUDIO_STATE_FILE" 2>/dev/null
+
+	AUDIO_SERVER_USER=$(_audio_server_user)
+	if [ -n "$AUDIO_SERVER_USER" ]; then
+		# shellcheck disable=SC2086 # unit list must word-split
+		systemctl -M "$AUDIO_SERVER_USER@" --user stop $AUDIO_UNITS 2>/dev/null
+		# The socket unit restarts the daemon on demand, so give the stop a
+		# moment to actually release the card before we open it.
+		sleep 1
+	fi
+	AUDIO_HELD=1
+	trap audio_release EXIT INT TERM
+}
+
+audio_release() {
+	[ "$AUDIO_HELD" -eq 1 ] || return 0
+	AUDIO_HELD=0
+
+	[ -n "$AUDIO_STATE_FILE" ] && [ -s "$AUDIO_STATE_FILE" ] &&
+		alsactl restore -f "$AUDIO_STATE_FILE" 2>/dev/null
+	rm -f "$AUDIO_STATE_FILE"
+
+	if [ -n "$AUDIO_SERVER_USER" ]; then
+		# shellcheck disable=SC2086
+		systemctl -M "$AUDIO_SERVER_USER@" --user start $AUDIO_UNITS 2>/dev/null
+	fi
+}
+
+# The card has to be addressed as hw:0 explicitly. ALSA's "default" device is
+# routed through PulseAudio here, so once audio_grab has stopped the sound
+# server every plain `amixer` call dies with "Connection refused" - which looks
+# exactly like "the control does not exist" and sends you hunting for a kernel
+# regression that is not there.
+AUDIO_CARD="${AUDIO_CARD:-hw:0}"
+
+# Apply a list of control/value pairs, reporting any that do not exist. A
+# missing control is a real finding - it usually means a DAPM widget or route
+# disappeared from the kernel - so it is never silently ignored.
+audio_cset() {
+	_missing=0
+	while [ $# -gt 0 ]; do
+		if ! amixer -D "$AUDIO_CARD" -q cset "name=$1" "$2" >/dev/null 2>&1; then
+			echo "FAIL: mixer control missing or unsettable: '$1' -> $2"
+			_missing=1
+		fi
+		shift 2
+	done
+	return $_missing
+}

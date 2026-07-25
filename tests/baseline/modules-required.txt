@@ -1,0 +1,49 @@
+# Modules this port must not lose. Maintained BY HAND - never regenerate it
+# from a build, because the whole point is to catch a module that silently
+# stopped being built.
+#
+# The failure this guards against: a Kconfig symbol renamed upstream is dropped
+# by olddefconfig without a word, the build stays green, and the missing driver
+# only shows up as a dead feature on the device. That is how the FP3 panel was
+# lost once - CONFIG_DRM_PANEL_FAIRPHONE_FP3_HX83112B became
+# CONFIG_DRM_PANEL_HIMAX_HX83112B, /dev/dri never appeared, and the compositor
+# failed with "Found 0 GPUs" - which reads like a GPU bug, not a config rename.
+#
+# Names are the .ko basenames as they appear in /lib/modules, verified on the
+# device rather than guessed (the charger driver, for example, is qcom_smbx and
+# not the smb2 its Kconfig symbol suggests).
+
+# display - without this there is no /dev/dri and no compositor
+panel-himax-hx83112b
+# touchscreen
+himax_hx83112b
+# camera
+imx363
+qcom-camss
+# audio codec and amplifier
+snd-soc-wcd9335
+snd-soc-wcd-classh
+snd-soc-aw8898
+# SLIMbus - the bus the codec hangs off
+slimbus
+slim-qcom-ngd-ctrl
+regmap-slimbus
+# ADSP audio front/back ends
+q6afe
+q6afe-dai
+q6asm
+q6asm-dai
+q6adm
+q6routing
+q6core
+# voice call path
+q6voice
+q6voice-common
+q6voice-dai
+q6cvp
+q6cvs
+q6mvm
+# remoteproc that loads the ADSP firmware
+qcom_q6v5_pas
+# charger
+qcom_smbx

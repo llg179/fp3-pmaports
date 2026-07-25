@@ -1,0 +1,433 @@
+#!/bin/sh
+# fp3-selftest - functional regression battery for the Fairphone 3 mainline port.
+#
+# Run this after every kernel bump so that "everything still works" is a
+# repeatable measurement instead of a memory. Checks live in checks/, run on the
+# device over SSH, and report with the postmarketOS test convention: exit code is
+# the verdict, output lines are prefixed PASS:/FAIL:/SKIP:.
+#
+# See tests/README.md for the canonical invocation and what each check proves.
+
+# Deliberately not `set -e`: for a test runner, a non-zero exit is the subject
+# matter, not an accident. Aborting the run on the first failing command is
+# exactly the behaviour we do not want - the fatal cases call die() explicitly.
+set -u
+
+TESTS_DIR=$(cd "$(dirname "$0")" && pwd)
+REPO_ROOT=$(dirname "$TESTS_DIR")
+# shellcheck source=lib/common.sh
+. "$TESTS_DIR/lib/common.sh"
+
+# The build working directory - the pmaports checkout pmbootstrap actually
+# builds from. It is NOT this repo: our kernel recipes are untracked there, and
+# this repo is their versioned home. Both matter, see check_mirror_drift.
+PMAPORTS="${FP3_PMAPORTS:-/mnt/1TB/pmos/pmaports}"
+KERNEL_PKG="linux-fp3-709"
+APKBUILD=""
+
+COLD_PHASE="none"
+ACOUSTIC=0
+DEVICE_DIR="/tmp/fp3-selftest"
+RESULT_DIR="/var/log/fp3-selftest"
+OFFLINE=0
+PREFLIGHT_APK=""
+ONLY=""
+SKIP=""
+ALLOW_UNCOVERED=""
+# Physical dependencies the operator can declare absent.
+DISABLED=""
+
+RUN_ID=$(date +%Y%m%d-%H%M%S)
+RUN_LOG=""
+
+usage() {
+	sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'
+	cat <<'EOF'
+
+Usage: fp3-selftest [options]
+
+Connection:
+  --host IP            device address (default 172.16.42.1, or $FP3_HOST)
+  --pw PASSWORD        device password (or $FP3_PW; never stored in this repo)
+  --pin PIN            lockscreen PIN (or $FP3_PIN; needed by the cold checks)
+
+What to run:
+  --cold-phase call|unlock|none
+                       which cold-boot check owns this boot. The two cannot
+                       share one: the incoming call wakes the display and starts
+                       the call UI, which warms the very session whose cold
+                       unlock we measure. Default none.
+  --acoustic           enable the speaker->mic loopback checks (off by default:
+                       they are audible and sensitive to ambient noise)
+  --only LIST          run only these checks (comma-separated name fragments)
+  --skip LIST          skip these checks
+  --no-cable --no-headset --no-wifi --no-modem --no-bt --no-call
+                       declare a physical dependency absent
+
+Coverage:
+  --allow-uncovered CATEGORY
+                       permit an overall PASS while this fp3-integration
+                       category has no check result
+  --offline            skip the topic-branch/CATEGORIES cross-check
+
+Paths:
+  --pmaports DIR       build working directory (default /mnt/1TB/pmos/pmaports)
+  --apkbuild FILE      kernel APKBUILD to take the expected identity from
+  --kernel-pkg NAME    kernel package name (default linux-fp3-709)
+
+Host-only mode:
+  --preflight-apk FILE check a built kernel .apk for the required modules
+                       BEFORE flashing it; needs no device
+EOF
+}
+
+die() {
+	echo "fp3-selftest: $*" >&2
+	exit 2
+}
+
+# --- argument parsing -----------------------------------------------------
+
+while [ $# -gt 0 ]; do
+	case "$1" in
+	--host) FP3_HOST=$2; shift 2 ;;
+	--pw) FP3_PW=$2; shift 2 ;;
+	--pin) FP3_PIN=$2; shift 2 ;;
+	--cold-phase) COLD_PHASE=$2; shift 2 ;;
+	--acoustic) ACOUSTIC=1; shift ;;
+	--only) ONLY=$2; shift 2 ;;
+	--skip) SKIP=$2; shift 2 ;;
+	--allow-uncovered) ALLOW_UNCOVERED="$ALLOW_UNCOVERED $2"; shift 2 ;;
+	--offline) OFFLINE=1; shift ;;
+	--pmaports) PMAPORTS=$2; shift 2 ;;
+	--apkbuild) APKBUILD=$2; shift 2 ;;
+	--kernel-pkg) KERNEL_PKG=$2; shift 2 ;;
+	--preflight-apk) PREFLIGHT_APK=$2; shift 2 ;;
+	--no-cable) DISABLED="$DISABLED cable"; shift ;;
+	--no-headset) DISABLED="$DISABLED headset"; shift ;;
+	--no-wifi) DISABLED="$DISABLED wifi"; shift ;;
+	--no-modem) DISABLED="$DISABLED modem"; shift ;;
+	--no-bt) DISABLED="$DISABLED bt"; shift ;;
+	--no-call) DISABLED="$DISABLED call"; shift ;;
+	-h | --help) usage; exit 0 ;;
+	*) die "unknown option: $1 (try --help)" ;;
+	esac
+done
+
+[ -n "$APKBUILD" ] || APKBUILD="$PMAPORTS/device/testing/$KERNEL_PKG/APKBUILD"
+
+case "$COLD_PHASE" in
+call | unlock | none) ;;
+*) die "--cold-phase must be call, unlock or none" ;;
+esac
+
+# --- host-only: check a built package before flashing it ------------------
+#
+# A green build is not evidence that your change is in the binary: a renamed
+# Kconfig symbol is dropped by olddefconfig without a word, and the package
+# still builds. Assert on the artifact instead, before the device ever sees it.
+preflight_apk() {
+	_apk=$1
+	[ -f "$_apk" ] || die "no such package: $_apk"
+	_missing=""
+	_have=$(tar tzf "$_apk" 2>/dev/null | grep '\.ko\(\.gz\|\.xz\|\.zst\)\?$' || true)
+	while read -r _mod; do
+		case "$_mod" in '' | \#*) continue ;; esac
+		if ! printf '%s\n' "$_have" | grep -q "/$_mod\.ko"; then
+			_missing="$_missing $_mod"
+		fi
+	done <"$TESTS_DIR/baseline/modules-required.txt"
+
+	printf '%s\n' "$_have" | grep -c . | while read -r n; do
+		echo "modules in package: $n"
+	done
+	if [ -n "$_missing" ]; then
+		for _m in $_missing; do
+			echo "FAIL: required module missing from package: $_m"
+		done
+		echo "FAIL - do not flash this build"
+		return 1
+	fi
+	echo "PASS: every required module is present in the package"
+}
+
+if [ -n "$PREFLIGHT_APK" ]; then
+	preflight_apk "$PREFLIGHT_APK"
+	exit $?
+fi
+
+# --- coverage guards ------------------------------------------------------
+
+categories() {
+	grep -v '^[[:space:]]*\(#\|$\)' "$TESTS_DIR/checks/CATEGORIES"
+}
+
+# Guard 1: every listed category has at least one check.
+# Guard 2: every fp3-7.0.9-* topic branch on the fork is listed.
+# One direction is not enough - the first catches a category added without a
+# check, the second catches a new topic branch nobody listed at all.
+check_categories() {
+	_rc=0
+	for _cat in $(categories); do
+		if ! grep -lq "^# Category: $_cat\$" "$TESTS_DIR"/checks/*.sh 2>/dev/null; then
+			echo "FAIL: category '$_cat' is listed but no check declares it"
+			_rc=1
+		fi
+	done
+
+	if [ "$OFFLINE" -eq 1 ]; then
+		echo "SKIP: topic-branch cross-check (--offline)"
+		return $_rc
+	fi
+
+	# Port 443: a plain-SSH (port 22) git operation stalls on this network.
+	_fork="ssh://git@ssh.github.com:443/llg179/linux.git"
+	if ! _heads=$(git ls-remote --heads "$_fork" 'refs/heads/fp3-*' 2>/dev/null); then
+		echo "FAIL: cannot reach the kernel fork to cross-check topic branches"
+		echo "      (pass --offline to run without this guard)"
+		return 1
+	fi
+	for _ref in $(printf '%s\n' "$_heads" | awk '{print $2}'); do
+		_branch=${_ref#refs/heads/}
+		case "$_branch" in
+		fp3-integration | fp3-*.*.*-*) ;;
+		*) continue ;;
+		esac
+		[ "$_branch" = "fp3-integration" ] && continue
+		# fp3-7.0.9-audio -> audio
+		_cat=${_branch##*-}
+		if ! categories | grep -qx "$_cat"; then
+			echo "FAIL: topic branch '$_branch' has no '$_cat' entry in checks/CATEGORIES"
+			_rc=1
+		fi
+	done
+	return $_rc
+}
+
+# The versioned copy of a kernel recipe lives in this repo; the copy that
+# actually gets built lives in the pmaports working directory. Editing starts in
+# the working directory, so the danger is real and directional: build and test
+# something that was never versioned. Compare the fields that matter rather than
+# the whole file - `pmbootstrap checksum` rewrites sha512sums with the variables
+# expanded, which is a formatting difference, not a drift.
+check_mirror_drift() {
+	_mirror="$REPO_ROOT/$KERNEL_PKG/APKBUILD"
+	[ -f "$_mirror" ] || { echo "SKIP: no mirrored $KERNEL_PKG/APKBUILD in this repo"; return 0; }
+	[ -f "$APKBUILD" ] || { echo "FAIL: build working copy not found: $APKBUILD"; return 1; }
+	_rc=0
+	for _f in _commit pkgver pkgrel; do
+		_a=$(apkbuild_field "$_mirror" "$_f")
+		_b=$(apkbuild_field "$APKBUILD" "$_f")
+		if [ "$_a" != "$_b" ]; then
+			echo "FAIL: $_f differs - versioned repo has '$_a', build workdir has '$_b'"
+			echo "      the build workdir is what reached the device; mirror it before trusting this run"
+			_rc=1
+		fi
+	done
+	return $_rc
+}
+
+apkbuild_field() {
+	sed -n "s/^$2=\"\{0,1\}\([^\"]*\)\"\{0,1\}\$/\1/p" "$1" | head -1
+}
+
+# --- device preflight -----------------------------------------------------
+
+cold_state_ok() {
+	# Both cold checks need a freshly booted device that nobody has unlocked.
+	# Establish that up front rather than five minutes into the run.
+	_uptime=$(ssh_run 'cut -d. -f1 /proc/uptime' 2>/dev/null || echo 99999)
+	_locked=$(ssh_run "loginctl list-sessions --no-legend 2>/dev/null | awk '{print \$1}' | while read -r s; do loginctl show-session \"\$s\" -p LockedHint --value; done | grep -c yes" 2>/dev/null || echo 0)
+	if [ "$_uptime" -gt 1800 ]; then
+		echo "FAIL: uptime ${_uptime}s - the cold measurement needs a fresh boot"
+		return 1
+	fi
+	if [ "${_locked:-0}" -eq 0 ]; then
+		echo "FAIL: no locked session - somebody already unlocked the phone."
+		echo "      Reboot, leave it at the lockscreen, and run again."
+		return 1
+	fi
+	return 0
+}
+
+# --- check execution ------------------------------------------------------
+
+# What a check needs to know about the build it is judging. Written once as a
+# file the checks source, so nothing has to survive nested shell quoting - and
+# so the expected identity comes from the APKBUILD rather than being retyped.
+write_env_file() {
+	_tmp=$(mktemp)
+	cat >"$_tmp" <<EOF
+FP3_PIN='$FP3_PIN'
+RESULT_DIR='$RESULT_DIR'
+RUN_ID='$RUN_ID'
+DEVICE_DIR='$DEVICE_DIR'
+KERNEL_PKG='$KERNEL_PKG'
+EXP_PKGVER='$(apkbuild_field "$APKBUILD" pkgver)'
+EXP_PKGREL='$(apkbuild_field "$APKBUILD" pkgrel)'
+EXP_COMMIT='$(apkbuild_field "$APKBUILD" _commit)'
+EXP_FLAVOR='$(apkbuild_field "$APKBUILD" _flavor)'
+export FP3_PIN RESULT_DIR RUN_ID DEVICE_DIR KERNEL_PKG
+export EXP_PKGVER EXP_PKGREL EXP_COMMIT EXP_FLAVOR
+EOF
+	ssh_copy "$_tmp" "$DEVICE_DIR/env.sh"
+	rm -f "$_tmp"
+}
+
+# --only/--skip take name fragments, so the token has to be matched *inside* the
+# check name, not the other way round: `--skip suspend` must match
+# "99-suspend".
+wanted() {
+	_name=$1
+	if [ -n "$ONLY" ]; then
+		_hit=1
+		for _tok in $(printf '%s' "$ONLY" | tr ',' ' '); do
+			case "$_name" in *"$_tok"*) _hit=0 ;; esac
+		done
+		[ "$_hit" -eq 0 ] || return 1
+	fi
+	for _tok in $(printf '%s' "$SKIP" | tr ',' ' '); do
+		case "$_name" in *"$_tok"*) return 1 ;; esac
+	done
+	return 0
+}
+
+main() {
+	[ -n "$FP3_PW" ] || die "no device password: pass --pw or export FP3_PW"
+
+	mkdir -p "$TESTS_DIR/../.selftest-runs" 2>/dev/null || true
+	RUN_LOG="${TMPDIR:-/tmp}/fp3-selftest-$RUN_ID.log"
+	: >"$RUN_LOG"
+
+	log_line "fp3-selftest run $RUN_ID  (cold-phase: $COLD_PHASE)"
+	log_line ""
+
+	_fatal=0
+	log_line "-- coverage guards"
+	check_categories | tee -a "$RUN_LOG" | grep -q '^FAIL' && _fatal=1
+	log_line "-- recipe drift"
+	check_mirror_drift | tee -a "$RUN_LOG" | grep -q '^FAIL' && _fatal=1
+
+	log_line "-- device"
+	device_reachable || die "device $FP3_HOST unreachable"
+
+	if [ "$COLD_PHASE" != "none" ]; then
+		cold_state_ok | tee -a "$RUN_LOG" | grep -q '^FAIL' && _fatal=1
+	fi
+
+	[ "$_fatal" -eq 0 ] || {
+		log_line ""
+		log_line "ABORT - preconditions failed, no checks were run"
+		exit 2
+	}
+
+	# /tmp is tmpfs, so the bundle has to be pushed after the reboot, not before.
+	ssh_run "rm -rf $DEVICE_DIR && mkdir -p $DEVICE_DIR"
+	ssh_copy "$TESTS_DIR/checks" "$DEVICE_DIR/"
+	ssh_copy "$TESTS_DIR/lib" "$DEVICE_DIR/"
+	ssh_copy "$TESTS_DIR/baseline" "$DEVICE_DIR/"
+	ssh_root "mkdir -p $RESULT_DIR"
+
+	write_env_file
+
+	_ok=0 _failed=0 _skipped=0 _covered="" _uncovered=""
+
+	for _check in "$TESTS_DIR"/checks/*-test.sh; do
+		_name=$(basename "$_check" -test.sh)
+		_cat=$(check_meta "$_check" Category)
+		_req=$(check_meta "$_check" Requires)
+		_cold=$(check_meta "$_check" ColdPhase)
+
+		_skip_reason=""
+		wanted "$_name" || _skip_reason="not selected"
+		for _r in $_req; do
+			case " $DISABLED " in *" $_r "*) _skip_reason="--no-$_r given" ;; esac
+			[ "$_r" = acoustic ] && [ "$ACOUSTIC" -eq 0 ] && _skip_reason="needs --acoustic"
+		done
+		if [ -n "$_cold" ] && [ "$_cold" != "$COLD_PHASE" ]; then
+			_skip_reason="needs --cold-phase $_cold"
+		fi
+
+		if [ -n "$_skip_reason" ]; then
+			log_line "SKIP: $_name ($_skip_reason)"
+			_skipped=$((_skipped + 1))
+			if [ -n "$_cat" ]; then _uncovered="$_uncovered $_cat"; fi
+			continue
+		fi
+
+		_start=$(date +%s)
+		_base=$(basename "$_check")
+		_outfile="$RESULT_DIR/$RUN_ID.$_name.out"
+
+		if [ "$(check_meta "$_check" Detached)" = yes ]; then
+			# This check drops the link on purpose (suspend re-enumerates
+			# USB). Launch it detached so it survives our SSH session
+			# dying, then come back and read what it wrote. The launcher
+			# lives in a file on the device rather than inline, because an
+			# inline version needs quotes inside the quotes ssh_root already
+			# uses - which silently ran half of it outside sudo.
+			ssh_root "setsid sh $DEVICE_DIR/lib/run-detached.sh $_base $_outfile" || true
+			sleep 5
+			if wait_for_device 180; then
+				_out=$(ssh_root "cat $_outfile" 2>&1)
+			else
+				_out="FAIL: device did not come back after $_name"
+			fi
+		else
+			# Every check runs as root: hwtest needs it, dmesg may be
+			# restricted, and the mixer work does too. Output is written to
+			# the rootfs as it happens, so a link drop costs the connection
+			# rather than the measurement. Parameters come from the env file
+			# rather than an inline assignment, so no value of ours has to
+			# survive two layers of shell quoting.
+			_out=$(ssh_root ". $DEVICE_DIR/env.sh; sh $DEVICE_DIR/checks/$_base 2>&1 | tee $_outfile; sync" 2>&1) || true
+		fi
+		ssh_root "cat $_outfile >>$RESULT_DIR/$RUN_ID.log 2>/dev/null; sync" >/dev/null 2>&1 || true
+		_elapsed=$(( $(date +%s) - _start ))
+
+		printf '%s\n' "$_out" | sed 's/^/    /' | tee -a "$RUN_LOG"
+
+		# A category counts as covered once its check produced a verdict -
+		# pass or fail. Only a check that never ran leaves the category
+		# untested, so a failing voice check must read as "voice is broken",
+		# not as "voice was not looked at".
+		if [ -n "$_cat" ]; then _covered="$_covered $_cat"; fi
+		if printf '%s\n' "$_out" | grep -q '^FAIL:'; then
+			log_line "FAIL: $_name (${_elapsed}s)"
+			_failed=$((_failed + 1))
+		else
+			log_line "ok:   $_name (${_elapsed}s)"
+			_ok=$((_ok + 1))
+		fi
+	done
+
+	summarise "$_ok" "$_failed" "$_skipped" "$_covered" "$_uncovered"
+}
+
+summarise() {
+	_ok=$1 _failed=$2 _skipped=$3 _covered=$4 _uncovered=$5
+
+	# A category with no result must never read as green: without this, a run
+	# without a charging cable would report PASS while an entire category of
+	# the kernel work went untested.
+	_gaps=""
+	for _cat in $(categories); do
+		case " $_covered " in *" $_cat "*) continue ;; esac
+		case " $ALLOW_UNCOVERED " in *" $_cat "*) continue ;; esac
+		_gaps="$_gaps $_cat"
+	done
+
+	log_line ""
+	[ -n "$_gaps" ] && log_line "UNCOVERED CATEGORIES:$_gaps (pass --allow-uncovered CAT to accept)"
+	[ "$COLD_PHASE" = none ] && log_line "NOTE: no cold-boot check ran (--cold-phase none)"
+	log_line "log: $RUN_LOG  (device copy: $RESULT_DIR/$RUN_ID.log)"
+
+	if [ "$_failed" -gt 0 ] || [ -n "$_gaps" ]; then
+		log_line "FAIL - $_ok ok, $_failed failed, $_skipped skipped"
+		exit 1
+	fi
+	log_line "PASS - $_ok ok, $_failed failed, $_skipped skipped"
+	exit 0
+}
+
+main

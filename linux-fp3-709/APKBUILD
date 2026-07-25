@@ -9,7 +9,7 @@ _flavor="fp3-709"
 _commit="6a5216218a0a4d47bb98db12fd3a2687e1961534"
 pkgname=linux-$_flavor
 pkgver=7.0.9
-pkgrel=3
+pkgrel=4
 pkgdesc="msm8953-mainline for the Fairphone 3: WCD9335 audio, IMX363 camera, PMI632 charger"
 arch="aarch64"
 _carch="arm64"
@@ -58,6 +58,12 @@ package() {
 	rm -f "$pkgdir"/lib/modules/*/build "$pkgdir"/lib/modules/*/source
 	install -Dm644 "$builddir/include/config/kernel.release" \
 		"$pkgdir/usr/share/kernel/$_flavor/kernel.release"
+
+	# Record which fp3-integration commit this was built from. pkgrel alone
+	# cannot tell two _commits apart - uname -v only carries pkgrel - so
+	# without this stamp there is no way to ask a running device which kernel
+	# source it came from. tests/fp3-selftest checks it.
+	echo "$_commit" >"$pkgdir/usr/share/kernel/$_flavor/fp3-commit"
 }
 sha512sums="
 c13a6c8d6470728267763841439ec450504805070a1cb369b2b0559fcb081255248b8e954f78ad23e9c280d5bf2ae110e7dcad1aed7fe0158a5ccc9188c2c50a  $pkgname-$_commit.tar.gz

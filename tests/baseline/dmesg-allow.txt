@@ -1,0 +1,8 @@
+# Kernel log lines that match the health check's fault patterns but are known
+# noise on a healthy boot. Matched as fixed strings (grep -F), one per line.
+#
+# Keep this list short and justified. Every entry is a fault signature we have
+# decided to stop looking at, so an unjustified line here can hide a real
+# regression for months.
+#
+# (empty: no tolerated fault signatures on this device today)

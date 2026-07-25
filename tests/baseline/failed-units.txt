@@ -1,0 +1,8 @@
+# systemd units that are already failing on this device, with the reason they
+# are tolerated. The health check fails on anything NOT in this list, so every
+# line here is a deliberate, reviewable exception - not a place to silence noise.
+#
+# pd-mapper.service: the in-kernel PD mapper handles this on our tree (the
+#   audio_pd mapping was added for msm8953/sdm632), so the userspace daemon has
+#   nothing to do and exits. Harmless, but it keeps the system "degraded".
+pd-mapper.service
