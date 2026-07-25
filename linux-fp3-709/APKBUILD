@@ -6,10 +6,10 @@
 # The sources are the fp3-integration branch of the fork, pinned by commit, so
 # this package carries no patches of its own - update _commit to move it.
 _flavor="fp3-709"
-_commit="6a5216218a0a4d47bb98db12fd3a2687e1961534"
+_commit="989d30a533e9dd63225841a0e4560e526922de37"
 pkgname=linux-$_flavor
 pkgver=7.0.9
-pkgrel=4
+pkgrel=6
 pkgdesc="msm8953-mainline for the Fairphone 3: WCD9335 audio, IMX363 camera, PMI632 charger"
 arch="aarch64"
 _carch="arm64"
@@ -66,6 +66,6 @@ package() {
 	echo "$_commit" >"$pkgdir/usr/share/kernel/$_flavor/fp3-commit"
 }
 sha512sums="
-c13a6c8d6470728267763841439ec450504805070a1cb369b2b0559fcb081255248b8e954f78ad23e9c280d5bf2ae110e7dcad1aed7fe0158a5ccc9188c2c50a  $pkgname-$_commit.tar.gz
-e9eae2ad4cce5440863bc842c7b711d986e4e560563d59fbc30069d46f3291f52b5238d9699fd6acfb95a7f3fa124fcebdf4347aaf04e895a4ac8a861034feca  config-$_flavor.aarch64
+d68599ef25515c9c709ee079dda1dc4402695ce711cf1264b3d4108c0126e4631374e86255fa5c3be99d7bc60616fa7d9ff71577fd33fd19b0974600070dbc4d  linux-fp3-709-989d30a533e9dd63225841a0e4560e526922de37.tar.gz
+e9eae2ad4cce5440863bc842c7b711d986e4e560563d59fbc30069d46f3291f52b5238d9699fd6acfb95a7f3fa124fcebdf4347aaf04e895a4ac8a861034feca  config-fp3-709.aarch64
 "
