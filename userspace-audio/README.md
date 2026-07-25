@@ -13,8 +13,8 @@ ucm2/conf.d/Fairphone_3/Fairphone_3.conf   -> /usr/share/alsa/ucm2/conf.d/Fairph
 ucm2/Fairphone/fp3/HiFi.conf               -> /usr/share/alsa/ucm2/Fairphone/fp3/
 ucm2/Fairphone/fp3/VoiceCall.conf          -> /usr/share/alsa/ucm2/Fairphone/fp3/   (call routing, not wired to pulse yet)
 pulse/90-fp3-mic.pa                         -> /etc/pulse/default.pa.d/
-systemd/fp3-mic-jack.sh                     -> /usr/local/bin/
-systemd/fp3-mic-jack.service               -> /etc/systemd/system/   (systemctl enable --now)
+systemd/fp3-mic-select                      -> /usr/local/bin/
+systemd/fp3-mic-select.service             -> /etc/systemd/system/   (systemctl enable)
 ```
 
 ## Why it is not just a UCM file
@@ -57,15 +57,28 @@ the speaker backend (`QUIN_MI2S_RX Audio Mixer MultiMedia1 1`); each output
 device then swaps the backend. The verb also pre-routes the handset mic
 (`DMIC0 -> DEC0 -> SLIMBUS_0_TX`) so the `module-alsa-source` has signal.
 
-### 3. re-applying a mux while capture runs glitches it silent
+### 3. the two mics are selected manually, and only while capture is idle
 
-The headset microphone (AMIC2) and the handset mic (DMIC0) share the one capture
-device, so they are swapped by jack detection rather than being two sources.
-`fp3-mic-jack.service` watches `alsactl monitor` and flips `ADC MUX0` between
-`DMIC`/`DMIC0` and `AMIC`/`ADC2` on the `Mic Jack` control. It only writes the
-mux on an **actual jack transition** — re-applying the same mux while a capture
-stream is live re-runs the decimator's DAPM and drops it to digital silence, so
-the state is tracked and left alone during normal use.
+The headset microphone (AMIC2) and the built-in handset mic (DMIC0) share the
+codec's decimator 0, so only one is active at a time. Two things stop this from
+being automatic:
+
+  - **jack detection does not work.** mainline WCD9335 has no working MBHC on
+    this board, so the `Mic Jack` / `Headphone Jack` controls stay `off` even
+    with a headset plugged. There is no event to switch on.
+
+  - **the mux must be changed while the capture is idle.** Re-applying the
+    input mux while a capture stream is *live* does not re-run the ADC widget's
+    power sequence, so the TX front-end hold is never released and the decimator
+    stays at digital silence (register 0x613 stuck at 0x40). The pulse source is
+    suspended between recordings, so setting the mux then and letting the next
+    recording power the ADC up cleanly is what works.
+
+So the mic is chosen with `fp3-mic-select handset|headset`, which sets the input
+mux and remembers the choice; `fp3-mic-select.service` re-applies it at boot.
+Both mics are verified working through pulseaudio this way (handset and headset
+each pick up a 1 kHz speaker tone at a ~1000x bin ratio). Wiring this to real
+jack detection needs MBHC support in the wcd9335 driver, which mainline lacks.
 
 ## Status
 
@@ -74,18 +87,20 @@ the state is tracked and left alone during normal use.
 | Speaker playback | works through pulseaudio (verified, cold-boot) |
 | Earpiece / Headphones playback | routed and openable; separate card profiles |
 | Handset microphone (DMIC0) | works through pulseaudio as `fp3-handset-mic` (verified) |
-| Headset microphone (AMIC2) | jack-switch service deployed; route validated earlier with a plugged headset, acoustic confirmation still needs the headset |
+| Headset microphone (AMIC2) | works through pulseaudio, selected with `fp3-mic-select headset` (verified acoustically); no auto jack detection |
 | Voice call | `VoiceCall.conf` has the SLIMbus voice-mixer routing; pulseaudio cannot open the voice PCM (hw:0,4) as an ordinary profile, so wiring calls needs callaudiod + a real call — not yet done |
 
 ## Installing
 
 ```sh
 sudo cp -r ucm2/* /usr/share/alsa/ucm2/
-sudo install -m644 pulse/90-fp3-mic.pa      /etc/pulse/default.pa.d/
-sudo install -m755 systemd/fp3-mic-jack.sh  /usr/local/bin/
-sudo install -m644 systemd/fp3-mic-jack.service /etc/systemd/system/
-sudo systemctl enable --now fp3-mic-jack.service
+sudo install -m644 pulse/90-fp3-mic.pa          /etc/pulse/default.pa.d/
+sudo install -m755 systemd/fp3-mic-select       /usr/local/bin/
+sudo install -m644 systemd/fp3-mic-select.service /etc/systemd/system/
+sudo systemctl enable fp3-mic-select.service
 # restart the audio server (or reboot) to pick up the card profile
+# pick the mic (remembered across reboots):
+sudo fp3-mic-select handset   # or: headset
 ```
 
 The card is matched by its longname "Fairphone 3" (the conf.d directory is

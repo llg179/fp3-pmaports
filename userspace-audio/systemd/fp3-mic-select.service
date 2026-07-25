@@ -1,0 +1,14 @@
+[Unit]
+Description=Fairphone 3 microphone selection (apply saved handset/headset choice)
+After=sound.target
+Wants=sound.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# let the card and the pulse UCM verb settle first, then apply the saved choice
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 30); do [ -e /dev/snd/controlC0 ] && break; sleep 1; done; sleep 5'
+ExecStart=/usr/local/bin/fp3-mic-select apply
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,40 @@
+#!/bin/sh
+# fp3-mic-select [handset|headset|status]
+#
+# Select which microphone the pulseaudio capture source (fp3-handset-mic on
+# hw:0,1) reads. The two mics share the codec's decimator 0, so only one is
+# active at a time. The route is changed on the codec input mux; because the
+# pulse source is suspended between captures, the next recording picks up the
+# new mic with a clean power-up (changing the mux while a capture is *live*
+# glitches the decimator silent, so do not do that).
+#
+# Headset jack auto-detection is not available: mainline WCD9335 has no working
+# MBHC on this board, so the 'Mic Jack' control never reports an insertion.
+# The selection is therefore manual and remembered across reboots.
+CARD=0
+STATE=/var/lib/fp3-mic-select
+
+set_handset() {
+	amixer -c $CARD -q cset name='ADC MUX0' DMIC
+	amixer -c $CARD -q cset name='DMIC MUX0' DMIC0
+}
+set_headset() {
+	amixer -c $CARD -q cset name='ADC MUX0' AMIC
+	amixer -c $CARD -q cset name='AMIC MUX0' ADC2
+	amixer -c $CARD -q cset name='ADC2 Volume' 20
+}
+
+case "$1" in
+	headset)
+		set_headset; echo headset > "$STATE"; echo "microphone: headset (AMIC2)" ;;
+	handset|builtin|"")
+		set_handset; echo handset > "$STATE"; echo "microphone: handset (DMIC0)" ;;
+	apply)
+		# used by the boot service: apply the saved choice, default handset
+		if [ "$(cat "$STATE" 2>/dev/null)" = headset ]; then set_headset; else set_handset; fi ;;
+	status)
+		echo "saved: $(cat "$STATE" 2>/dev/null || echo handset)"
+		amixer -c $CARD cget name='ADC MUX0' | grep -q 'values=1' && echo "active: headset (AMIC)" || echo "active: handset (DMIC)" ;;
+	*)
+		echo "usage: fp3-mic-select [handset|headset|status]" >&2; exit 1 ;;
+esac
