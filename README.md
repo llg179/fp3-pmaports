@@ -133,6 +133,24 @@ phoc-wlroots-CRITICAL: [backend/backend.c:245] Found 0 GPUs, cannot create backe
 with no `/dev/dri` at all. A kernel bump can lose a feature without a single
 build warning; check that the symbols you rely on still exist.
 
+## AI-assisted development
+
+The WCD9335 SLIMbus audio work — playback, the digital microphones, the headset
+(MBHC) jack detection and the voice-call routing — was developed with the
+assistance of [Claude Code](https://www.anthropic.com/claude-code), Anthropic's
+generative-AI coding agent. Every commit records this in a `Co-authored-by:
+Claude` trailer.
+
+Because of that, **this code must not be submitted or upstreamed to
+postmarketOS.** postmarketOS's
+[AI policy](https://docs.postmarketos.org/policies-and-processes/development/ai-policy.html)
+forbids the use of generative AI tools in the project — *"We forbid the use of
+generative AI tools in postmarketOS"* — and specifically prohibits "submitting
+contributions fully or in part created by generative AI tools". This repository
+and the linked kernel branches are a personal fork for running mainline on the
+Fairphone 3; they are deliberately kept out of the postmarketOS contribution
+channels for this reason.
+
 ## Related
 
 * <https://github.com/llg179/linux> — the kernel: the four topic branches
