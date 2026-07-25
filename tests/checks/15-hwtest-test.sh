@@ -15,7 +15,10 @@
 #     writing over a file another user created in a sticky directory
 #   - --verify returns 1 on a regression and 0 when clean
 
-REF="/var/lib/fp3-selftest/hwtest-reference.ini"
+# The reference travels with the suite rather than living only on the device:
+# it is a baseline like every other file in baseline/, so it should be
+# versioned, reviewable in a diff, and not lost to a reinstall.
+REF="$DEVICE_DIR/baseline/hwtest-reference.ini"
 
 if ! command -v hwtest >/dev/null 2>&1; then
 	echo "FAIL: hwtest is not installed (apk add hwtest)"
@@ -25,7 +28,7 @@ fi
 if [ ! -f "$REF" ]; then
 	echo "FAIL: no hwtest reference at $REF"
 	echo "      Create one from a state you consider good:"
-	echo "        hwtest --export $REF"
+	echo "        hwtest --export tests/baseline/hwtest-reference.ini"
 	echo "      and edit it so components that SHOULD work read True, even if"
 	echo "      they are broken today - otherwise the breakage becomes the"
 	echo "      baseline and stops being reported."

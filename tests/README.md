@@ -137,11 +137,12 @@ its only job, which is noticing that something stopped being built.
 every line is a fault we have decided to stop looking at, so an unjustified
 entry can hide a real regression for months.
 
-The `hwtest` reference lives on the device at
-`/var/lib/fp3-selftest/hwtest-reference.ini`. Export it from a state you consider
-good, then edit it so components that *should* work read `True` even if they are
-broken today — otherwise the breakage becomes the baseline and stops being
-reported.
+`baseline/hwtest-reference.ini` is the recorded hardware state `15-hwtest`
+compares against. Export it from a state you consider good
+(`hwtest --export`), then edit it so components that *should* work read `True`
+even if they are broken today — otherwise the breakage becomes the baseline and
+stops being reported. The camera is `True` in there right now for exactly that
+reason, and the check fails until the camera comes back.
 
 ## What the cold unlock actually is
 
