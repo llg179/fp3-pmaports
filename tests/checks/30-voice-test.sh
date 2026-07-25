@@ -34,15 +34,20 @@ audio_cset \
 	'ADC MUX0' DMIC \
 	'DMIC MUX0' DMIC0 || fail=1
 
-# A real open (see 20-audio): --dump-hw-params always exits 1 by design.
-if timeout 5 aplay -D hw:0,4 -d 1 -f S16_LE -r 48000 -c 1 /dev/zero >/dev/null 2>&1; then
+# The VoiceMMode1 PCM is a control path: it must OPEN (which instantiates the
+# ADSP topology and fires START_VOICE in the DAI .startup), but it carries no AP
+# samples - a plain aplay/arecord that transfers data hits EINVAL/xrun on it and
+# would report a false "does not open". So probe the open stage only, with
+# --dump-hw-params: it opens the device, prints its param ranges and exits 1 by
+# design, so key on the dumped output, not the exit code.
+if timeout 5 aplay --dump-hw-params -D hw:0,4 /dev/zero 2>&1 | grep -q 'HW Params of device'; then
 	echo "PASS: voice downlink PCM hw:0,4 opens"
 else
 	echo "FAIL: voice downlink PCM hw:0,4 does not open with the voice routes set"
 	fail=1
 fi
 
-if timeout 5 arecord -D hw:0,4 -d 1 -f S16_LE -r 48000 -c 1 /dev/null >/dev/null 2>&1; then
+if timeout 5 arecord --dump-hw-params -D hw:0,4 /dev/null 2>&1 | grep -q 'HW Params of device'; then
 	echo "PASS: voice uplink PCM hw:0,4 opens"
 else
 	echo "FAIL: voice uplink PCM hw:0,4 does not open with the voice routes set"

@@ -22,8 +22,11 @@ AUDIO_HELD=0
 # stop entirely - the card then stayed busy and every raw ALSA open failed for a
 # reason that looked like a kernel fault.
 _audio_server_user() {
-	# Derive it rather than hardcode it: this used to be a system greeter
-	# account and is now the ordinary user session, and it will move again.
+	# The server process itself: this is who owns and holds the card, so this is
+	# who we ask systemd to stop in order to grab it. It runs under a system
+	# greeter account or the ordinary user depending on session state - derive it
+	# rather than hardcode it. (For *querying* pactl the working runtime dir may
+	# belong to a different uid than the server process - see _audio_client_env.)
 	for p in pipewire wireplumber pulseaudio; do
 		_pid=$(pgrep -x "$p" 2>/dev/null | head -1)
 		if [ -n "$_pid" ]; then
@@ -32,6 +35,38 @@ _audio_server_user() {
 			return
 		fi
 	done
+}
+
+# Print "<user> <uid>" for the runtime dir that actually talks to a live sound
+# server. The server can run under the greeter (a low uid) while the logged-in
+# user connects to it through /run/user/<their-uid>; querying the server
+# process's own runtime dir then sees an empty session and reports a false "no
+# sink / no mic". Probe every /run/user/* for one whose pactl exposes a real
+# (non-auto_null) sink; callers use this for read-only pactl queries.
+_audio_client_env() {
+	# Don't pre-filter on a socket path: the working session's runtime dir does
+	# not always contain a literal pulse/native file (pactl still reaches the
+	# server), so a socket check wrongly skipped the logged-in user. Just try
+	# pactl for every numeric-uid runtime dir and take the first that shows a
+	# real sink. The glob sorts "10000" before "113", so the user wins over the
+	# greeter when both reach a server.
+	_fallback=""
+	for _rt in /run/user/*; do
+		[ -d "$_rt" ] || continue
+		_u=${_rt##*/}
+		case "$_u" in ''|*[!0-9]*) continue ;; esac
+		_name=$(getent passwd "$_u" | cut -d: -f1)
+		[ -n "$_name" ] || continue
+		_sinks=$(su "$_name" -c "XDG_RUNTIME_DIR=$_rt pactl list short sinks" \
+			2>/dev/null)
+		printf '%s\n' "$_sinks" | grep -q . || continue
+		[ -z "$_fallback" ] && _fallback="$_name $_u"
+		if printf '%s\n' "$_sinks" | grep -v auto_null | grep -q .; then
+			echo "$_name $_u"
+			return
+		fi
+	done
+	[ -n "$_fallback" ] && echo "$_fallback"
 }
 
 # Only the units that actually exist here: this session has pipewire.service,

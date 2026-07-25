@@ -12,26 +12,23 @@
 
 fail=0
 
-# Derive the session user; this has moved between a system greeter account and
-# the ordinary user, so hardcoding a uid ages badly.
-# busybox ps has no -C, so go via pgrep and /proc rather than a ps flag that
-# silently produces nothing here.
-suser=""
-for p in pipewire pulseaudio; do
-	pid=$(pgrep -x "$p" 2>/dev/null | head -1)
-	if [ -n "$pid" ]; then
-		suser=$(getent passwd "$(awk '/^Uid:/ {print $2}' "/proc/$pid/status")" | cut -d: -f1)
-		break
-	fi
-done
+# Query the runtime dir that actually reaches a live server, not the server
+# process's own uid: the server can run under the greeter while the logged-in
+# user talks to it through /run/user/<their uid>. Asking the greeter's empty
+# session reported a false "no sink / no mic" while everything worked in the
+# user's session.
+. "$DEVICE_DIR/lib/audio-state.sh"
+# shellcheck disable=SC2046 # want the two fields word-split into $1 $2
+set -- $(_audio_client_env)
+suser=$1
+uid=$2
 
 if [ -z "$suser" ]; then
-	echo "FAIL: no sound server running - if the audio checks ran before this"
-	echo "      one, their restore did not put it back"
+	echo "FAIL: no reachable sound-server session - if the audio checks ran"
+	echo "      before this one, their restore did not put it back"
 	exit 1
 fi
-uid=$(id -u "$suser" 2>/dev/null)
-echo "PASS: sound server running as $suser (uid $uid)"
+echo "PASS: sound-server session as $suser (uid $uid)"
 
 pa() {
 	su "$suser" -c "XDG_RUNTIME_DIR=/run/user/$uid pactl $*" 2>/dev/null
