@@ -145,14 +145,40 @@ preflight_apk() {
 	printf '%s\n' "$_have" | grep -c . | while read -r n; do
 		echo "modules in package: $n"
 	done
+	_rc=0
 	if [ -n "$_missing" ]; then
 		for _m in $_missing; do
 			echo "FAIL: required module missing from package: $_m"
 		done
-		echo "FAIL - do not flash this build"
-		return 1
+		_rc=1
+	else
+		echo "PASS: every required module is present in the package"
 	fi
-	echo "PASS: every required module is present in the package"
+
+	# The device tree is worth the same scrutiny as the modules, and for the
+	# same reason: a node that quietly stopped being emitted looks like a
+	# driver bug on the device, with no log line to find. Checking it here
+	# means finding out before the package is anywhere near the phone.
+	_dtb=$(mktemp -d)
+	if tar xzf "$_apk" -C "$_dtb" 2>/dev/null &&
+		_f=$(find "$_dtb" -name 'sdm632-fairphone-fp3.dtb' | head -1) && [ -n "$_f" ]; then
+		while read -r _node; do
+			case "$_node" in '' | \#*) continue ;; esac
+			if strings "$_f" | grep -qi "$_node"; then
+				echo "PASS: device tree contains '$_node'"
+			else
+				echo "FAIL: device tree is missing '$_node'"
+				_rc=1
+			fi
+		done <"$TESTS_DIR/baseline/dt-nodes-required.txt"
+	else
+		echo "FAIL: no sdm632-fairphone-fp3.dtb in the package"
+		_rc=1
+	fi
+	rm -rf "$_dtb"
+
+	[ "$_rc" -eq 0 ] || echo "FAIL - do not flash this build"
+	return $_rc
 }
 
 if [ -n "$PREFLIGHT_APK" ]; then

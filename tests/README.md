@@ -22,8 +22,9 @@ export FP3_PW=…            # device password — never stored in this repo
 ./tests/fp3-selftest --arm-unlock          # then reboot, then unlock the phone
 ./tests/fp3-selftest --cold-unlock --only unlock
 
-# before flashing a build, with no device involved at all
-./tests/fp3-selftest --preflight-apk ~/…/linux-fp3-709-7.0.9-r4.apk
+# before flashing a build, with no device involved at all: are the required
+# modules and device-tree nodes actually in the package?
+./tests/fp3-selftest --preflight-apk ~/…/linux-fp3-709-7.0.9-r5.apk
 ```
 
 The battery takes several minutes and the suspend check drops the USB link, so

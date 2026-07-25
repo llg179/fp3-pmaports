@@ -1,0 +1,21 @@
+# Strings that must appear in the built device tree, one per line.
+#
+# The same job as modules-required.txt, one layer down: a DT node that quietly
+# stops being emitted produces a device where the driver never binds and the
+# kernel logs nothing at all, because there is nothing to bind to. That is a
+# genuinely confusing state to debug from the device end - so catch it here,
+# before the package is installed. Installing an unrelated package overwrote the
+# deployed DTB on 2026-07-25 and cost the camera exactly this way.
+#
+# Names verified against a built DTB rather than guessed: the codec is not
+# called "wcd9335" anywhere in the tree, it is a SLIMbus device addressed by
+# manufacturer and product id.
+#
+# Checked as case-insensitive substrings of the DTB's string table.
+
+# rear camera sensor
+imx363
+# WCD9335 codec on SLIMbus (manufacturer 0x217, product 0x1a0)
+slim217,1a0
+# the SLIMbus controller the codec hangs off
+slim-ngd
