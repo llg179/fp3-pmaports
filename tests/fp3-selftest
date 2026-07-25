@@ -26,6 +26,7 @@ KERNEL_PKG="linux-fp3-709"
 APKBUILD=""
 
 COLD_PHASE="none"
+ARM_UNLOCK=0
 ACOUSTIC=0
 DEVICE_DIR="/tmp/fp3-selftest"
 RESULT_DIR="/var/log/fp3-selftest"
@@ -52,16 +53,16 @@ Connection:
   --pin PIN            lockscreen PIN (or $FP3_PIN; needed by the cold checks)
 
 What to run:
-  --cold-phase call|unlock|none
-                       which cold-boot check owns this boot. The two cannot
-                       share one: the incoming call wakes the display and starts
-                       the call UI, which warms the very session whose cold
-                       unlock we measure. Default none.
+  --cold-unlock        judge the cold-unlock trace recorded at the last boot
+                       (arm it first with --arm-unlock, then reboot and unlock)
+  --arm-unlock         install the boot-time unlock sampler and exit; the
+                       measurement has to run without an SSH login, because
+                       logging in starts the very user session it measures
   --acoustic           enable the speaker->mic loopback checks (off by default:
                        they are audible and sensitive to ambient noise)
   --only LIST          run only these checks (comma-separated name fragments)
   --skip LIST          skip these checks
-  --no-cable --no-headset --no-wifi --no-modem --no-bt --no-call
+  --no-cable --no-headset --no-wifi --no-modem --no-bt
                        declare a physical dependency absent
 
 Coverage:
@@ -93,7 +94,8 @@ while [ $# -gt 0 ]; do
 	--host) FP3_HOST=$2; shift 2 ;;
 	--pw) FP3_PW=$2; shift 2 ;;
 	--pin) FP3_PIN=$2; shift 2 ;;
-	--cold-phase) COLD_PHASE=$2; shift 2 ;;
+	--cold-unlock) COLD_PHASE=unlock; shift ;;
+	--arm-unlock) ARM_UNLOCK=1; shift ;;
 	--acoustic) ACOUSTIC=1; shift ;;
 	--only) ONLY=$2; shift 2 ;;
 	--skip) SKIP=$2; shift 2 ;;
@@ -108,7 +110,6 @@ while [ $# -gt 0 ]; do
 	--no-wifi) DISABLED="$DISABLED wifi"; shift ;;
 	--no-modem) DISABLED="$DISABLED modem"; shift ;;
 	--no-bt) DISABLED="$DISABLED bt"; shift ;;
-	--no-call) DISABLED="$DISABLED call"; shift ;;
 	-h | --help) usage; exit 0 ;;
 	*) die "unknown option: $1 (try --help)" ;;
 	esac
@@ -116,10 +117,7 @@ done
 
 [ -n "$APKBUILD" ] || APKBUILD="$PMAPORTS/device/testing/$KERNEL_PKG/APKBUILD"
 
-case "$COLD_PHASE" in
-call | unlock | none) ;;
-*) die "--cold-phase must be call, unlock or none" ;;
-esac
+
 
 # --- host-only: check a built package before flashing it ------------------
 #
@@ -233,21 +231,36 @@ apkbuild_field() {
 
 # --- device preflight -----------------------------------------------------
 
-cold_state_ok() {
-	# Both cold checks need a freshly booted device that nobody has unlocked.
-	# Establish that up front rather than five minutes into the run.
-	_uptime=$(ssh_run 'cut -d. -f1 /proc/uptime' 2>/dev/null || echo 99999)
-	_locked=$(ssh_run "loginctl list-sessions --no-legend 2>/dev/null | awk '{print \$1}' | while read -r s; do loginctl show-session \"\$s\" -p LockedHint --value; done | grep -c yes" 2>/dev/null || echo 0)
-	if [ "$_uptime" -gt 1800 ]; then
-		echo "FAIL: uptime ${_uptime}s - the cold measurement needs a fresh boot"
-		return 1
-	fi
-	if [ "${_locked:-0}" -eq 0 ]; then
-		echo "FAIL: no locked session - somebody already unlocked the phone."
-		echo "      Reboot, leave it at the lockscreen, and run again."
-		return 1
-	fi
-	return 0
+# Arm the boot-time unlock sampler.
+#
+# The measurement cannot be driven over SSH: logging in as the user starts the
+# very systemd --user session whose cold start we are timing, so the number
+# would come out flattering and wrong. Instead the sampler runs from a boot-time
+# unit, the operator unlocks the phone with nobody connected, and the trace is
+# judged afterwards.
+#
+# The unit is deliberately After=multi-user.target: a boot-armed diagnostic that
+# blocks early boot hangs the device.
+arm_unlock() {
+	ssh_root "mkdir -p $DEVICE_DIR/lib $RESULT_DIR"
+	ssh_copy "$TESTS_DIR/lib/unlock-probe.py" "/tmp/unlock-probe.py"
+	ssh_root "cp /tmp/unlock-probe.py /root/unlock-probe.py"
+	ssh_root "rm -f $RESULT_DIR/cold-unlock.tsv"
+
+	_unit=/etc/systemd/system/fp3-unlock-probe.service
+	ssh_copy "$TESTS_DIR/lib/fp3-unlock-probe.service" "/tmp/fp3-unlock-probe.service"
+	ssh_root "cp /tmp/fp3-unlock-probe.service $_unit"
+	ssh_root "systemctl daemon-reload; systemctl enable fp3-unlock-probe.service"
+
+	cat <<EOF
+
+Armed. Now:
+  1. reboot the phone            (it will record for 240s from boot)
+  2. unlock it as you normally would, WITHOUT logging in over SSH first
+  3. ./tests/fp3-selftest --cold-unlock --only unlock
+
+The unit disarms itself once the trace has been judged.
+EOF
 }
 
 # --- check execution ------------------------------------------------------
@@ -295,6 +308,12 @@ wanted() {
 main() {
 	[ -n "$FP3_PW" ] || die "no device password: pass --pw or export FP3_PW"
 
+	if [ "$ARM_UNLOCK" -eq 1 ]; then
+		device_reachable || die "device $FP3_HOST unreachable"
+		arm_unlock
+		exit 0
+	fi
+
 	mkdir -p "$TESTS_DIR/../.selftest-runs" 2>/dev/null || true
 	RUN_LOG="${TMPDIR:-/tmp}/fp3-selftest-$RUN_ID.log"
 	: >"$RUN_LOG"
@@ -302,18 +321,21 @@ main() {
 	log_line "fp3-selftest run $RUN_ID  (cold-phase: $COLD_PHASE)"
 	log_line ""
 
+	# Capture, then print: piping straight into `grep -q` swallows the output,
+	# so a failing guard aborted the run with nothing on screen to explain why.
 	_fatal=0
 	log_line "-- coverage guards"
-	check_categories | tee -a "$RUN_LOG" | grep -q '^FAIL' && _fatal=1
+	_guard=$(check_categories)
+	printf '%s\n' "$_guard" | tee -a "$RUN_LOG"
+	case "$_guard" in *FAIL:*) _fatal=1 ;; esac
+
 	log_line "-- recipe drift"
-	check_mirror_drift | tee -a "$RUN_LOG" | grep -q '^FAIL' && _fatal=1
+	_guard=$(check_mirror_drift)
+	printf '%s\n' "$_guard" | tee -a "$RUN_LOG"
+	case "$_guard" in *FAIL:*) _fatal=1 ;; esac
 
 	log_line "-- device"
 	device_reachable || die "device $FP3_HOST unreachable"
-
-	if [ "$COLD_PHASE" != "none" ]; then
-		cold_state_ok | tee -a "$RUN_LOG" | grep -q '^FAIL' && _fatal=1
-	fi
 
 	[ "$_fatal" -eq 0 ] || {
 		log_line ""
@@ -419,7 +441,9 @@ summarise() {
 
 	log_line ""
 	[ -n "$_gaps" ] && log_line "UNCOVERED CATEGORIES:$_gaps (pass --allow-uncovered CAT to accept)"
-	[ "$COLD_PHASE" = none ] && log_line "NOTE: no cold-boot check ran (--cold-phase none)"
+	if [ "$COLD_PHASE" = none ]; then
+		log_line "NOTE: unlock latency not judged (arm it with --arm-unlock, reboot, unlock, then --cold-unlock)"
+	fi
 	log_line "log: $RUN_LOG  (device copy: $RESULT_DIR/$RUN_ID.log)"
 
 	if [ "$_failed" -gt 0 ] || [ -n "$_gaps" ]; then

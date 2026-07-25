@@ -1,0 +1,15 @@
+[Unit]
+Description=fp3-selftest cold unlock probe (one boot, then disarm)
+# Never before basic.target: a boot-armed diagnostic that blocks early boot
+# hangs the device. multi-user.target is late enough to be harmless, and still
+# well before anyone can type a PIN.
+After=multi-user.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /root/unlock-probe.py 240 /var/log/fp3-selftest/cold-unlock.tsv
+TimeoutStartSec=10
+Restart=no
+
+[Install]
+WantedBy=multi-user.target

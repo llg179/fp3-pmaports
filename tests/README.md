@@ -13,14 +13,14 @@ that regression so it cannot come back silently.
 
 ```sh
 export FP3_PW=…            # device password — never stored in this repo
-export FP3_PIN=…           # lockscreen PIN, only needed by the cold checks
+# (no PIN needed: the cold unlock is measured passively, you type it yourself)
 
 # the canonical run
 ./tests/fp3-selftest --no-cable --no-bt
 
-# the full gate is TWO boots, because the two cold checks cannot share one
-./tests/fp3-selftest --cold-phase call     # boot 1: incoming call on the lockscreen
-./tests/fp3-selftest --cold-phase unlock   # boot 2: unlock latency
+# the cold unlock is a three-step measurement, see below
+./tests/fp3-selftest --arm-unlock          # then reboot, then unlock the phone
+./tests/fp3-selftest --cold-unlock --only unlock
 
 # before flashing a build, with no device involved at all
 ./tests/fp3-selftest --preflight-apk ~/…/linux-fp3-709-7.0.9-r4.apk
@@ -39,8 +39,7 @@ until grep -qE '^(PASS|FAIL) - ' /tmp/selftest.log; do sleep 15; done
 | check | proves |
 |---|---|
 | `01-identity` | the running kernel is the one you think you are testing — build stamp, package version, source commit, device model. Blocks everything else, and reports **all four** results rather than stopping at the first |
-| `02-incoming-call` | on a cold, locked device, an incoming call raises an answerable panel (modem `ringing-in` **and** a screenshot). Operator-assisted: you place the call |
-| `03-unlock-latency` | how long from PIN to home screen, cold vs warm — and that the two match |
+| `03-unlock-latency` | how long phosh takes to start on a cold unlock — and, once the session is pre-warmed, that it no longer starts at all |
 | `05-modules` | required modules built; module tree matches the package; no hot-swap leftovers |
 | `10-health` | no panic/oops/BUG/remoteproc crash; rootfs has room; no new failed units |
 | `15-hwtest` | display, input devices, camera presence and vibrator against a recorded reference |
@@ -65,9 +64,10 @@ listed category must have a check, and every `fp3-7.0.9-*` branch on the fork
 must be listed. If a check is skipped, its category is reported uncovered and
 the run does not pass without `--allow-uncovered CAT`.
 
-**The two cold checks may not share a boot.** An incoming call wakes the display
-and starts the call UI, which warms the very session whose *cold* unlock the
-other check measures. `--cold-phase` picks one per boot.
+**The cold unlock cannot be measured over SSH.** Logging in as the user starts
+the very `systemd --user` session whose cold start is being timed. So the probe
+runs from a boot-time unit instead: `--arm-unlock`, reboot, unlock the phone with
+nobody connected, then `--cold-unlock` judges the recorded trace.
 
 ## Adding a check
 
@@ -78,8 +78,8 @@ subpackage later without rewriting. Declare metadata in header comments:
 
 ```sh
 # Category: voice      # counts towards topic-branch coverage
-# Requires: modem call # skipped by --no-modem / --no-call
-# ColdPhase: call      # needs a fresh boot in that cold phase
+# Requires: modem      # skipped by --no-modem
+# ColdPhase: unlock    # judges a trace recorded at the previous boot
 # Detached: yes        # will drop the link; run detached and read the result file
 ```
 
@@ -133,3 +133,41 @@ The `hwtest` reference lives on the device at
 good, then edit it so components that *should* work read `True` even if they are
 broken today — otherwise the breakage becomes the baseline and stops being
 reported.
+
+## What the cold unlock actually is
+
+Worth knowing before optimising it: on this device a cold unlock is not a
+lockscreen being dismissed. phosh is not running at all. The phone sits at the
+greetd/phrog greeter as uid 113, and authenticating starts an entire user
+session from scratch. Of the ~15s a human perceives, roughly 7s is
+authentication and session setup before phosh exists, and ~8.4s is phosh
+starting up to idle (measured 2026-07-25).
+
+`loginctl show-user fp3 -p Linger` is `no`, so nothing of the session exists
+before login. That is the lever: pre-warm the session and the cold path stops
+paying for it — at which point `03-unlock-latency` passes because phosh is
+already running when you unlock, rather than because it started quickly.
+
+### Rejected end markers
+
+The "home screen is up" signal was chosen by measurement, not assumption:
+
+- **phosh CPU time going quiet — chosen.** During startup its deltas run to tens
+  or hundreds of jiffies per sample; at idle they are exactly +1. Sharp, passive,
+  no tooling.
+- **Queued `systemd --user` jobs — disqualified, and instructively so.** Asking
+  for them with `systemctl -M user@ --user list-jobs` *starts the user manager*.
+  The probe causes what it observes.
+- **MDSS/DSI interrupts as a page-flip proxy — never settles.** The display keeps
+  refreshing at ~15 interrupts per sample forever, so there is no quiet to find.
+
+### Why there is no screenshot anywhere in this suite
+
+Every capture path on this device fails: `grim`/wlr-screencopy gets "no supported
+format found" from phoc, the gnome-shell Screenshot D-Bus method returns false,
+`/dev/fb0` reads all-zero even with the display awake and rendering
+(`bl_power=0`, `dpms=On`, `blank` stuck at 4 — fbdev emulation is not wired to
+the compositor), and xdg-desktop-portal is interactive and needs a user session
+the greeter does not have. Where UI evidence is needed, D-Bus object state is
+the substitute — a `/org/gnome/Calls/window/N` object, for instance, is a claim
+about what is on screen rather than a log line about what was logged.

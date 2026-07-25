@@ -1,0 +1,11 @@
+# Cold-unlock budget, in seconds of phosh startup (birth to idle).
+#
+# Measured 2026-07-25 on linux-fp3-709 r0: 8.4s. A human perceives about 15s in
+# total; the rest is authentication and session setup before phosh exists, which
+# this probe cannot see.
+#
+# COLD_MAX is a regression gate, not a target. The target is to stop paying this
+# cost at all by pre-warming the user session before login - at which point
+# phosh is already running at unlock time and the check passes on that basis
+# instead, without ever measuring a startup.
+COLD_MAX=10.0
