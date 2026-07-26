@@ -11,7 +11,7 @@ microphone both work through pulseaudio, surviving a cold reboot.
 ```
 ucm2/conf.d/Fairphone_3/Fairphone_3.conf   -> /usr/share/alsa/ucm2/conf.d/Fairphone_3/
 ucm2/Fairphone/fp3/HiFi.conf               -> /usr/share/alsa/ucm2/Fairphone/fp3/
-ucm2/Fairphone/fp3/VoiceCall.conf          -> /usr/share/alsa/ucm2/Fairphone/fp3/   (call routing, not wired to pulse yet)
+ucm2/Fairphone/fp3/VoiceCall.conf          -> /usr/share/alsa/ucm2/Fairphone/fp3/   (call routing; registered in the master conf)
 pulse/90-fp3-mic.pa                         -> /etc/pulse/default.pa.d/
 systemd/fp3-mic-select                      -> /usr/local/bin/
 systemd/fp3-mic-select.service             -> /etc/systemd/system/   (systemctl enable)
@@ -88,7 +88,51 @@ jack detection needs MBHC support in the wcd9335 driver, which mainline lacks.
 | Earpiece / Headphones playback | routed and openable; separate card profiles |
 | Handset microphone (DMIC0) | works through pulseaudio as `fp3-handset-mic` (verified) |
 | Headset microphone (AMIC2) | works through pulseaudio, selected with `fp3-mic-select headset` (verified acoustically); no auto jack detection |
-| Voice call | `VoiceCall.conf` has the SLIMbus voice-mixer routing; pulseaudio cannot open the voice PCM (hw:0,4) as an ordinary profile, so wiring calls needs callaudiod + a real call — not yet done |
+| Voice call | **works, verified with live calls** — earpiece + handset mic, headset + headset mic, and speakerphone (Quinary MI2S). Needs the `Voice Call` verb *and* the patched `q6voiced` (see below); pulseaudio still cannot own the voice PCM, callaudiod integration is the remaining piece |
+
+
+## Voice calls (what actually makes them audible)
+
+Live-call verified on postmarketOS with kernel `integration/7.1.3`. Three things
+have to line up; miss any one and the call is silent:
+
+1. **The `Voice Call` UCM verb must be installed *and registered*.** Shipping
+   `VoiceCall.conf` is not enough — `ucm2/conf.d/Fairphone_3/Fairphone_3.conf`
+   has to list it, otherwise `alsaucm set _verb "Voice Call"` cannot find it.
+
+   ```sh
+   alsaucm -c Fairphone_3 set _verb "Voice Call" set _enadev Earpiece   set _enadev Mic
+   alsaucm -c Fairphone_3 set _verb "Voice Call" set _enadev Headphones set _enadev Headset
+   alsaucm -c Fairphone_3 set _verb "Voice Call" set _enadev Speaker    set _enadev Mic
+   ```
+
+2. **The voice PCM (`hw:0,4`) must be *started*, not just prepared.** Upstream
+   `q6voiced` only opens + prepares it, so the ASoC frontend stays in the
+   `prepare` state, DPCM never triggers the backends, and no codec/amplifier DAI
+   ever starts. The playback direction additionally needs XRUN detection off
+   (`stop_threshold = boundary`), because the voice PCM carries no data and the
+   ALSA core refuses to start an empty playback stream (`-EPIPE`). The patched
+   package in `../q6voiced/` does both.
+
+3. **Nothing else may hold the card.** pulseaudio and callaudiod must not own
+   `hw:0,4` while the call runs.
+
+Ground truth while debugging is the DPCM state file — both directions and both
+backends must read `start`:
+
+```sh
+cat "/sys/kernel/debug/asoc/Fairphone 3/VoiceMMode1/state"
+```
+
+Traps that cost real debugging time:
+
+* With a headset plugged in, an `Earpiece` test *sounds* silent — the codec
+  routes to `EAR`/`EAR PA` while `HPHL` stays off. Check the DAPM widgets.
+* Killing a test harness with `SIGKILL` skips the UCM `DisableSequence`, so the
+  previous device stays in the graph. The next verb then gives the frontend two
+  backends, `hw_params` fails with `-22`, and the AFE port reports
+  `ADSP_EALREADY` — which looks exactly like "the downlink broke again". Reset
+  with `alsaucm set _verb HiFi` first.
 
 ## Installing
 

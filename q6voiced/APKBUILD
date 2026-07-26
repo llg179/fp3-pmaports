@@ -1,0 +1,45 @@
+# Maintainer: Lajosházi, László Gergely <lajoshazilg@gmail.com>
+#
+# Fork of Alpine's community/q6voiced with one added patch: the daemon only
+# opened and *prepared* the voice PCM, so the ASoC frontend never left the
+# "prepare" state, DPCM never triggered the backends, and the call stayed silent
+# in both directions on the Fairphone 3. See
+# 0001-q6voiced-actually-start-the-voice-PCM-streams.patch.
+#
+# Drop this package again once the fix is in Alpine/upstream q6voiced.
+pkgname=q6voiced
+pkgver=0.3.1
+pkgrel=1
+pkgdesc="Userspace QDSP6 voice driver daemon listening on oFono/ModemManager"
+url="https://gitlab.postmarketos.org/postmarketOS/q6voiced/"
+arch="all"
+license="MIT"
+makedepends="
+	alsa-lib-dev
+	dbus-dev
+	meson
+	"
+subpackages="$pkgname-doc $pkgname-openrc $pkgname-systemd"
+source="https://gitlab.postmarketos.org/postmarketOS/q6voiced/-/archive/$pkgver/q6voiced-$pkgver.tar.gz
+	0001-q6voiced-actually-start-the-voice-PCM-streams.patch
+	"
+
+build() {
+	abuild-meson \
+		output .
+	meson compile -C output
+}
+
+check() {
+	meson test --print-errorlogs -C output
+}
+
+package() {
+	DESTDIR="$pkgdir" meson install --no-rebuild -C output
+	install -Dm644 LICENSE -t "$pkgdir"/usr/share/licenses/$pkgname/
+}
+
+sha512sums="
+ab41adb9724747054b660794df7bcb73afb55f5ce086a5b3f9b1c8107048a7febb54a6e3415a47f01d2b715f9012a9508ca17a9f84b72061503d214b01b1bbb0  q6voiced-0.3.1.tar.gz
+915b55f4b5ee4f7cb477905506066600225deeecd413a4955226fdbad974e015e053f7fc76700da615b5639daab01adc50b5b5a22c2c4556e4ae6073049c0ed4  0001-q6voiced-actually-start-the-voice-PCM-streams.patch
+"
