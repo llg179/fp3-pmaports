@@ -352,6 +352,65 @@ allows disclosed AI assistance, is the one open upstream — which is what the
   notes, ground-truth techniques, the guard-railed test loop, and the
   `msm8953-mainline-pr` skill for preparing a `submit` series
 
+## Device tree provenance
+
+Which `.dts`/`.dtsi` files the FP3 device tree is actually built from, and where
+each one came from. Measured on `integration/7.1.3`; the shape does not change
+across a base bump, only the commit hashes do.
+
+The board `.dtb` is assembled from **five** files through the `#include` chain,
+and only **two** of them carry any of our work:
+
+| file | lines | commits | where it comes from |
+|---|---|---|---|
+| `sdm632-fairphone-fp3.dts` | 887 | 21 | Luca Weiss' upstream FP3 board file (since 2022-02-20) **+ one commit of ours** (`ca289613`, +358) |
+| `pmi632.dtsi` | 230 | 6 | upstream PMI632 PMIC description (`a1f0f2eb`) **+ one commit of ours** (`ca289613`, +21 — the charger node) |
+| `sdm632.dtsi` | 142 | 8 | upstream only — `msm8953.dtsi` plus the SDM632 CPU/rpmpd overrides; untouched |
+| `msm8953.dtsi` | 3435 | 84 | upstream msm8953-mainline SoC file; untouched |
+| `pm8953.dtsi` | 200 | 10 | upstream PM8953 PMIC file; untouched |
+
+Note that the `wcd_intr_default` / `cdc_reset_active` (`&tlmm`) and
+`tasha_mclk_default` (`&pm8953_gpios`) pin muxes live in the **board** file as
+`&`-references, not in the SoC-level files — which is why the bottom three rows
+stay untouched.
+
+### Genealogy of the board file (21 commits, oldest first)
+
+| commit | origin |
+|---|---|
+| `308b26cddb04` initial dts for Fairphone 3 | Luca Weiss, 2022-02-20 |
+| `b08f5cbd69dc`, `372698e8df26` gpio-key / RPM-regulator node names | tree-wide dtschema alignment, not FP3-specific |
+| `6d9a666d49bf` touchscreen · `29dcf3c1a815` NFC · `0c4f10917d22` notification LED · `5b006a82a2bb` WiFi/BT · `2dee68e77cb5` **LPASS** · `90053b1574f8` USB-C · `ffaa4b5d5d07` vibrator | Luca Weiss, one commit per feature |
+| `09a3840bcb72` status properties last · `a4600b160eca` newlines between regulators | pure style commits, no functional change |
+| `9ab813d5191f` adsp+wcnss firmware-name · `d0c38cbe3556` modem · `4ea55ecb4990` display+GPU · `9e834e768d0b` camera fixed regulators · `cfc22c2121cb` CCI + EEPROM | Luca Weiss |
+| `4fd8c23afa2e` **AW8898 amplifier** | Luca Weiss, 2025-04-06 — the `FROMLIST v2` subject prefix says it plainly: **not in mainline yet**, carried by msm8953-mainline |
+| `4335b0ae1eb6` enable speaker | Luca Weiss, 2023-04-18 — builds on the AW8898 node, so it is carried along with it |
+| `60f6f604cf3c` enable venus | Luca Weiss, 2026-05-06 |
+| **`ca2896133002`** integrated DT (audio + charger + camera) | **ours**, 2026-07-25 |
+
+### What our commit adds, and what it was derived from
+
+`ca289613` adds 375 of the 887 lines, in four separable blocks:
+
+| block | nodes | derived from |
+|---|---|---|
+| **audio** | `slimbam: dma-controller@c104000`, `slim_msm: slim-ngd@c140000`, `tasha_ifd: ifd@0,0`, `wcd9335: codec@1,0` (`slim217,1a0`), `divclk1_cdc` (gpio-gate-clock), `wcd_vout_1p8`, three pin-mux nodes, and the `slim-playback`/`slim-capture` DAI links inside `&sound_card` | addresses and wiring from the downstream 4.9 tree (`msm8953.dtsi`, `msm8953-audio.dtsi`, `msm8953-ext-codec-mtp.dts`); the **node shape and the `slim217,1a0` compatible follow the existing mainline WCD9335 boards** (DragonBoard 820c, OnePlus 3), not the downstream `qcom,tasha-slim-pgd` scheme |
+| **camera** | `camera@1a` (`sony,imx363`) plus the `&camss` `port@0` / `csiphy0_ep` graph | downstream `msm8953-camera-sensor-*.dtsi` data, translated to the mainline camss graph binding; sits on top of Luca's `9e834e76` + `cfc22c21` regulator/CCI groundwork |
+| **charger** | `&pmi632_charger` and `fp3_battery` (`simple-battery`) | the counterpart of the new charger node added to `pmi632.dtsi` |
+| **sound card** | extends `&sound_card` rather than rewriting it | the base already carries the AW8898/MI2S speaker path (`4fd8c23a` + `4335b0ae`) |
+
+This one commit is **integration-only** — its own message says so, and the
+per-subsystem split for upstream lives on the `submit/<base>/<category>`
+branches: `submit/7.1.3/audio` (`ef0d6d3d`), `submit/7.1.3/camera` (`f42f8162`),
+`submit/7.1.3/charger` (`5c0aa3dd` + `78bf6ee3`). `submit/7.1.3/voice` carries no
+DTS at all — it is pure driver routing, which is correct.
+
+One caveat on the strength of the evidence above: which of the Luca Weiss commits
+are already in `torvalds/linux` and which are carried only by msm8953-mainline
+cannot be told from a shallow clone with no torvalds remote. The one hard signal
+is the `FROMLIST` prefix on `4fd8c23afa2e`. For an exact split, query the mainline
+history per file with `gh api "repos/torvalds/linux/commits?path=..."`.
+
 ## License
 
 GPL-2.0-only, matching the kernel it builds.
