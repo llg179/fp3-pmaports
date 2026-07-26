@@ -1,6 +1,6 @@
 # Cold-unlock budget, in seconds of phosh startup (birth to idle).
 #
-# Measured 2026-07-25 on linux-fp3-709 r0: 8.4s. A human perceives about 15s in
+# Measured 2026-07-25 on the 7.0.9 base r0: 8.4s. A human perceives about 15s in
 # total; the rest is authentication and session setup before phosh exists, which
 # this probe cannot see.
 #

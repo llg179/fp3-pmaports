@@ -24,7 +24,7 @@ export FP3_PW=…            # device password — never stored in this repo
 
 # before flashing a build, with no device involved at all: are the required
 # modules and device-tree nodes actually in the package?
-./tests/fp3-selftest --preflight-apk ~/…/linux-fp3-709-7.0.9-r5.apk
+./tests/fp3-selftest --preflight-apk ~/…/linux-fp3-7.1.3-r0.apk
 ```
 
 The battery takes several minutes and the suspend check drops the USB link, so
@@ -60,8 +60,8 @@ mid-bring-up fails until it works, and then goes green on its own. The camera is
 in exactly that state today.
 
 **An untested category cannot read as green.** `checks/CATEGORIES` lists the
-`fp3-integration` topic categories, and the runner guards both directions: every
-listed category must have a check, and every `fp3-7.0.9-*` branch on the fork
+topic categories, and the runner guards both directions: every
+listed category must have a check, and every `wip/<base>/*` branch on the fork
 must be listed. If a check is skipped, its category is reported uncovered and
 the run does not pass without `--allow-uncovered CAT`.
 

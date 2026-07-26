@@ -22,7 +22,7 @@ REPO_ROOT=$(dirname "$TESTS_DIR")
 # builds from. It is NOT this repo: our kernel recipes are untracked there, and
 # this repo is their versioned home. Both matter, see check_mirror_drift.
 PMAPORTS="${FP3_PMAPORTS:-/mnt/1TB/pmos/pmaports}"
-KERNEL_PKG="linux-fp3-709"
+KERNEL_PKG="linux-fp3"
 APKBUILD=""
 
 COLD_PHASE="none"
@@ -69,8 +69,8 @@ What to run:
 
 Coverage:
   --allow-uncovered CATEGORY
-                       permit an overall PASS while this fp3-integration
-                       category has no check result
+                       permit an overall PASS while this category
+                       has no check result
   --offline            skip the topic-branch/CATEGORIES cross-check
   --allow-drift        run even though the versioned recipe and the build
                        working copy disagree - use while a build is in flight.
@@ -79,7 +79,7 @@ Coverage:
 Paths:
   --pmaports DIR       build working directory (default /mnt/1TB/pmos/pmaports)
   --apkbuild FILE      kernel APKBUILD to take the expected identity from
-  --kernel-pkg NAME    kernel package name (default linux-fp3-709)
+  --kernel-pkg NAME    kernel package name (default linux-fp3)
 
 Host-only mode:
   --preflight-apk FILE check a built kernel .apk for the required modules
@@ -193,9 +193,11 @@ categories() {
 }
 
 # Guard 1: every listed category has at least one check.
-# Guard 2: every fp3-7.0.9-* topic branch on the fork is listed.
-# One direction is not enough - the first catches a category added without a
-# check, the second catches a new topic branch nobody listed at all.
+# Guard 2: every wip/<base>/<category> branch on the fork is listed, where <base>
+# is the current kernel base (the package pkgver). One direction is not enough -
+# the first catches a category added without a check, the second catches a new
+# topic branch nobody listed at all. The branch names carry no version except
+# the base segment, so the guard follows whatever base the package is on.
 check_categories() {
 	_rc=0
 	for _cat in $(categories); do
@@ -210,23 +212,27 @@ check_categories() {
 		return $_rc
 	fi
 
+	# The current base is the package pkgver - the single place the version
+	# lives. wip/<base>/<category> are the working topic branches for it.
+	_base=$(sed -n 's/^pkgver=//p' "$PMAPORTS/device/testing/$KERNEL_PKG/APKBUILD" 2>/dev/null)
+	if [ -z "$_base" ]; then
+		echo "FAIL: cannot read pkgver from $KERNEL_PKG to find the current base"
+		return 1
+	fi
+
 	# Port 443: a plain-SSH (port 22) git operation stalls on this network.
 	_fork="ssh://git@ssh.github.com:443/llg179/linux.git"
-	if ! _heads=$(git ls-remote --heads "$_fork" 'refs/heads/fp3-*' 2>/dev/null); then
+	if ! _heads=$(git ls-remote --heads "$_fork" "refs/heads/wip/$_base/*" 2>/dev/null); then
 		echo "FAIL: cannot reach the kernel fork to cross-check topic branches"
 		echo "      (pass --offline to run without this guard)"
 		return 1
 	fi
 	for _ref in $(printf '%s\n' "$_heads" | awk '{print $2}'); do
-		_branch=${_ref#refs/heads/}
-		case "$_branch" in
-		*-wip) continue ;;		# debug branch, carries no category
-		fp3-integration) continue ;;
-		fp3-*.*.*-*) ;;			# a real topic branch
-		*) continue ;;
+		_branch=${_ref#refs/heads/}		# wip/7.1.3/audio
+		_cat=${_branch##*/}			# audio
+		case "$_cat" in
+		*-debug) continue ;;		# debug offshoot, carries no category
 		esac
-		# fp3-7.0.9-audio -> audio
-		_cat=${_branch##*-}
 		if ! categories | grep -qx "$_cat"; then
 			echo "FAIL: topic branch '$_branch' has no '$_cat' entry in checks/CATEGORIES"
 			_rc=1

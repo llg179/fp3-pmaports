@@ -62,7 +62,7 @@ wait_for_device() {
 # Checks declare their own requirements in header comments so the runner never
 # holds a second, drift-prone copy of that knowledge:
 #
-#   # Category: voice          -> counts towards fp3-integration topic coverage
+#   # Category: voice          -> counts towards integration topic coverage
 #   # Requires: modem call     -> skipped when --no-modem / --no-call is given
 #   # ColdPhase: call          -> needs a fresh boot in that cold phase
 #

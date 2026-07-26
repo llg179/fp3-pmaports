@@ -10,7 +10,7 @@ fail=0
 say() { echo "$1: $2"; }
 
 # 1. Build stamp. The APKBUILD sets KBUILD_BUILD_VERSION="$((pkgrel + 1))-$_flavor",
-#    so pkgrel 3 must show up as "#4-fp3-709" in uname -v. This is exact, cheap,
+#    so pkgrel 3 must show up as "#4-fp3" in uname -v. This is exact, cheap,
 #    and impossible to fake by reinstalling userspace.
 want_stamp="#$((EXP_PKGREL + 1))-$EXP_FLAVOR"
 have_stamp=$(uname -v)
@@ -46,7 +46,7 @@ if [ -f "$commit_file" ]; then
 	fi
 else
 	say FAIL "no $commit_file - this package predates the commit stamp, so the"
-	say FAIL "  running kernel cannot be tied to an fp3-integration commit"
+	say FAIL "  running kernel cannot be tied to an integration/<base> commit"
 	fail=1
 fi
 
