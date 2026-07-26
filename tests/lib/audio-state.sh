@@ -131,17 +131,17 @@ audio_cset() {
 # "RX Volume" (0..255 = -127.5..0 dB in 0.5 dB steps; 255 = 0 dB = full output,
 # which is how it boots). A check that plays a tone through the speaker is
 # therefore at full volume unless it says otherwise, which is needlessly loud.
-# speaker_half lowers it by 6 dB (half the amplitude) for the duration of a
-# check; that is a clearly quieter level that still leaves the 1 kHz tone far
-# above the acoustic-loopback detection margin, so the checks keep passing.
-# Pair it with speaker_restore. Addressed on hw:0 directly so it works whether
-# or not the sound server is running (see AUDIO_CARD note above). Tune HALF if a
-# different level is wanted - it is a plain 0..255 value.
+# speaker_quiet lowers it by 12 dB (a quarter of the amplitude) for the duration
+# of a check; that is clearly quieter yet still leaves the 1 kHz tone well above
+# the acoustic-loopback detection margin, so the checks keep passing. Pair it
+# with speaker_restore. Addressed on hw:0 directly so it works whether or not the
+# sound server is running (see AUDIO_CARD note above). Tune QUIET if a different
+# level is wanted - it is a plain 0..255 value.
 AW8898_VOL_FULL=255
-AW8898_VOL_HALF=243		# 255 - 12 steps of 0.5 dB = -6 dB
+AW8898_VOL_QUIET=231		# 255 - 24 steps of 0.5 dB = -12 dB (quarter amplitude)
 
-speaker_half() {
-	amixer -D "$AUDIO_CARD" -q cset "name=RX Volume" "$AW8898_VOL_HALF" \
+speaker_quiet() {
+	amixer -D "$AUDIO_CARD" -q cset "name=RX Volume" "$AW8898_VOL_QUIET" \
 		>/dev/null 2>&1
 }
 

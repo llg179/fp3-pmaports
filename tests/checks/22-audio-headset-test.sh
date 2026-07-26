@@ -28,9 +28,9 @@ if [ "$fail" -ne 0 ]; then
 fi
 
 # alsabat plays a tone and FFTs what comes back; rc 0 means it found its own
-# frequency in the capture. Half volume - loud enough to reach the mic, quiet
+# frequency in the capture. Quarter volume - loud enough to reach the mic, quiet
 # enough not to be a nuisance.
-speaker_half
+speaker_quiet
 out=$(alsabat -D "$AUDIO_CARD" -P hw:0,0 -C hw:0,1 -c 1 -r 48000 -F 1000 2>&1)
 rc=$?
 speaker_restore

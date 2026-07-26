@@ -40,7 +40,7 @@ if [ ! -f "$REF" ]; then
 	exit 1
 fi
 
-speaker_half
+speaker_quiet
 out=$(hwtest --formatter MarkdownTable --verify "$REF" 2>&1)
 rc=$?
 speaker_restore
