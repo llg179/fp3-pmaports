@@ -136,6 +136,20 @@ backends must read `start`:
 cat "/sys/kernel/debug/asoc/Fairphone 3/VoiceMMode1/state"
 ```
 
+No ringtone on an incoming call is usually **not** an audio-path problem:
+feedbackd ships a `quiet` profile on this image, which suppresses sound feedback
+and leaves only vibration and the LED. Turn it on per user:
+
+```sh
+gsettings set org.sigxcpu.feedbackd profile 'full'
+# verify: fbcli -E phone-incoming-call  should create a sink-input for ~4 s
+```
+
+The ringtone itself comes from `sound-theme-freedesktop`
+(`/usr/share/sounds/freedesktop/stereo/phone-incoming-call.oga`) and plays
+through the ordinary HiFi sink - `fp3-voiced` only takes over when the call goes
+`active`, so ringing is unaffected by the call routing.
+
 Traps that cost real debugging time:
 
 * With a headset plugged in, an `Earpiece` test *sounds* silent — the codec
