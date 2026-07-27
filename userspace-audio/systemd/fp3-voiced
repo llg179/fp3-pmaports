@@ -336,6 +336,9 @@ def open_leg(stream, label, playback):
 # hear across: -24 dB at the bottom, +26 dB at the top.
 RX_VOL_MAX = 110
 RX_VOL_MIN = 60
+# aw8898 "RX Volume": 0..255 in 0.5 dB steps, 255 == 0 dB
+SPK_VOL_MAX = 255
+SPK_VOL_MIN = 160
 
 
 def pa_sink_volume_pct():
@@ -350,27 +353,36 @@ def pa_sink_volume_pct():
     return None
 
 
+def _cset(name, value):
+    subprocess.run(["amixer", "-c", "0", "cset", "name=" + name, str(value)],
+                   capture_output=True)
+
+
 def mirror_volume(output, pct):
-    """Apply pulseaudio's sink volume to the codec gain in the voice path.
+    """Apply pulseaudio's sink volume to the gain that carries the current output.
 
     Handing pulseaudio the Voice Call profile would do this by itself, but that
     also puts its media sink on the same SLIMbus backend as the call, which
-    reconfigures the codec's slim stream and leaves the earpiece silent (the
-    speaker path over MI2S has no per-channel config and survives it). So keep
-    pulseaudio off the backend and mirror the volume instead.
+    reconfigures the codec's slim stream and leaves the earpiece silent. So keep
+    pulseaudio off the backend and mirror the volume instead - and mirror it
+    onto the control that is really in the path, so that turning the volume down
+    on speakerphone does not just quieten an earpiece nobody is holding.
     """
-    if output == "Speaker" or pct is None:
-        return                       # the speaker amp has no gain control here
-    ctl = "RX0 Mix Digital Volume" if output == "Earpiece" else "RX1 Mix Digital Volume"
-    val = RX_VOL_MIN + (RX_VOL_MAX - RX_VOL_MIN) * max(0, min(100, pct)) // 100
-    log("volume %d%% -> %s %d" % (pct, ctl.split()[0], val))
-    subprocess.run(["amixer", "-c", "0", "cset", "name=" + ctl, str(val)],
-                   capture_output=True)
+    if pct is None:
+        return
+    pct = max(0, min(100, pct))
+    if output == "Speaker":
+        val = SPK_VOL_MIN + (SPK_VOL_MAX - SPK_VOL_MIN) * pct // 100
+        _cset("RX Volume", val)                      # the aw8898 amplifier
+        log("volume %d%% -> speaker RX Volume %d" % (pct, val))
+        return
+    val = RX_VOL_MIN + (RX_VOL_MAX - RX_VOL_MIN) * pct // 100
     if output == "Headphones":
-        subprocess.run(["amixer", "-c", "0", "cset",
-                        "name=RX2 Mix Digital Volume", str(val)],
-                       capture_output=True)
-
+        _cset("RX1 Mix Digital Volume", val)
+        _cset("RX2 Mix Digital Volume", val)
+    else:
+        _cset("RX0 Mix Digital Volume", val)
+    log("volume %d%% -> %s %d" % (pct, output, val))
 
 def _jack(name):
     out = subprocess.run(["amixer", "-c", "0", "cget", "iface=CARD,name=" + name],
@@ -393,6 +405,9 @@ def jack_plugged():
     return jack_state()[0]
 
 
+_buttons_ref = []
+
+
 def wanted_output(speaker, plugged):
     if speaker:
         return "Speaker"
@@ -410,6 +425,7 @@ class ButtonWatch:
 
     def __init__(self):
         self.mute = None
+        self.muted = False        # last requested state, re-applied after a switch
         self.speaker = None
         self.proc = None
 
@@ -453,6 +469,7 @@ class ButtonWatch:
             elif line.startswith("boolean") and member:
                 val = line.endswith("true")
                 if member == "MuteMic":
+                    self.muted = val
                     set_mic_muted(val)          # instant, not on the next poll
                 elif member == "EnableSpeaker":
                     self.speaker = val
@@ -480,7 +497,7 @@ class Session:
     def start(self):
         # a plugged headset wins over whatever pulseaudio was routed to
         self.output = self.forced_output or wanted_output(False, jack_plugged())
-        mic = "Headset" if (self.output == "Headphones" and jack_state()[1]) else "Mic"
+        mic = "Headset" if jack_state()[1] else "Mic"   # follows the jack, not the output
         # Order matters. Whoever starts the AFE port configures it, and a second
         # start only answers ADSP_EALREADY - so the voice path has to get there
         # first. Switching the pulseaudio profile opens its media sink on the
@@ -499,6 +516,8 @@ class Session:
         log("call audio up (%s + %s)" % (self.output, mic))
 
         mirror_volume(self.output, pa_sink_volume_pct())
+        if _buttons_ref and _buttons_ref[0].muted:
+            set_mic_muted(True)          # a re-route re-enabled the muted mixer
         time.sleep(1)
         snapshot("up")
 
@@ -598,6 +617,7 @@ def main():
     log("fp3-voiced: watching ModemManager for calls")
     session = Session()
     buttons = ButtonWatch()
+    _buttons_ref.append(buttons)
     buttons.start()
     ticks = 0
     last_volume = None
