@@ -139,7 +139,12 @@ Two traps worth knowing before the first fetch:
 
 ### The procedure
 
+Everything from here runs **in the kernel checkout** unless a step says
+otherwise; the two steps that touch the package say where they run.
+
 ```sh
+cd linux-fp3
+
 # 0. fetch the new base (see the slash trap above) and give it a local ref, so
 #    the steps below can name it instead of carrying a SHA around
 git fetch origin '7.2.0/main'
@@ -163,13 +168,16 @@ git push -f fork integration/7.2.0        # derived + disposable, force is fine
 # 3. build the package - the ONLY version edit
 #    linux-fp3/APKBUILD: pkgver=7.2.0, _commit=<integration/7.2.0 HEAD>
 git push fork integration/7.2.0           # push BEFORE checksum (404 trap below)
-cp linux-fp3/APKBUILD ../pmaports/device/testing/linux-fp3/   # keep the mirror in step
-./pmb checksum linux-fp3                  # or pmbootstrap, if it is on PATH
+( cd ../fp3-pmaports                      # <- the package, not the kernel
+  $EDITOR linux-fp3/APKBUILD              #    pkgver + _commit, nothing else
+  cp linux-fp3/APKBUILD ../pmaports/device/testing/linux-fp3/ )
+cd .. && ./pmb checksum linux-fp3         # or pmbootstrap, if it is on PATH
 ./pmb build --arch aarch64 linux-fp3
+cd linux-fp3
 
 # 4. deploy KEEPING the last good kernel as a fallback boot entry, then test
 #    (see Deploying); the working integration/7.1.3 build stays bootable
-tests/fp3-selftest
+( cd ../fp3-pmaports && tests/fp3-selftest )
 
 # 5. fix the bump errors on wip/7.2.0/<category>, cherry-pick each onto
 #    integration/7.2.0 (category rule), rebuild the package, redeploy, retest.
