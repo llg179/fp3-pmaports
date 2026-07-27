@@ -345,10 +345,10 @@ allows disclosed AI assistance, is the one open upstream — which is what the
 
 ## How audio works on this device
 
-Getting sound out of a mainline Fairphone 3 touches six layers that each know a
-different part of the truth, and a call touches all of them at once. This is a
-map of who does what, and why "it plays but the call is silent" is the normal
-kind of bug here rather than an exotic one.
+This describes the setup that works today: what carries the sound, which piece
+configures what, and the rules the arrangement has to obey. Media playback and
+capture go one way through the stack, a phone call goes another; both are
+described below.
 
 ### The hardware decides the shape of the software
 
@@ -379,17 +379,21 @@ flowchart LR
 The single most important fact: **audio data does not flow through the CPU.**
 The ADSP moves it between the codec, the amplifier and the modem. Linux only
 sends control messages ("start AFE port 0x4000", "create a voice session with
-this RX and TX port"). Everything below is about getting two independent state
-machines — Linux's and the DSP's — to agree.
+this RX and TX port"). Everything else follows from that: Linux and the DSP each
+keep their own state, and every piece below exists to keep the two in agreement.
+
+The earpiece, the headset and every microphone hang off the **WCD9335 on
+SLIMbus**; only the loudspeaker is elsewhere, on the **AW8898 over Quinary
+MI2S**. So a call routed to the earpiece and the same call on speakerphone use
+two different buses and two different volume controls.
 
 ### The layers
 
 ```mermaid
 flowchart TD
     APP["gnome-calls · media apps"]
-    CAD["callaudiod<br/><i>rejects this card</i>"]
     MM["ModemManager<br/>call states"]
-    FBD["feedbackd<br/>ringtone"]
+    FBD["feedbackd<br/>ringtone · vibra"]
     VD["fp3-voiced<br/>(this repo)"]
     PA["PulseAudio<br/>profiles · mixing · volume"]
     UCM["ALSA UCM<br/>HiFi.conf · VoiceCall.conf"]
@@ -400,14 +404,14 @@ flowchart TD
     SLIM["slimbus · qcom-ngd-ctrl"]
     DSP["ADSP sessions<br/>AFE ports · MVM/CVP"]
 
-    APP --> CAD
+    APP -- "call buttons<br/>(D-Bus)" --> VD
     APP --> MM
     APP --> PA
-    MM --> VD
+    MM -- "call state" --> VD
     FBD --> PA
-    VD -- "UCM verb" --> UCM
+    VD -- "Voice Call verb" --> UCM
     VD -- "opens hw:0,4" --> LIB
-    VD -- "mirrors volume" --> CODEC
+    VD -- "mirrors volume · mutes uplink" --> CODEC
     PA --> UCM
     PA --> LIB
     UCM --> LIB
@@ -420,27 +424,26 @@ flowchart TD
 ```
 
 **1. Bus drivers** (`slimbus`, `qcom-ngd-ctrl`). The physical SLIMbus link to the
-codec: register access and channel allocation. Bringing this up was the
-multi-month "framer" story in the kernel repo.
+codec: register access and channel allocation.
 
 **2. Codec driver** (`wcd9335.c`). Everything inside the chip: which microphone
 feeds which decimator, which interpolator drives which output, the gain
 registers, and headset detection (MBHC). This is where mixer controls like
-`RX0 Mix Digital Volume`, `ADC MUX0` and `DMIC MUX0` come from.
+`RX0 Mix Digital Volume`, `AIF1_CAP Mixer SLIM TX0` and `DMIC MUX0` come from,
+and where the `Headset Jack` / `Headphone Jack` switches are reported.
 
 **3. DSP proxies** (`q6afe`, `q6asm`, `q6routing`, `q6voice`). These move no
 audio. They send APR commands to the ADSP: start an AFE port, create a voice
-session (MVM/CVP) bound to an RX and a TX port. `cmd = 0x100e5` in dmesg is one
-of these — an AFE port start.
+session (MVM/CVP) bound to an RX and a TX port.
 
-**4. ASoC core — two state machines that are easy to confuse.**
+**4. ASoC core — two state machines.**
 
 * **DAPM** is the widget graph. Mixer controls open and close edges; a path that
   is complete *and* has a running stream gets powered. Ground truth lives in
   `/sys/kernel/debug/asoc/<card>/<component>/dapm/*` (`EAR PA: On`).
 * **DPCM** pairs frontends with backends. `hw:0,0` (MultiMedia1) and `hw:0,4`
-  (VoiceMMode1) are frontends; `SLIMBUS_0_RX` and `Quinary MI2S` are backends.
-  Opening a frontend makes DPCM start whichever backends the DAPM graph says are
+  (VoiceMMode1) are frontends; `SLIMBUS_0_RX/TX` and `Quinary MI2S` are
+  backends. Opening a frontend starts whichever backends the DAPM graph says are
   connected. Ground truth: `/sys/kernel/debug/asoc/<card>/VoiceMMode1/state`.
 
 **5. ALSA in userspace.** `alsa-lib` provides `snd_pcm_*` and the mixer; **UCM**
@@ -449,55 +452,102 @@ devices (`Earpiece`, `Speaker`, `Headphones`, `Mic`, `Headset`). UCM only sets
 controls — it starts nothing.
 
 **6. PulseAudio.** Loads the card, turns UCM verbs into card profiles, creates
-sinks and sources, mixes applications and applies volume — in hardware when a
-UCM device names a `PlaybackVolume` control. Note what it does *not* do: the
-call's audio never passes through it.
+sinks and sources, mixes applications and applies volume. It owns everything
+that is *not* a call: media, notifications, and the ringtone.
 
 **7. The daemons above it.** ModemManager owns the call state machine;
-gnome-calls presses buttons over D-Bus; feedbackd plays the ringtone;
-`fp3-voiced` (this repo) applies the call routing and opens the voice PCM.
+gnome-calls presses the in-call buttons over D-Bus; feedbackd plays the ringtone
+and drives the vibrator; **`fp3-voiced`** (this repo) owns the call audio.
 
-### Why this is hard
+### The two paths
 
-Each of these was a real, measured failure on this device, not a hypothetical:
+**Media** is the ordinary one: an app plays into PulseAudio, PulseAudio mixes it
+into the sink that the active UCM device describes, and the stream reaches the
+codec (or the amplifier) through `hw:0,0`. Volume is applied by PulseAudio on
+the `PlaybackVolume` control named by the UCM device.
 
-1. **Two control planes must agree.** Linux's DPCM state can read `start` in
-   both directions while the ADSP is running the port with a different
-   configuration. A perfect-looking log and a silent call are compatible states.
-2. **The voice PCM carries no data.** There is nothing to measure directly; you
-   infer from DPCM state, powered DAPM widgets and SLIMbus counters. It also
-   means the ALSA core refuses to start the playback leg (`-EPIPE`) unless XRUN
-   detection is disabled — that alone kept the downlink silent.
-3. **Backends are shared.** Whoever starts an AFE port first configures it; the
-   second attempt only gets `ADSP_EALREADY`. PulseAudio opening its media sink
-   on `SLIMBUS_0_RX` was enough to leave the call playing from the wrong
-   configuration, with the uplink unaffected — an asymmetry that sounds like a
-   codec problem and is not one.
-4. **Fixing one layer can unmask another.** Making `ADSP_EALREADY` a success in
-   `q6afe` is correct in isolation, but that error was also what silently pruned
-   a `Quinary MI2S` backend that DAPM attaches to the voice frontend by mistake.
-   With the error gone, the call ended up split across two backends and the
-   SLIMbus transactions timed out.
-5. **The configuration is spread across five places** — device tree, codec
-   driver, UCM, PulseAudio profiles, and the call daemon. Any one of them
-   missing gives silence, and each gives a *different* silence.
-6. **State sticks.** PulseAudio reads the UCM sequences when it loads the card
-   (change a `.conf`, restart it or you are testing the old one); the ADSP's
-   port state cannot be reset from the CPU at all, so a wedged port needs a
-   reboot.
-7. **The vendor stack solved this with a closed HAL.** On mainline the same
-   knowledge has to be rebuilt in the open, from the device tree up to the call
-   daemon — which is what this repository and the kernel branches are.
+**A call** never passes through PulseAudio at all — the audio goes
+modem ↔ ADSP ↔ codec, and the CPU's only job is to set the routing up and hold
+the voice frontend open. That is `fp3-voiced`:
 
-### Where to look when a call is silent
+```mermaid
+sequenceDiagram
+    participant MM as ModemManager
+    participant VD as fp3-voiced
+    participant PA as PulseAudio
+    participant UCM as ALSA UCM
+    participant K as kernel / ADSP
 
-| symptom | first thing to read |
+    MM->>VD: call state becomes active
+    VD->>PA: suspend its streams (stay on the current profile)
+    VD->>UCM: set _verb "Voice Call" + _enadev <output> <mic>
+    UCM->>K: mixer writes — codec routing, amp, voice mixers
+    VD->>K: open hw:0,4 playback + capture, XRUN off, start both
+    K-->>VD: DPCM: one backend per direction, both "start"
+    VD->>K: mirror the sink volume onto the gain in the path
+    Note over VD,K: in call: buttons, jack changes and volume keys<br/>are applied by rebuilding or by a single mixer write
+    MM->>VD: call terminated
+    VD->>UCM: back to the HiFi verb
+    VD->>PA: resume its streams
+```
+
+### What each piece in this repo contributes
+
+| path | what it does |
 |---|---|
-| nothing at all happens on a call | `journalctl -u fp3-voiced -b` — did it see the call? |
-| routing looks right, still silent | `/sys/kernel/debug/asoc/<card>/VoiceMMode1/state` — one backend per direction, both `start`? |
-| one direction only | `dmesg` for `AFE enable ... failed` / `port already started` |
-| no ringtone | `gsettings get org.sigxcpu.feedbackd profile` (`quiet` mutes it) |
-| volume keys do nothing | is a `PlaybackVolume` control in the active UCM device, or is `fp3-voiced` mirroring it? |
+| `userspace-audio/ucm2/Fairphone/fp3/HiFi.conf` | media use case: the sinks and sources PulseAudio exposes, with their `PlaybackVolume` controls |
+| `userspace-audio/ucm2/Fairphone/fp3/VoiceCall.conf` | the call use case: codec routing per output (`Earpiece`, `Speaker`, `Headphones`) and per input (`Mic`, `Headset`), plus the voice mixers. Its capture devices deliberately have **no `CapturePCM`** — the call's uplink is not a PulseAudio source |
+| `userspace-audio/ucm2/conf.d/Fairphone_3/Fairphone_3.conf` | registers both verbs — a verb that is not listed here does not exist as far as PulseAudio is concerned |
+| `userspace-audio/systemd/fp3-voiced` (+ `.service`) | the call-audio daemon described above. Replaces `q6voiced` (`Conflicts=`), which neither applies the routing nor starts the streams |
+| `userspace-audio/systemd/fp3-mic-select` (+ `.service`) | picks the built-in microphone for media capture at boot |
+| `userspace-audio/pulse/90-fp3-mic.pa` | PulseAudio drop-in for the capture side |
+| `userspace-audio/udev/61-fp3-vibra.rules` | tags `pm8xxx_vib_ffmemless` so feedbackd may use it — without it an incoming call is silent *and* still |
+
+### The rules this arrangement obeys
+
+These are the constraints that make the difference between a working call and a
+silent one; each is enforced somewhere in the code above.
+
+1. **The voice path configures the AFE port first.** Whoever starts a shared AFE
+   port configures it; a later start only answers `ADSP_EALREADY` and gets the
+   first one's configuration. So PulseAudio's streams are suspended *before* the
+   Voice Call verb is applied.
+2. **PulseAudio stays off the call's backend.** It keeps its own profile for the
+   whole call — handing it the Voice Call profile would open its media sink on
+   the same SLIMbus backend and reconfigure the codec's stream.
+3. **Volume is mirrored, not delegated.** Because of rule 2, `fp3-voiced` reads
+   the sink volume the volume keys set and writes it to the gain that is really
+   in the path: `RX Volume` (AW8898) on speakerphone, `RX0 Mix Digital Volume`
+   for the earpiece, `RX1`+`RX2` for headphones.
+4. **The playback leg starts with XRUN detection off.** The voice PCM carries no
+   data, so the ALSA core refuses to start an empty playback stream unless
+   `stop_threshold` is set to the buffer boundary. Without this the downlink is
+   silent while everything else looks correct.
+5. **Changing the output is a full teardown.** The ADSP binds the voice session
+   to the RX port it was given at creation, and reopening the frontend while the
+   old device is still enabled leaves two backends attached to it. So a
+   speakerphone toggle or a jack event goes back to the `HiFi` verb and builds
+   the session again.
+6. **The microphone follows the jack, not the output.** A headset stays the
+   input even on speakerphone; mute is a single codec mixer write
+   (`AIF1_CAP Mixer SLIM TX0`) and is re-applied after a rebuild.
+7. **Everything is restored on the way out** — the `HiFi` verb and PulseAudio's
+   streams — and the same cleanup runs at startup, so a crash mid-call cannot
+   leave the phone silent.
+
+### Checking it works
+
+| what to look at | what it should say |
+|---|---|
+| `journalctl -u fp3-voiced -b` | the call state, `call audio up (<output> + <mic>)`, and a `dpcm:` snapshot every 10 s |
+| `/sys/kernel/debug/asoc/<card>/VoiceMMode1/state` | exactly one backend per direction, both `start` |
+| `dmesg` | no `AFE enable ... failed`, no `wcd9335-slim: TX timed out` |
+| `gsettings get org.sigxcpu.feedbackd profile` | `full` — `quiet` mutes the ringtone |
+| `amixer -c 0 cget name='RX0 Mix Digital Volume'` | tracks the volume keys during an earpiece call |
+
+After editing any UCM file, restart PulseAudio (`pulseaudio -k`) — it reads the
+sequences when it loads the card, so a running instance still applies the old
+ones.
 
 ## Related
 

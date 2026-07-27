@@ -91,7 +91,7 @@ jack detection needs MBHC support in the wcd9335 driver, which mainline lacks.
 | Earpiece / Headphones playback | routed and openable; separate card profiles |
 | Handset microphone (DMIC0) | works through pulseaudio as `fp3-handset-mic` (verified) |
 | Headset microphone (AMIC2) | works through pulseaudio, selected with `fp3-mic-select headset` (verified acoustically); no auto jack detection |
-| Voice call | **works, verified with live calls** — earpiece + handset mic, headset + headset mic, and speakerphone (Quinary MI2S). Needs the `Voice Call` verb *and* the patched `q6voiced` (see below); pulseaudio still cannot own the voice PCM, callaudiod integration is the remaining piece |
+| Voice call | **works, verified with live calls** — earpiece + handset mic, headset + headset mic, and speakerphone (Quinary MI2S), with volume, mute and the speakerphone button. Driven by `fp3-voiced`; pulseaudio keeps its own profile and its volume is mirrored onto the gain in the path |
 
 
 ## Voice calls (what actually makes them audible)
@@ -124,11 +124,19 @@ have to line up; miss any one and the call is silent:
    `prepare` state, DPCM never triggers the backends, and no codec/amplifier DAI
    ever starts. The playback direction additionally needs XRUN detection off
    (`stop_threshold = boundary`), because the voice PCM carries no data and the
-   ALSA core refuses to start an empty playback stream (`-EPIPE`). The patched
-   package in `../q6voiced/` does both.
+   ALSA core refuses to start an empty playback stream (`-EPIPE`). `fp3-voiced`
+   does both. (`../q6voiced/` holds a patched build of upstream q6voiced from an
+   earlier round; it is kept for reference and is **not** used.)
 
 4. **Nothing else may hold the card.** pulseaudio and callaudiod must not own
-   `hw:0,4` while the call runs.
+   `hw:0,4` while the call runs — `fp3-voiced` suspends pulseaudio's streams for
+   the duration of the call and resumes them afterwards.
+
+5. **Volume, mute and the speakerphone button** are applied by `fp3-voiced`:
+   pulseaudio's sink volume is mirrored onto the control that is really in the
+   path (`RX Volume` on speakerphone, `RX0`/`RX1`+`RX2 Mix Digital Volume`
+   otherwise), mute is `AIF1_CAP Mixer SLIM TX0`, and an output change is a full
+   teardown and rebuild of the session.
 
 Ground truth while debugging is the DPCM state file — both directions and both
 backends must read `start`:
