@@ -367,6 +367,21 @@ def mirror_volume(output, pct):
                        capture_output=True)
 
 
+def jack_plugged():
+    """Is something in the headset jack right now?"""
+    # by name, not numid: numids move when the driver changes
+    out = subprocess.run(["amixer", "-c", "0", "cget",
+                          "iface=CARD,name=Headphone Jack"],
+                         capture_output=True, text=True).stdout
+    return "values=on" in out.replace(" ", "")
+
+
+def wanted_output(speaker, plugged):
+    if speaker:
+        return "Speaker"
+    return "Headphones" if plugged else "Earpiece"
+
+
 class ButtonWatch:
     """Watch the in-call buttons on the session bus.
 
@@ -444,11 +459,6 @@ class Session:
     def start(self):
         self.output = self.forced_output or active_output()
         mic = "Headset" if self.output == "Headphones" else "Mic"
-        prev = pa_active_profile()
-        # never restore into another call profile (a leftover from a previous
-        # call would leave the phone routed to the earpiece for media)
-        self.prev_profile = prev if not (prev or "").startswith("Voice Call") else "HiFi (Speaker)"
-
         # Order matters. Whoever starts the AFE port configures it, and a second
         # start only answers ADSP_EALREADY - so the voice path has to get there
         # first. Switching the pulseaudio profile opens its media sink on the
@@ -473,29 +483,27 @@ class Session:
     def switch_output(self, output):
         """Move an in-call stream to another output.
 
-        The ADSP builds the CVP with the RX port it was given when the session
-        was created, so flipping the UCM device mid-call would move the codec
-        routing but not the voice stream. Tear the session down and bring it up
-        again on the new port instead - in the same order as start().
+        Two reasons this is a full stop-and-start rather than a re-route:
+
+        * the ADSP builds the CVP with the RX port it was given when the session
+          was created, so flipping the UCM device alone moves the codec routing
+          but not the voice stream; and
+        * reopening the frontend while the old device is still enabled leaves
+          *both* backends attached to it (seen in the DPCM state as "Quinary
+          MI2S" and "SLIM Playback" at once), after which the SLIMbus
+          transactions time out and neither direction carries audio.
+
+        So tear the whole session down - including dropping every device by
+        going back to the HiFi verb - let it settle, then bring it up again.
         """
         log("output switch -> %s" % output)
         for h in self.pcm:
             a.snd_pcm_close(h)
         self.pcm = []
+        ucm("set", "_verb", "HiFi")          # drops the call devices and their BEs
+        time.sleep(0.4)
         self.forced_output = output
-        mic = "Headset" if output == "Headphones" else "Mic"
-        pa_streams(True)
-        ucm("set", "_verb", "Voice Call", "set", "_enadev", output,
-            "set", "_enadev", mic)
-        for stream, label, pb in ((PLAYBACK, "downlink", True),
-                                  (CAPTURE, "uplink", False)):
-            h = open_leg(stream, label, pb)
-            if h:
-                self.pcm.append(h)
-        self.output = output
-        mirror_volume(output, pa_sink_volume_pct())
-        time.sleep(1)
-        snapshot("switched")
+        self.start()
 
     def stop(self):
         snapshot("down")
@@ -533,6 +541,8 @@ def main():
     buttons.start()
     ticks = 0
     last_volume = None
+    last_switch = 0.0
+    speaker = False
     while True:
         try:
             wanted = calls_active()
@@ -540,16 +550,21 @@ def main():
             log("poll error: %s" % e)
             wanted = session.up()
         if wanted and not session.up():
+            speaker = False
+            session.forced_output = None
             session.start()
             ticks = 0
+            last_switch = time.time()
         elif not wanted and session.up():
             session.stop()
         elif session.up():
             if buttons.speaker is not None:
-                want = "Speaker" if buttons.speaker else "Earpiece"
+                speaker = buttons.speaker
                 buttons.speaker = None
-                if want != session.output:
-                    session.switch_output(want)
+            want = wanted_output(speaker, jack_plugged())
+            if want != session.output and time.time() - last_switch > 2:
+                session.switch_output(want)
+                last_switch = time.time()
             pct = pa_sink_volume_pct()
             if pct != last_volume:
                 mirror_volume(session.output, pct)
