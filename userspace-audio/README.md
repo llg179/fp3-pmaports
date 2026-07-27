@@ -66,9 +66,12 @@ The headset microphone (AMIC2) and the built-in handset mic (DMIC0) share the
 codec's decimator 0, so only one is active at a time. Two things stop this from
 being automatic:
 
-  - **jack detection does not work.** mainline WCD9335 has no working MBHC on
-    this board, so the `Mic Jack` / `Headphone Jack` controls stay `off` even
-    with a headset plugged. There is no event to switch on.
+  - **jack detection had to be written first.** mainline WCD9335 has no MBHC
+    at all; this port adds it, and only the `Headset Jack` control (and the
+    matching input device) ever moves - `Mic Jack` and `Headphone Jack` are
+    pins of the machine driver's jack that nothing reports into. During a call
+    `fp3-voiced` follows the jack; for media capture the choice is still
+    manual, see below.
 
   - **the mux must be changed while the capture is idle.** Re-applying the
     input mux while a capture stream is *live* does not re-run the ADC widget's
@@ -80,8 +83,9 @@ being automatic:
 So the mic is chosen with `fp3-mic-select handset|headset`, which sets the input
 mux and remembers the choice; `fp3-mic-select.service` re-applies it at boot.
 Both mics are verified working through pulseaudio this way (handset and headset
-each pick up a 1 kHz speaker tone at a ~1000x bin ratio). Wiring this to real
-jack detection needs MBHC support in the wcd9335 driver, which mainline lacks.
+each pick up a 1 kHz speaker tone at a ~1000x bin ratio). Calls no longer need
+this - the call daemon picks the input from the jack - but media capture still
+does, because the mux may only be changed while the capture is idle.
 
 ## Status
 
@@ -91,7 +95,7 @@ jack detection needs MBHC support in the wcd9335 driver, which mainline lacks.
 | Earpiece / Headphones playback | routed and openable; separate card profiles |
 | Handset microphone (DMIC0) | works through pulseaudio as `fp3-handset-mic` (verified) |
 | Headset microphone (AMIC2) | works through pulseaudio, selected with `fp3-mic-select headset` (verified acoustically); no auto jack detection |
-| Voice call | **works, verified with live calls** — earpiece + handset mic, headset + headset mic, and speakerphone (Quinary MI2S), with volume, mute and the speakerphone button. Driven by `fp3-voiced`; pulseaudio keeps its own profile and its volume is mirrored onto the gain in the path |
+| Voice call | **works, verified with live calls** — earpiece + handset mic, headset + headset mic, and speakerphone (Quinary MI2S), with per-output volume, mute and the speakerphone button, and route changes in ~0.35 s. Driven by `fp3-voiced`, which takes the card from pulseaudio for the duration of the call and mirrors the volume onto the gain in the path |
 
 
 ## Voice calls (what actually makes them audible)
@@ -129,14 +133,18 @@ have to line up; miss any one and the call is silent:
    earlier round; it is kept for reference and is **not** used.)
 
 4. **Nothing else may hold the card.** pulseaudio and callaudiod must not own
-   `hw:0,4` while the call runs — `fp3-voiced` suspends pulseaudio's streams for
-   the duration of the call and resumes them afterwards.
+   `hw:0,4` while the call runs. `fp3-voiced` sets the card profile to `off`
+   for the duration of the call and restores an available `HiFi` profile
+   afterwards; merely suspending the streams is not enough, because any client
+   that wants to play resumes them.
 
 5. **Volume, mute and the speakerphone button** are applied by `fp3-voiced`:
    pulseaudio's sink volume is mirrored onto the control that is really in the
    path (`RX Volume` on speakerphone, `RX0`/`RX1`+`RX2 Mix Digital Volume`
-   otherwise), mute is `AIF1_CAP Mixer SLIM TX0`, and an output change is a full
-   teardown and rebuild of the session.
+   otherwise, each with its own range and its own remembered level), mute is
+   the decimator gain `DEC0 Volume` - muting by re-routing kills this codec's
+   capture path until the next reboot - and an output change is a full teardown
+   and rebuild of the session.
 
 Ground truth while debugging is the DPCM state file — both directions and both
 backends must read `start`:
@@ -175,7 +183,9 @@ The codec reports the jack on two controls and only one of them moves here:
 | `Headphone Jack` | 3-pole plug, no microphone | never fires - it is a pin of the machine driver's jack, which nothing reports into |
 | `Mic Jack` | microphone-only accessory | same, never fires |
 
-So `fp3-voiced` polls `Headset Jack` (falling back to `Headphone Jack`), and a
+So every jack-aware UCM device names `Headset Jack`, and `fp3-voiced` reads the
+codec's jack *input device* (`/dev/input/event*`, `SW_HEADPHONE_INSERT` /
+`SW_MICROPHONE_INSERT`) rather than polling a mixer control. A
 plugged jack means headset speaker plus headset microphone (AMIC2 on MIC BIAS2,
 2.8 V - the built-in microphones are the digital DMIC0-3 instead).
 
