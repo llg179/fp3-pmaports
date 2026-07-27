@@ -25,10 +25,13 @@ wrap PCM device 1 of this card as a UCM source.
 Call state comes from ModemManager over D-Bus.
 """
 import ctypes
+import fcntl
 import glob
 import threading
 import os
 import pwd
+import select
+import struct
 import subprocess
 import sys
 import time
@@ -71,79 +74,7 @@ def session_uid():
     return 0
 
 
-def session_user():
-    try:
-        return pwd.getpwuid(session_uid()).pw_name
-    except KeyError:
-        return None
 
-
-def session_bus_env():
-    env = dict(os.environ)
-    for d in sorted(glob.glob("/run/user/*")):
-        bus = os.path.join(d, "bus")
-        if os.path.exists(bus):
-            env["DBUS_SESSION_BUS_ADDRESS"] = "unix:path=" + bus
-            break
-    return env
-
-
-def as_session_user(argv):
-    """Run a command as the session user, without PAM.
-
-    The session bus refuses a connection from root even with the right address,
-    so these have to run as the user - but going through su/sudo twice a second
-    would push a PAM record into the journal every time.
-    """
-    uid = session_uid()
-    if not uid:
-        return ""
-    try:
-        gid = pwd.getpwuid(uid).pw_gid
-    except KeyError:
-        return ""
-
-    def drop():
-        os.setgid(gid)
-        os.setuid(uid)
-
-    env = dict(os.environ)
-    env["DBUS_SESSION_BUS_ADDRESS"] = "unix:path=/run/user/%d/bus" % uid
-    env["XDG_RUNTIME_DIR"] = "/run/user/%d" % uid
-    try:
-        return subprocess.run(argv, capture_output=True, text=True, env=env,
-                              preexec_fn=drop).stdout
-    except OSError:
-        return ""
-
-
-def speaker_wanted():
-    """callaudiod's SpeakerState - i.e. the app's speakerphone button.
-
-    callaudiod cannot apply it on this device (it rejects the card for having
-    no usable source) but it does track the state, so it still tells us what
-    the user pressed.
-    """
-    out = as_session_user(["busctl", "--user", "get-property", CALLAUDIO[0],
-                           CALLAUDIO[1], CALLAUDIO[0], "SpeakerState"])
-    return out.strip().endswith("1")
-
-
-def active_output():
-    """Earpiece unless pulseaudio is currently on the speaker or headphones."""
-    try:
-        out = subprocess.run(["pactl", "list", "sinks"], capture_output=True,
-                             text=True).stdout
-    except FileNotFoundError:
-        return "Earpiece"
-    for line in out.splitlines():
-        if "Active Port:" in line:
-            port = line.split(":", 1)[1].strip().lower()
-            if "speaker" in port:
-                return "Speaker"
-            if "headphone" in port:
-                return "Headphones"
-    return "Earpiece"
 
 
 DPCM_STATE = "/sys/kernel/debug/asoc/Fairphone 3/VoiceMMode1/state"
@@ -184,6 +115,8 @@ def pulse_env():
     and talking to that one means reading the wrong card state (or none). Ask
     each candidate whether it has our card, and remember the one that does.
     """
+    if _pulse_dir and time.time() - _pulse_dir[1] < 5:
+        return _pulse_env_for(_pulse_dir[0])       # good a moment ago
     dirs = sorted(glob.glob("/run/user/*"))
     if _pulse_dir and _pulse_dir[0] in dirs:
         dirs = [_pulse_dir[0]] + [d for d in dirs if d != _pulse_dir[0]]
@@ -195,7 +128,7 @@ def pulse_env():
         except OSError:
             continue
         if "sound-card" in out:
-            _pulse_dir[:] = [d]
+            _pulse_dir[:] = [d, time.time()]
             return env
     return _pulse_env_for(dirs[0]) if dirs else dict(os.environ)
 
@@ -215,32 +148,6 @@ def pa_card():
             return f[1]
     return None
 
-
-def pa_profile(want_output):
-    """The Voice Call profile pulseaudio offers for this output, if any.
-
-    Switching the *profile* (rather than applying the verb behind pulseaudio's
-    back) is what makes the volume keys work during a call: the profile's
-    PlaybackVolume maps the sink volume onto the codec gain that sits in the
-    voice path. It also keeps pulseaudio's idea of the routing and ours the
-    same - applying the verb underneath a running pulseaudio let it re-apply
-    HiFi routing over the call.
-    """
-    card = pa_card()
-    if not card:
-        return None, None
-    mic = "Headset" if want_output == "Headphones" else "Mic"
-    names = []
-    for line in pactl("list", "cards").splitlines():
-        line = line.strip()
-        if line.startswith("Voice Call (") and ":" in line:
-            names.append(line.split(":", 1)[0].strip())
-    for n in names:
-        inner = n[len("Voice Call ("):-1]
-        parts = [p.strip() for p in inner.split(",")]
-        if want_output in parts and mic in parts:
-            return card, n
-    return card, None
 
 
 def pa_set_profile(card, profile):
@@ -398,16 +305,18 @@ def snapshot(tag):
         log("%s dpcm: %s" % (tag, " | ".join(state)))
     except OSError as e:
         log("%s dpcm: unreadable (%s)" % (tag, e))
-    vals = []
-    for c in WATCH_MIXERS:
-        r = subprocess.run(["amixer", "-c", "0", "cget", "name=" + c],
-                           capture_output=True, text=True)
-        v = ""
-        for line in r.stdout.splitlines():
-            if ": values" in line:
-                v = line.split("=", 1)[1]
-                break
-        vals.append("%s=%s" % (c.split()[0] + "/" + c.split()[-1], v))
+    # amixer reads a script from stdin with -s, so the whole snapshot is one
+    # process instead of one per control.
+    script = "".join("cget name='%s'\n" % c for c in WATCH_MIXERS)
+    try:
+        out = subprocess.run(["amixer", "-c", "0", "-s"], input=script,
+                             capture_output=True, text=True).stdout
+    except OSError:
+        return
+    values = [l.split("=", 1)[1] for l in out.splitlines() if ": values" in l]
+    vals = ["%s=%s" % (c.split()[0] + "/" + c.split()[-1],
+                       values[i] if i < len(values) else "?")
+            for i, c in enumerate(WATCH_MIXERS)]
     log("%s mixers: %s" % (tag, " ".join(vals)))
 
 
@@ -539,25 +448,137 @@ def restore_output_volume(output):
         _last_pct[0] = pct
     return pct
 
-def _jack(name):
-    out = subprocess.run(["amixer", "-c", "0", "cget", "iface=CARD,name=" + name],
-                         capture_output=True, text=True).stdout
-    return "values=on" in out.replace(" ", "")
+# evdev bits we need from <linux/input.h>: the jack is an input device that
+# reports switches, so it can be *read* instead of polled. Polling it cost two
+# amixer processes every tick, which is most of what this daemon used to burn.
+EV_SW = 0x05
+SW_HEADPHONE_INSERT = 0x02
+SW_MICROPHONE_INSERT = 0x04
+EVIOCGSW = 0x8008451b          # EVIOCGSW(len=8)
+_EVENT_FMT = "llHHi"           # timeval + type + code + value (64-bit)
+_EVENT_SIZE = struct.calcsize(_EVENT_FMT)
+
+
+class JackWatch(threading.Thread):
+    """Track the headset switch by reading the codec's input device.
+
+    The codec reports a headset (with a microphone) and plain headphones on
+    two different switches of the same device; only the state matters here,
+    and reading it costs nothing until something actually moves.
+    """
+
+    def __init__(self):
+        threading.Thread.__init__(self, daemon=True)
+        self.plugged = False
+        self.has_mic = False
+        self.fd = None
+
+    def _open(self):
+        for path in sorted(glob.glob("/dev/input/event*")):
+            try:
+                fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+            except OSError:
+                continue
+            name = bytearray(64)
+            try:
+                fcntl.ioctl(fd, 0x82004506, name)      # EVIOCGNAME(64)
+            except OSError:
+                os.close(fd)
+                continue
+            if b"Headset Jack" not in bytes(name):
+                os.close(fd)
+                continue
+            self.fd = fd
+            self._read_state()
+            log("jack: watching %s (plugged=%s mic=%s)"
+                % (path, self.plugged, self.has_mic))
+            return True
+        return False
+
+    def _read_state(self):
+        buf = bytearray(8)
+        try:
+            fcntl.ioctl(self.fd, EVIOCGSW, buf)
+        except OSError:
+            return
+        bits = int.from_bytes(buf, "little")
+        self.has_mic = bool(bits & (1 << SW_MICROPHONE_INSERT))
+        self.plugged = bool(bits & (1 << SW_HEADPHONE_INSERT)) or self.has_mic
+
+    def run(self):
+        while True:
+            if self.fd is None and not self._open():
+                time.sleep(5)                 # no jack device yet
+                continue
+            try:
+                r, _, _ = select.select([self.fd], [], [], 30)
+                if not r:
+                    continue
+                data = os.read(self.fd, _EVENT_SIZE * 32)
+            except OSError as e:
+                log("jack: read failed (%s), reopening" % e)
+                try:
+                    os.close(self.fd)
+                except OSError:
+                    pass
+                self.fd = None
+                continue
+            changed = False
+            for off in range(0, len(data) - _EVENT_SIZE + 1, _EVENT_SIZE):
+                _, _, etype, code, _ = struct.unpack_from(_EVENT_FMT, data, off)
+                if etype == EV_SW and code in (SW_HEADPHONE_INSERT,
+                                               SW_MICROPHONE_INSERT):
+                    changed = True
+            if changed:
+                self._read_state()
+                WAKE.set()
+
+
+class LineWatch(threading.Thread):
+    """Run a command that prints one line per event and wake the loop.
+
+    Both things this daemon has to notice - a call appearing and the volume
+    keys moving - are published as events, so polling for them meant spawning
+    an mmcli and a pactl every quarter second for the whole uptime of the
+    phone. Watch the event streams instead and only ask when something moved.
+    """
+
+    def __init__(self, argv, env_fn=None, flag=None, name="watch"):
+        threading.Thread.__init__(self, daemon=True)
+        self.argv = argv
+        self.env_fn = env_fn
+        self.flag = flag if flag is not None else []
+        self.wname = name
+
+    def run(self):
+        while True:
+            try:
+                p = subprocess.Popen(self.argv, stdout=subprocess.PIPE,
+                                     stderr=subprocess.DEVNULL, text=True,
+                                     env=(self.env_fn() if self.env_fn
+                                          else dict(os.environ)))
+            except OSError as e:
+                log("%s: cannot start (%s)" % (self.wname, e))
+                time.sleep(30)
+                continue
+            for _line in p.stdout:
+                self.flag[:] = [True]
+                WAKE.set()
+            time.sleep(2)                     # it died - restart it
+
+
+_jack_watch = JackWatch()
+_call_event = []
+_pa_event = []
 
 
 def jack_state():
-    """(something plugged, it has a microphone).
-
-    The codec reports a *headset* (with mic) on "Headset Jack" and plain
-    headphones on "Headphone Jack" - polling only the latter misses the common
-    case entirely, which is why plugging a headset used to do nothing.
-    """
-    headset = _jack("Headset Jack")
-    return (headset or _jack("Headphone Jack")), headset
+    """(something plugged, it has a microphone)."""
+    return _jack_watch.plugged, _jack_watch.has_mic
 
 
 def jack_plugged():
-    return jack_state()[0]
+    return _jack_watch.plugged
 
 
 _buttons_ref = []
@@ -665,7 +686,6 @@ class Session:
         self.pcm = []
         self.output = None
         self.forced_output = None
-        self.prev_profile = None
         self.snapshot_due = 0
 
     def up(self):
@@ -819,7 +839,7 @@ def startup_reset():
 
     The card can take a few seconds to appear after boot, so wait for it.
     """
-    for _ in range(30):
+    for _ in range(15):
         if pa_card() and ucm("set", "_verb", "HiFi"):
             break
         time.sleep(1)
@@ -847,73 +867,106 @@ def idle_check(tag):
 
 
 def main():
+    _jack_watch.start()
+    time.sleep(0.3)                  # let it read the initial switch state
     startup_reset()
+    LineWatch(["dbus-monitor", "--system",
+               "type='signal',sender='org.freedesktop.ModemManager1'"],
+              flag=_call_event, name="modem watch").start()
+    LineWatch(["pactl", "subscribe"], env_fn=pulse_env,
+              flag=_pa_event, name="pulseaudio watch").start()
     log("fp3-voiced: watching ModemManager for calls")
     session = Session()
     buttons = ButtonWatch()
     _buttons_ref.append(buttons)
     buttons.start()
     ticks = 0
-    idle_ticks = 0
     last_jack = jack_plugged()
     jack_settled = 0
     last_volume = None
     last_switch = 0.0
+    last_poll = 0.0
+    last_idle_check = 0.0
     speaker = False
+    wanted = False
     while True:
-        if not buttons.alive():
-            buttons.start()
+        now = time.time()
         try:
-            wanted = calls_active()
-        except Exception as e:                      # never die on a transient
-            log("poll error: %s" % e)
-            wanted = session.up()
-        if wanted and not session.up():
-            speaker = False
-            session.forced_output = None
-            session.start()
-            ticks = 0
+            wanted, speaker, last_jack, jack_settled, last_volume, \
+                last_switch, last_poll, last_idle_check, ticks = _tick(
+                    session, buttons, now, wanted, speaker, last_jack,
+                    jack_settled, last_volume, last_switch, last_poll,
+                    last_idle_check, ticks)
+        except Exception as e:
+            log("loop error: %s" % e)
+        WAKE.wait(POLL if session.up() else 5)
+        WAKE.clear()
+
+
+def _tick(session, buttons, now, wanted, speaker, last_jack, jack_settled,
+          last_volume, last_switch, last_poll, last_idle_check, ticks):
+    """One pass of the loop. Returns the state the next pass starts from."""
+    def state():
+        return (wanted, speaker, last_jack, jack_settled, last_volume,
+                last_switch, last_poll, last_idle_check, ticks)
+
+    if not buttons.alive():
+        buttons.start()
+    # ModemManager publishes call state as signals, so ask it only when one
+    # arrived. The heartbeat stays short enough to catch a call on its own if
+    # the signal path ever breaks - missing a call is worse than one mmcli
+    # every three seconds.
+    if _call_event or now - last_poll > (2 if session.up() else 3):
+        _call_event[:] = []
+        last_poll = now
+        wanted = calls_active()
+    if wanted and not session.up():
+        speaker = False
+        session.forced_output = None
+        session.start()
+        ticks = 0
+        last_switch = time.time()
+    elif not wanted and session.up():
+        session.stop()
+    elif session.up():
+        if buttons.speaker is not None:
+            speaker = buttons.speaker
+            buttons.speaker = None
+        plugged = jack_plugged()
+        if plugged != last_jack:
+            # Give the codec's headset detection a moment to settle before
+            # acting on it: rebuilding the call in the same instant the plug is
+            # sensed can pick the built-in microphone even though the headset
+            # has one, because the MBHC is still deciding.
+            last_jack = plugged
+            jack_settled = now + 0.6
+        if jack_settled and now < jack_settled and not speaker:
+            return state()                    # the button still gets through
+        jack_settled = 0
+        want = wanted_output(speaker, plugged)
+        if want != session.output and now - last_switch > 1:
+            session.switch_output(want)
             last_switch = time.time()
-        elif not wanted and session.up():
-            session.stop()
-        elif session.up():
-            if buttons.speaker is not None:
-                speaker = buttons.speaker
-                buttons.speaker = None
-            plugged = jack_plugged()
-            if plugged != last_jack:
-                # Give the codec's headset detection a moment to settle before
-                # acting on it: rebuilding the call in the same instant the
-                # plug is sensed can pick the built-in microphone even though
-                # the headset has one, because the MBHC is still deciding.
-                last_jack = plugged
-                jack_settled = time.time() + 0.6
-            if jack_settled and time.time() < jack_settled and not speaker:
-                time.sleep(POLL)             # the button still gets through
-                continue
-            jack_settled = 0
-            want = wanted_output(speaker, plugged)
-            if want != session.output and time.time() - last_switch > 1:
-                session.switch_output(want)
-                last_switch = time.time()
-                last_volume = pa_sink_volume_pct()
+            _pa_event[:] = [True]             # re-read the level after a move
+        if _pa_event:
+            _pa_event[:] = []
             pct = pa_sink_volume_pct()
             if pct != last_volume:
                 mirror_volume(session.output, pct)
                 last_volume = pct
             _last_pct[0] = pct
-            if session.snapshot_due and time.time() >= session.snapshot_due:
-                session.snapshot_due = 0
-                snapshot("up")
-            ticks += 1
-            if ticks % int(10 / POLL) == 0:
-                snapshot("t+%ds" % int(ticks * POLL))
-        else:
-            idle_ticks += 1
-            if idle_ticks % int(20 / POLL) == 0:
-                idle_check("idle")
-        WAKE.wait(POLL)
-        WAKE.clear()
+        if session.snapshot_due and now >= session.snapshot_due:
+            session.snapshot_due = 0
+            snapshot("up")
+        ticks += 1
+        if ticks % 40 == 0:
+            snapshot("in call")
+    else:
+        _pa_event[:] = []
+        if now - last_idle_check > 30:
+            last_idle_check = now
+            idle_check("idle")
+    return state()
 
 
 if __name__ == "__main__":
