@@ -156,6 +156,27 @@ The ringtone itself comes from `sound-theme-freedesktop`
 through the ordinary HiFi sink - `fp3-voiced` only takes over when the call goes
 `active`, so ringing is unaffected by the call routing.
 
+
+### Headset detection, and what is still open
+
+The codec reports the jack on two controls and only one of them moves here:
+
+| control | meaning | on this board |
+|---|---|---|
+| `Headset Jack` | 4-pole plug, has a microphone | **the one that works** (codec MBHC) |
+| `Headphone Jack` | 3-pole plug, no microphone | never fires - it is a pin of the machine driver's jack, which nothing reports into |
+| `Mic Jack` | microphone-only accessory | same, never fires |
+
+So `fp3-voiced` polls `Headset Jack` (falling back to `Headphone Jack`), and a
+plugged jack means headset speaker plus headset microphone (AMIC2 on MIC BIAS2,
+2.8 V - the built-in microphones are the digital DMIC0-3 instead).
+
+**Open:** a 3-pole plug is also reported as `Headset Jack`, so the uplink would
+be routed to a microphone that is not there. The classification belongs in the
+codec's MBHC code, which already has a `SND_JACK_HEADPHONE` branch it never
+reaches; deciding it needs the mic-bias load measurement. Until then, treat a
+plugged jack as a headset.
+
 Traps that cost real debugging time:
 
 * With a headset plugged in, an `Earpiece` test *sounds* silent — the codec
