@@ -330,6 +330,43 @@ def open_leg(stream, label, playback):
     return h
 
 
+RX_VOL_MAX = 124            # "RXn Mix Digital Volume": 0..124, 1 dB steps
+RX_VOL_MIN = 84             # 0 dB - below this a call gets hard to hear
+
+
+def pa_sink_volume_pct():
+    """Whatever the volume keys last set on pulseaudio's sink."""
+    out = pactl("get-sink-volume", "@DEFAULT_SINK@")
+    for tok in out.replace("/", " ").split():
+        if tok.endswith("%"):
+            try:
+                return int(tok[:-1])
+            except ValueError:
+                pass
+    return None
+
+
+def mirror_volume(output, pct):
+    """Apply pulseaudio's sink volume to the codec gain in the voice path.
+
+    Handing pulseaudio the Voice Call profile would do this by itself, but that
+    also puts its media sink on the same SLIMbus backend as the call, which
+    reconfigures the codec's slim stream and leaves the earpiece silent (the
+    speaker path over MI2S has no per-channel config and survives it). So keep
+    pulseaudio off the backend and mirror the volume instead.
+    """
+    if output == "Speaker" or pct is None:
+        return                       # the speaker amp has no gain control here
+    ctl = "RX0 Mix Digital Volume" if output == "Earpiece" else "RX1 Mix Digital Volume"
+    val = RX_VOL_MIN + (RX_VOL_MAX - RX_VOL_MIN) * max(0, min(100, pct)) // 100
+    subprocess.run(["amixer", "-c", "0", "cset", "name=" + ctl, str(val)],
+                   capture_output=True)
+    if output == "Headphones":
+        subprocess.run(["amixer", "-c", "0", "cset",
+                        "name=RX2 Mix Digital Volume", str(val)],
+                       capture_output=True)
+
+
 class ButtonWatch:
     """Watch the in-call buttons on the session bus.
 
@@ -380,7 +417,7 @@ class ButtonWatch:
             elif line.startswith("boolean") and member:
                 val = line.endswith("true")
                 if member == "MuteMic":
-                    self.mute = val
+                    set_mic_muted(val)          # instant, not on the next poll
                 elif member == "EnableSpeaker":
                     self.speaker = val
                 member = None
@@ -429,15 +466,7 @@ class Session:
                 self.pcm.append(h)
         log("call audio up (%s + %s)" % (self.output, mic))
 
-        # Now let pulseaudio adopt the same routing: its profile carries the
-        # PlaybackVolume that maps the volume keys onto the codec gain. Its own
-        # stream stays suspended, and the port keeps our configuration.
-        card, profile = pa_profile(self.output)
-        if pa_set_profile(card, profile):
-            log("pulseaudio profile -> %s" % profile)
-            pa_streams(True)
-        else:
-            log("no pulseaudio Voice Call profile - volume keys will not follow")
+        mirror_volume(self.output, pa_sink_volume_pct())
         time.sleep(1)
         snapshot("up")
 
@@ -464,9 +493,7 @@ class Session:
             if h:
                 self.pcm.append(h)
         self.output = output
-        card, profile = pa_profile(output)
-        if pa_set_profile(card, profile):
-            pa_streams(True)
+        mirror_volume(output, pa_sink_volume_pct())
         time.sleep(1)
         snapshot("switched")
 
@@ -477,12 +504,8 @@ class Session:
             a.snd_pcm_close(h)
         self.pcm = []
         self.forced_output = None
+        ucm("set", "_verb", "HiFi")
         pa_streams(False)
-        card = pa_card()
-        if self.prev_profile and pa_set_profile(card, self.prev_profile):
-            log("pulseaudio profile -> %s" % self.prev_profile)
-        else:
-            ucm("set", "_verb", "HiFi")
         log("call audio down")
 
 
@@ -509,6 +532,7 @@ def main():
     buttons = ButtonWatch()
     buttons.start()
     ticks = 0
+    last_volume = None
     while True:
         try:
             wanted = calls_active()
@@ -521,18 +545,15 @@ def main():
         elif not wanted and session.up():
             session.stop()
         elif session.up():
-            if buttons.mute is not None:
-                set_mic_muted(buttons.mute)
-                buttons.mute = None
-            spk = buttons.speaker
-            if spk is None:
-                spk = speaker_wanted() if ticks % 2 == 0 else (session.output == "Speaker")
-            else:
+            if buttons.speaker is not None:
+                want = "Speaker" if buttons.speaker else "Earpiece"
                 buttons.speaker = None
-            if spk and session.output != "Speaker":
-                session.switch_output("Speaker")
-            elif not spk and session.output == "Speaker":
-                session.switch_output(active_output() if active_output() != "Speaker" else "Earpiece")
+                if want != session.output:
+                    session.switch_output(want)
+            pct = pa_sink_volume_pct()
+            if pct != last_volume:
+                mirror_volume(session.output, pct)
+                last_volume = pct
             ticks += 1
             if ticks % int(10 / POLL) == 0:
                 snapshot("t+%ds" % int(ticks * POLL))
