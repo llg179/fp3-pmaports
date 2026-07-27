@@ -15,6 +15,8 @@ ucm2/Fairphone/fp3/VoiceCall.conf          -> /usr/share/alsa/ucm2/Fairphone/fp3
 pulse/90-fp3-mic.pa                         -> /etc/pulse/default.pa.d/
 systemd/fp3-mic-select                      -> /usr/local/bin/
 systemd/fp3-mic-select.service             -> /etc/systemd/system/   (systemctl enable)
+systemd/fp3-voiced                          -> /usr/local/bin/        (call audio daemon)
+systemd/fp3-voiced.service                 -> /etc/systemd/system/   (systemctl enable, replaces q6voiced)
 ```
 
 ## Why it is not just a UCM file
@@ -106,7 +108,17 @@ have to line up; miss any one and the call is silent:
    alsaucm -c Fairphone_3 set _verb "Voice Call" set _enadev Speaker    set _enadev Mic
    ```
 
-2. **The voice PCM (`hw:0,4`) must be *started*, not just prepared.** Upstream
+2. **Something must drive the call.** `fp3-voiced` (in `systemd/`) does it: it
+   watches ModemManager, applies the verb on `dialing`/`ringing-out`/`active`,
+   opens *and starts* both legs of `hw:0,4`, and restores the HiFi verb when the
+   call ends. It replaces `q6voiced` (`Conflicts=` in the unit) and does not use
+   callaudiod, because callaudiod rejects this card outright with *"card has no
+   usable source"* - our Voice Call profiles are sink-only, see above. A call
+   driven by stock q6voiced + callaudiod is silent in both directions and leaves
+   `q6voiced: Failed to open tx: Invalid argument` in the log: the routing was
+   never applied, so the frontend had no backend.
+
+3. **The voice PCM (`hw:0,4`) must be *started*, not just prepared.** Upstream
    `q6voiced` only opens + prepares it, so the ASoC frontend stays in the
    `prepare` state, DPCM never triggers the backends, and no codec/amplifier DAI
    ever starts. The playback direction additionally needs XRUN detection off
@@ -114,7 +126,7 @@ have to line up; miss any one and the call is silent:
    ALSA core refuses to start an empty playback stream (`-EPIPE`). The patched
    package in `../q6voiced/` does both.
 
-3. **Nothing else may hold the card.** pulseaudio and callaudiod must not own
+4. **Nothing else may hold the card.** pulseaudio and callaudiod must not own
    `hw:0,4` while the call runs.
 
 Ground truth while debugging is the DPCM state file — both directions and both

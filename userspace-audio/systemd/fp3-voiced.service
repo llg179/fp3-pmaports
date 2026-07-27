@@ -1,0 +1,17 @@
+[Unit]
+Description=FP3 call audio (UCM Voice Call verb + VoiceMMode1 PCM)
+Documentation=https://github.com/llg179/fp3-pmaports
+After=ModemManager.service
+Wants=ModemManager.service
+# Replaces q6voiced on this device: q6voiced neither applies the routing nor
+# starts the streams, so with it alone the call is silent in both directions.
+Conflicts=q6voiced.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/fp3-voiced
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

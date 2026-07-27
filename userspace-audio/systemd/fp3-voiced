@@ -1,0 +1,170 @@
+#!/usr/bin/env python3
+"""fp3-voiced - call audio for the Fairphone 3 on mainline postmarketOS.
+
+Does the two things a call needs on this device, in the right order:
+
+  1. applies the ALSA UCM "Voice Call" verb (the codec + q6voice routing), and
+  2. opens *and starts* the VoiceMMode1 PCM (hw:0,4) so the ADSP instantiates
+     the voice topology.
+
+Both halves have a catch that cost real debugging time:
+
+  * without the verb the PCM cannot even be opened - the frontend has no
+    backend and snd_pcm_open() returns -EINVAL ("no backend DAIs enabled"),
+    which is exactly how upstream q6voiced fails here; and
+  * the playback leg carries no data, so the ALSA core refuses to start it
+    with -EPIPE unless XRUN detection is off (stop_threshold = boundary).
+    Without that start the DPCM backends are never triggered and the downlink
+    stays silent while the uplink works.
+
+It replaces q6voiced on this device (which does 2 but not 1, and does not
+start the streams), and it does not rely on callaudiod: callaudiod refuses
+the card entirely ("card has no usable source"), because pulseaudio cannot
+wrap PCM device 1 of this card as a UCM source.
+
+Call state comes from ModemManager over D-Bus.
+"""
+import ctypes
+import subprocess
+import sys
+import time
+
+CARD = "Fairphone_3"
+PCM = "hw:0,4"
+POLL = 0.5
+
+# ModemManager call states that mean "audio should be up"
+ACTIVE_STATES = {"dialing", "ringing-out", "active"}
+
+a = ctypes.CDLL("libasound.so.2")
+a.snd_strerror.restype = ctypes.c_char_p
+PLAYBACK, CAPTURE = 0, 1
+S16_LE, RW_INTERLEAVED = 2, 3
+
+
+def log(msg):
+    print(msg, flush=True)
+
+
+def ucm(*args):
+    cmd = ["alsaucm", "-c", CARD] + list(args)
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode:
+        log("ucm %s failed: %s" % (" ".join(args), r.stderr.strip()))
+    return r.returncode == 0
+
+
+def active_output():
+    """Earpiece unless pulseaudio is currently on the speaker or headphones."""
+    try:
+        out = subprocess.run(["pactl", "list", "sinks"], capture_output=True,
+                             text=True).stdout
+    except FileNotFoundError:
+        return "Earpiece"
+    for line in out.splitlines():
+        if "Active Port:" in line:
+            port = line.split(":", 1)[1].strip().lower()
+            if "speaker" in port:
+                return "Speaker"
+            if "headphone" in port:
+                return "Headphones"
+    return "Earpiece"
+
+
+def open_leg(stream, label, playback):
+    h = ctypes.c_void_p()
+    rc = a.snd_pcm_open(ctypes.byref(h), PCM.encode(), stream, 0)
+    if rc < 0:
+        log("%s: open failed: %s" % (label, a.snd_strerror(rc).decode()))
+        return None
+    rc = a.snd_pcm_set_params(h, S16_LE, RW_INTERLEAVED, ctypes.c_uint(1),
+                              ctypes.c_uint(8000), ctypes.c_int(1),
+                              ctypes.c_uint(500000))
+    if rc < 0:
+        log("%s: set_params failed: %s" % (label, a.snd_strerror(rc).decode()))
+
+    if playback:
+        # Disable XRUN detection so an empty playback buffer can still start.
+        sw = ctypes.create_string_buffer(a.snd_pcm_sw_params_sizeof())
+        p = ctypes.cast(sw, ctypes.c_void_p)
+        boundary = ctypes.c_ulong(0)
+        a.snd_pcm_sw_params_current(h, p)
+        a.snd_pcm_sw_params_get_boundary(p, ctypes.byref(boundary))
+        a.snd_pcm_sw_params_set_stop_threshold(h, p, ctypes.c_ulong(boundary.value))
+        a.snd_pcm_sw_params_set_start_threshold(h, p, ctypes.c_ulong(1))
+        a.snd_pcm_sw_params(h, p)
+
+    a.snd_pcm_prepare(h)
+    rc = a.snd_pcm_start(h)
+    if rc < 0:
+        log("%s: start failed: %s" % (label, a.snd_strerror(rc).decode()))
+    return h
+
+
+class Session:
+    def __init__(self):
+        self.pcm = []
+        self.output = None
+
+    def up(self):
+        return bool(self.pcm)
+
+    def start(self):
+        self.output = active_output()
+        mic = "Headset" if self.output == "Headphones" else "Mic"
+        if not ucm("set", "_verb", "Voice Call", "set", "_enadev", self.output,
+                   "set", "_enadev", mic):
+            return
+        for stream, label, pb in ((PLAYBACK, "downlink", True),
+                                  (CAPTURE, "uplink", False)):
+            h = open_leg(stream, label, pb)
+            if h:
+                self.pcm.append(h)
+        log("call audio up (%s + %s)" % (self.output, mic))
+
+    def stop(self):
+        for h in self.pcm:
+            a.snd_pcm_close(h)
+        self.pcm = []
+        ucm("set", "_verb", "HiFi")
+        log("call audio down")
+
+
+def calls_active():
+    """True while a call is dialing/ringing-out/active (not while ringing in)."""
+    r = subprocess.run(["mmcli", "-m", "any", "--voice-list-calls"],
+                       capture_output=True, text=True)
+    if r.returncode or "no calls" in r.stdout.lower():
+        return False
+    for path in [w for w in r.stdout.split() if "/Call/" in w]:
+        idx = path.rsplit("/", 1)[-1]
+        c = subprocess.run(["mmcli", "-K", "--call", idx],
+                           capture_output=True, text=True)
+        for line in c.stdout.splitlines():
+            if line.startswith("call.properties.state"):
+                if line.split(":", 1)[1].strip() in ACTIVE_STATES:
+                    return True
+    return False
+
+
+def main():
+    log("fp3-voiced: watching ModemManager for calls")
+    session = Session()
+    while True:
+        try:
+            wanted = calls_active()
+        except Exception as e:                      # never die on a transient
+            log("poll error: %s" % e)
+            wanted = session.up()
+        if wanted and not session.up():
+            session.start()
+        elif not wanted and session.up():
+            session.stop()
+        time.sleep(POLL)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        sys.exit(0)
