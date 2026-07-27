@@ -60,6 +60,9 @@ def ucm(*args):
 
 CALLAUDIO = ("org.mobian_project.CallAudio", "/org/mobian_project/CallAudio")
 
+# Set by the button watcher so a speakerphone press is acted on at once.
+WAKE = threading.Event()
+
 
 def session_uid():
     for d in sorted(glob.glob("/run/user/*")):
@@ -512,19 +515,28 @@ def mirror_volume(output, pct):
     log("volume %d%% -> %s %d" % (pct, output, val))
 
 
+_last_pct = [None]        # what the volume keys last produced, cached
+
+
 def restore_output_volume(output):
     """Put this output's own level back when the call moves to it.
 
     Without this the percentage the volume keys last produced follows the call
     from one output to the next, and plugging a headset in while the speaker
     was loud is painful.
+
+    The codec gain is applied straight away - a re-route must not wait on a
+    pactl round trip - and pulseaudio's own slider is corrected right after,
+    off the critical path.
     """
-    pct = _out_volume.get(output)
-    if pct is None:
-        pct = pa_sink_volume_pct()
-    elif pa_sink_volume_pct() != pct:
-        pactl("set-sink-volume", "@DEFAULT_SINK@", "%d%%" % pct)
+    pct = _out_volume.get(output, _last_pct[0])
     mirror_volume(output, pct)
+    if pct is not None and _last_pct[0] != pct:
+        threading.Thread(
+            target=lambda: pactl("set-sink-volume", "@DEFAULT_SINK@",
+                                 "%d%%" % pct),
+            daemon=True).start()
+        _last_pct[0] = pct
     return pct
 
 def _jack(name):
@@ -616,6 +628,7 @@ class ButtonWatch:
                     set_mic_muted(val)          # instant, not on the next poll
                 elif member == "EnableSpeaker":
                     self.speaker = val
+                    WAKE.set()                  # do not wait out the poll
                 member = None
 
 
@@ -727,7 +740,7 @@ class Session:
         # EnableSequence instead, which is what keeps the frontend from picking
         # up two backends ("Quinary MI2S" and "SLIM Playback" at once).
         ucm("set", "_verb", "HiFi")          # drops the call devices and their BEs
-        time.sleep(0.3)                      # let the old backend leave the graph
+        time.sleep(0.15)                     # let the old backend leave the graph
         self.forced_output = output
         self.start(pa_ready=True)
 
@@ -888,6 +901,7 @@ def main():
             if pct != last_volume:
                 mirror_volume(session.output, pct)
                 last_volume = pct
+            _last_pct[0] = pct
             if session.snapshot_due and time.time() >= session.snapshot_due:
                 session.snapshot_due = 0
                 snapshot("up")
@@ -898,7 +912,8 @@ def main():
             idle_ticks += 1
             if idle_ticks % int(20 / POLL) == 0:
                 idle_check("idle")
-        time.sleep(POLL)
+        WAKE.wait(POLL)
+        WAKE.clear()
 
 
 if __name__ == "__main__":
