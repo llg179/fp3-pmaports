@@ -153,31 +153,48 @@ WATCH_MIXERS = [
 ]
 
 
+def _pulse_env_for(d):
+    env = dict(os.environ)
+    env["PULSE_SERVER"] = "unix:" + os.path.join(d, "pulse", "native")
+    env["XDG_RUNTIME_DIR"] = d
+    # ...and its cookie, or pulseaudio refuses the connection
+    try:
+        home = pwd.getpwuid(os.stat(d).st_uid).pw_dir
+        cookie = os.path.join(home, ".config", "pulse", "cookie")
+        if os.path.exists(cookie):
+            env["PULSE_COOKIE"] = cookie
+    except (KeyError, OSError):
+        pass
+    return env
+
+
+_pulse_dir = []
+
+
 def pulse_env():
-    """Environment that lets this (root) daemon talk to the user's pulseaudio.
+    """Environment that lets this (root) daemon talk to the pulseaudio that
+    actually owns the sound card.
 
     The service runs as root, so pactl would look for a per-root pulseaudio and
-    find nothing - and without pulseaudio the call cannot use its profile, which
-    is what makes the volume keys work. Point it at the first user session's
-    socket instead.
+    find nothing. Picking the first /run/user/* with a socket is not enough
+    either: while the screen is locked the *greeter* runs its own pulseaudio,
+    and talking to that one means reading the wrong card state (or none). Ask
+    each candidate whether it has our card, and remember the one that does.
     """
-    env = dict(os.environ)
-    for d in sorted(glob.glob("/run/user/*")):
-        sock = os.path.join(d, "pulse", "native")
-        if not os.path.exists(sock):
-            continue
-        env["PULSE_SERVER"] = "unix:" + sock
-        env["XDG_RUNTIME_DIR"] = d
-        # ...and its cookie, or pulseaudio refuses the connection
+    dirs = sorted(glob.glob("/run/user/*"))
+    if _pulse_dir and _pulse_dir[0] in dirs:
+        dirs = [_pulse_dir[0]] + [d for d in dirs if d != _pulse_dir[0]]
+    for d in dirs:
+        env = _pulse_env_for(d)
         try:
-            home = pwd.getpwuid(os.stat(d).st_uid).pw_dir
-            cookie = os.path.join(home, ".config", "pulse", "cookie")
-            if os.path.exists(cookie):
-                env["PULSE_COOKIE"] = cookie
-        except KeyError:
-            pass
-        break
-    return env
+            out = subprocess.run(["pactl", "list", "short", "cards"],
+                                 capture_output=True, text=True, env=env).stdout
+        except OSError:
+            continue
+        if "sound-card" in out:
+            _pulse_dir[:] = [d]
+            return env
+    return _pulse_env_for(dirs[0]) if dirs else dict(os.environ)
 
 
 def pactl(*args):
@@ -279,6 +296,27 @@ def pa_release_card():
     log("warning: the card still has sinks after 2s")
 
 
+def pa_hifi_profiles():
+    """The HiFi profiles pulseaudio currently considers available, best first.
+
+    Restoring a profile pulseaudio thinks is unavailable is worse than doing
+    nothing: it drops the card to "off" and the phone is left with no sink.
+    """
+    out = []
+    for line in pactl("list", "cards").splitlines():
+        line = line.strip()
+        if line.startswith("HiFi (") and "available: yes" in line:
+            name = line.split(":", 1)[0].strip()
+            prio = 0
+            if "priority: " in line:
+                try:
+                    prio = int(line.split("priority: ", 1)[1].split(",")[0])
+                except ValueError:
+                    pass
+            out.append((prio, name))
+    return [n for _, n in sorted(out, reverse=True)]
+
+
 def pa_restore_card():
     """Give the card back, but only once the voice path has really let go.
 
@@ -291,8 +329,10 @@ def pa_restore_card():
     card = pa_card()
     if not card:
         return
-    fallback = "HiFi (Headphones)" if jack_plugged() else "HiFi (Speaker)"
-    prof = _saved_profile[0] if _saved_profile else fallback
+    available = pa_hifi_profiles()
+    fallback = available[0] if available else "HiFi (Speaker)"
+    prof = (_saved_profile[0] if _saved_profile and _saved_profile[0] in available
+            else fallback)
     time.sleep(1.5)                  # let the voice AFE port stop in the DSP
     for attempt in (1, 2):
         if not pa_set_profile(card, prof):
@@ -743,12 +783,27 @@ def startup_reset():
         if pa_card() and ucm("set", "_verb", "HiFi"):
             break
         time.sleep(1)
+    idle_check("startup")
+    pa_streams(False)
+
+
+def idle_check(tag):
+    """Put the card back on a HiFi profile if it is not on one.
+
+    This runs at startup and then periodically while no call is up, because the
+    state that has to be undone can appear later: the graphical session starts
+    at the *greeter*, whose pulseaudio owns the card until the phone is
+    unlocked, and the user's own pulseaudio then comes up with whatever profile
+    it remembered - including "off" or a Voice Call one, either of which leaves
+    the phone with no sink and no ringtone.
+    """
+    if not pa_card():
+        return
     prof = pa_active_profile()
     if prof is None or prof == "off" or prof.startswith("Voice Call"):
-        log("startup: card is on %s, putting it back on HiFi" % prof)
+        log("%s: card is on %s, putting it back on HiFi" % (tag, prof))
         _saved_profile[:] = []
         pa_restore_card()
-    pa_streams(False)
 
 
 def main():
@@ -759,6 +814,7 @@ def main():
     _buttons_ref.append(buttons)
     buttons.start()
     ticks = 0
+    idle_ticks = 0
     last_volume = None
     last_switch = 0.0
     speaker = False
@@ -793,6 +849,10 @@ def main():
             ticks += 1
             if ticks % int(10 / POLL) == 0:
                 snapshot("t+%ds" % int(ticks * POLL))
+        else:
+            idle_ticks += 1
+            if idle_ticks % int(20 / POLL) == 0:
+                idle_check("idle")
         time.sleep(POLL)
 
 
