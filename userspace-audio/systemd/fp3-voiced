@@ -241,6 +241,50 @@ def pa_active_profile():
     return None
 
 
+_saved_profile = []
+
+
+def pa_release_card():
+    """Hand the whole card back to us for the duration of the call.
+
+    Suspending the streams is not enough: a suspended sink is resumed by any
+    client that wants to play, and by pulseaudio itself when the mixer changes
+    underneath it. When that happened while the call was being set up, its
+    media stream tried to start SLIMBUS_0_RX a second time, got ADSP_EALREADY,
+    and pulseaudio dropped the sink for good - the port stays started inside the
+    DSP, so every later open fails with -22 and the phone has no media audio and
+    no ringtone until it is rebooted. Setting the card profile to "off" makes
+    pulseaudio close the backend and keep away from it.
+
+    The volume keys keep working: with the card off they act on pulseaudio's
+    fallback sink, and the percentage is what we mirror onto the codec gain.
+    """
+    card = pa_card()
+    if not card:
+        return
+    prof = pa_active_profile()
+    if prof and prof != "off":
+        _saved_profile[:] = [prof]
+    pa_set_profile(card, "off")
+    for _ in range(20):
+        if not [l for l in pactl("list", "short", "sinks").splitlines()
+                if l.split() and "auto_null" not in l]:
+            time.sleep(0.3)          # let the backend finish tearing down
+            return
+        time.sleep(0.1)
+    log("warning: the card still has sinks after 2s")
+
+
+def pa_restore_card():
+    card = pa_card()
+    if not card:
+        return
+    prof = _saved_profile[0] if _saved_profile else "HiFi (Speaker)"
+    if not pa_set_profile(card, prof):
+        pa_set_profile(card, "HiFi (Speaker)")
+    log("pulseaudio card restored to %s" % prof)
+
+
 def pa_streams(suspend):
     """Stop pulseaudio streaming on the card while the call owns the backend.
 
@@ -249,9 +293,8 @@ def pa_streams(suspend):
     port first configures it, the other one gets ADSP_EALREADY, and the call is
     silent in both directions even though every route looks right.
 
-    Suspending only the streams - not pulseaudio itself, and after the profile
-    switch - keeps the volume keys working: pulseaudio still applies the sink
-    volume to the codec gain of a suspended sink (verified on device).
+    This runs on top of pa_release_card(): the profile switch is what actually
+    keeps pulseaudio off the backend, this only leaves nothing streaming behind.
     """
     arg = "1" if suspend else "0"
     for line in pactl("list", "short", "sinks").splitlines():
@@ -504,8 +547,10 @@ class Session:
         # same backend, so: quiet pulseaudio, apply the routing ourselves, open
         # the call, and only then hand the profile over for the volume keys.
         pa_streams(True)
+        pa_release_card()
         if not ucm("set", "_verb", "Voice Call", "set", "_enadev", self.output,
                    "set", "_enadev", mic):
+            pa_restore_card()
             pa_streams(False)
             return
         for stream, label, pb in ((PLAYBACK, "downlink", True),
@@ -554,6 +599,7 @@ class Session:
         self.pcm = []
         self.forced_output = None
         ucm("set", "_verb", "HiFi")
+        pa_restore_card()
         pa_streams(False)
         log("call audio down")
 
@@ -613,6 +659,8 @@ def main():
     # streams suspended and the Voice Call verb applied, which looks like a
     # completely silent phone - no ringtone, no media.
     ucm("set", "_verb", "HiFi")
+    if pa_active_profile() == "off":
+        pa_restore_card()            # a crash mid-call leaves the card released
     pa_streams(False)
     log("fp3-voiced: watching ModemManager for calls")
     session = Session()
