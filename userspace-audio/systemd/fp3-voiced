@@ -171,6 +171,29 @@ def pa_active_profile():
     return None
 
 
+def pa_streams(suspend):
+    """Stop pulseaudio streaming on the card while the call owns the backend.
+
+    The call and pulseaudio's media stream would otherwise share SLIMBUS_0_RX
+    (and the standalone microphone source SLIMBUS_0_TX): whoever starts the AFE
+    port first configures it, the other one gets ADSP_EALREADY, and the call is
+    silent in both directions even though every route looks right.
+
+    Suspending only the streams - not pulseaudio itself, and after the profile
+    switch - keeps the volume keys working: pulseaudio still applies the sink
+    volume to the codec gain of a suspended sink (verified on device).
+    """
+    arg = "1" if suspend else "0"
+    for line in pactl("list", "short", "sinks").splitlines():
+        f = line.split()
+        if len(f) > 1 and "auto_null" not in f[1]:
+            pactl("suspend-sink", f[1], arg)
+    for line in pactl("list", "short", "sources").splitlines():
+        f = line.split()
+        if len(f) > 1 and "monitor" not in f[1]:
+            pactl("suspend-source", f[1], arg)
+
+
 def snapshot(tag):
     """One line per interesting control - the ground truth for a silent call."""
     try:
@@ -234,12 +257,16 @@ class Session:
     def start(self):
         self.output = active_output()
         mic = "Headset" if self.output == "Headphones" else "Mic"
-        self.prev_profile = pa_active_profile()
+        prev = pa_active_profile()
+        # never restore into another call profile (a leftover from a previous
+        # call would leave the phone routed to the earpiece for media)
+        self.prev_profile = prev if not (prev or "").startswith("Voice Call") else "HiFi (Speaker)"
         card, profile = pa_profile(self.output)
         if pa_set_profile(card, profile):
             # pulseaudio applied the verb itself: routing and volume control
             # now live in the same place.
             log("pulseaudio profile -> %s" % profile)
+            pa_streams(True)
         else:
             # no usable profile (pulseaudio may have dropped the card) - fall
             # back to applying the verb directly, volume keys will not follow
@@ -261,6 +288,7 @@ class Session:
         for h in self.pcm:
             a.snd_pcm_close(h)
         self.pcm = []
+        pa_streams(False)
         card = pa_card()
         if self.prev_profile and pa_set_profile(card, self.prev_profile):
             log("pulseaudio profile -> %s" % self.prev_profile)
