@@ -71,6 +71,63 @@ def active_output():
     return "Earpiece"
 
 
+DPCM_STATE = "/sys/kernel/debug/asoc/Fairphone 3/VoiceMMode1/state"
+WATCH_MIXERS = [
+    "SLIMBUS_0_RX Voice Mixer VoiceMMode1",
+    "QUIN_MI2S_RX Voice Mixer VoiceMMode1",
+    "VoiceMMode1 Capture Mixer SLIMBUS_0_TX",
+    "SLIM RX0 MUX", "RX INT0_2 MUX", "ADC MUX0", "DMIC MUX0",
+]
+
+
+def pactl(*args):
+    try:
+        return subprocess.run(["pactl"] + list(args), capture_output=True,
+                              text=True).stdout
+    except FileNotFoundError:
+        return ""
+
+
+def pa_release(suspend):
+    """Take the card away from pulseaudio for the duration of the call.
+
+    Pulseaudio keeps its own idea of the active UCM verb; with its sink open on
+    the media path it re-applies HiFi routing over ours and the call goes silent
+    even though everything looked right. Suspending its sink and source closes
+    those PCMs, which is the state the call path was verified in.
+    """
+    arg = "1" if suspend else "0"
+    for line in pactl("list", "short", "sinks").splitlines():
+        f = line.split()
+        if len(f) > 1 and "auto_null" not in f[1]:
+            pactl("suspend-sink", f[1], arg)
+    for line in pactl("list", "short", "sources").splitlines():
+        f = line.split()
+        if len(f) > 1 and "monitor" not in f[1]:
+            pactl("suspend-source", f[1], arg)
+
+
+def snapshot(tag):
+    """One line per interesting control - the ground truth for a silent call."""
+    try:
+        with open(DPCM_STATE) as fh:
+            state = [l.strip() for l in fh if l.strip().startswith(("[", "State:", "- "))]
+        log("%s dpcm: %s" % (tag, " | ".join(state)))
+    except OSError as e:
+        log("%s dpcm: unreadable (%s)" % (tag, e))
+    vals = []
+    for c in WATCH_MIXERS:
+        r = subprocess.run(["amixer", "-c", "0", "cget", "name=" + c],
+                           capture_output=True, text=True)
+        v = ""
+        for line in r.stdout.splitlines():
+            if ": values" in line:
+                v = line.split("=", 1)[1]
+                break
+        vals.append("%s=%s" % (c.split()[0] + "/" + c.split()[-1], v))
+    log("%s mixers: %s" % (tag, " ".join(vals)))
+
+
 def open_leg(stream, label, playback):
     h = ctypes.c_void_p()
     rc = a.snd_pcm_open(ctypes.byref(h), PCM.encode(), stream, 0)
@@ -112,8 +169,10 @@ class Session:
     def start(self):
         self.output = active_output()
         mic = "Headset" if self.output == "Headphones" else "Mic"
+        pa_release(True)
         if not ucm("set", "_verb", "Voice Call", "set", "_enadev", self.output,
                    "set", "_enadev", mic):
+            pa_release(False)
             return
         for stream, label, pb in ((PLAYBACK, "downlink", True),
                                   (CAPTURE, "uplink", False)):
@@ -121,12 +180,16 @@ class Session:
             if h:
                 self.pcm.append(h)
         log("call audio up (%s + %s)" % (self.output, mic))
+        time.sleep(1)
+        snapshot("up")
 
     def stop(self):
+        snapshot("down")
         for h in self.pcm:
             a.snd_pcm_close(h)
         self.pcm = []
         ucm("set", "_verb", "HiFi")
+        pa_release(False)
         log("call audio down")
 
 
@@ -150,6 +213,7 @@ def calls_active():
 def main():
     log("fp3-voiced: watching ModemManager for calls")
     session = Session()
+    ticks = 0
     while True:
         try:
             wanted = calls_active()
@@ -158,8 +222,13 @@ def main():
             wanted = session.up()
         if wanted and not session.up():
             session.start()
+            ticks = 0
         elif not wanted and session.up():
             session.stop()
+        elif session.up():
+            ticks += 1
+            if ticks % int(10 / POLL) == 0:
+                snapshot("t+%ds" % int(ticks * POLL))
         time.sleep(POLL)
 
 
