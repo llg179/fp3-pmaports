@@ -449,11 +449,21 @@ def open_leg(stream, label, playback):
 # whole range put every setting between 0 and +40 dB, where the far end is
 # already loud and clipping, so the keys felt dead. Use a range you can actually
 # hear across: -24 dB at the bottom, +26 dB at the top.
-RX_VOL_MAX = 110
-RX_VOL_MIN = 60
+EAR_VOL_MAX = 110
+EAR_VOL_MIN = 60
+# Headphones sit far closer to the ear than the earpiece does, and the same
+# +26 dB there is painful - full volume on a headset was "nearly deafening".
+# Keep the top at +6 dB and the bottom lower, so the usable range is on the
+# quiet side of the earpiece one.
+HPH_VOL_MAX = 90
+HPH_VOL_MIN = 45
 # aw8898 "RX Volume": 0..255 in 0.5 dB steps, 255 == 0 dB
 SPK_VOL_MAX = 255
 SPK_VOL_MIN = 160
+
+# Each output keeps its own level, like every phone does: the volume you set on
+# speakerphone must not carry over to a headset the moment you plug it in.
+_out_volume = {}
 
 
 def pa_sink_volume_pct():
@@ -486,18 +496,36 @@ def mirror_volume(output, pct):
     if pct is None:
         return
     pct = max(0, min(100, pct))
+    _out_volume[output] = pct
     if output == "Speaker":
         val = SPK_VOL_MIN + (SPK_VOL_MAX - SPK_VOL_MIN) * pct // 100
         _cset("RX Volume", val)                      # the aw8898 amplifier
         log("volume %d%% -> speaker RX Volume %d" % (pct, val))
         return
-    val = RX_VOL_MIN + (RX_VOL_MAX - RX_VOL_MIN) * pct // 100
     if output == "Headphones":
+        val = HPH_VOL_MIN + (HPH_VOL_MAX - HPH_VOL_MIN) * pct // 100
         _cset("RX1 Mix Digital Volume", val)
         _cset("RX2 Mix Digital Volume", val)
     else:
+        val = EAR_VOL_MIN + (EAR_VOL_MAX - EAR_VOL_MIN) * pct // 100
         _cset("RX0 Mix Digital Volume", val)
     log("volume %d%% -> %s %d" % (pct, output, val))
+
+
+def restore_output_volume(output):
+    """Put this output's own level back when the call moves to it.
+
+    Without this the percentage the volume keys last produced follows the call
+    from one output to the next, and plugging a headset in while the speaker
+    was loud is painful.
+    """
+    pct = _out_volume.get(output)
+    if pct is None:
+        pct = pa_sink_volume_pct()
+    elif pa_sink_volume_pct() != pct:
+        pactl("set-sink-volume", "@DEFAULT_SINK@", "%d%%" % pct)
+    mirror_volume(output, pct)
+    return pct
 
 def _jack(name):
     out = subprocess.run(["amixer", "-c", "0", "cget", "iface=CARD,name=" + name],
@@ -625,6 +653,7 @@ class Session:
         self.output = None
         self.forced_output = None
         self.prev_profile = None
+        self.snapshot_due = 0
 
     def up(self):
         return bool(self.pcm)
@@ -638,8 +667,9 @@ class Session:
         # first. Switching the pulseaudio profile opens its media sink on the
         # same backend, so: quiet pulseaudio, apply the routing ourselves, open
         # the call, and only then hand the profile over for the volume keys.
-        pa_streams(True)
-        pa_release_card()
+        if not retry:
+            pa_streams(True)
+            pa_release_card()
         if not ucm("set", "_verb", "Voice Call", "set", "_enadev", self.output,
                    "set", "_enadev", mic):
             pa_restore_card()
@@ -658,19 +688,16 @@ class Session:
             for h in self.pcm:
                 a.snd_pcm_close(h)
             self.pcm = []
-            ucm("set", "_disdev", self.output)
-            time.sleep(0.3)
             ucm("set", "_verb", "HiFi")
-            time.sleep(1.5)
+            time.sleep(1.0)
             self.start(retry=True)
             return
         log("call audio up (%s + %s)" % (self.output, mic))
 
-        mirror_volume(self.output, pa_sink_volume_pct())
+        restore_output_volume(self.output)
         if _buttons_ref and _buttons_ref[0].muted:
             set_mic_muted(True)          # a re-route re-enabled the muted mixer
-        time.sleep(1)
-        snapshot("up")
+        self.snapshot_due = time.time() + 1.0
 
     def switch_output(self, output):
         """Move an in-call stream to another output.
@@ -692,15 +719,13 @@ class Session:
         for h in self.pcm:
             a.snd_pcm_close(h)
         self.pcm = []
-        # Disable the device explicitly before dropping the verb. Going straight
-        # to HiFi left the codec's playback DAI in the graph long enough for the
-        # next session to pick up *both* backends ("Quinary MI2S" and "SLIM
-        # Playback" at once in the DPCM state), and then hw_params fails with
-        # -22 and the speakerphone downlink never starts.
-        ucm("set", "_disdev", self.output)
-        time.sleep(0.3)
+        # No "_disdev" here: each alsaucm run is a fresh process that knows
+        # nothing about the device enabled before, so the call always failed.
+        # Each Voice Call device now drops the other outputs' routes in its own
+        # EnableSequence instead, which is what keeps the frontend from picking
+        # up two backends ("Quinary MI2S" and "SLIM Playback" at once).
         ucm("set", "_verb", "HiFi")          # drops the call devices and their BEs
-        time.sleep(1.2)                      # let the old backend leave the graph
+        time.sleep(0.4)                      # let the old backend leave the graph
         self.forced_output = output
         self.start()
 
@@ -815,6 +840,8 @@ def main():
     buttons.start()
     ticks = 0
     idle_ticks = 0
+    last_jack = jack_plugged()
+    jack_settled = 0
     last_volume = None
     last_switch = 0.0
     speaker = False
@@ -838,14 +865,30 @@ def main():
             if buttons.speaker is not None:
                 speaker = buttons.speaker
                 buttons.speaker = None
-            want = wanted_output(speaker, jack_plugged())
-            if want != session.output and time.time() - last_switch > 2:
+            plugged = jack_plugged()
+            if plugged != last_jack:
+                # Give the codec's headset detection a moment to settle before
+                # acting on it: rebuilding the call in the same instant the
+                # plug is sensed can pick the built-in microphone even though
+                # the headset has one, because the MBHC is still deciding.
+                last_jack = plugged
+                jack_settled = time.time() + 0.6
+            if jack_settled and time.time() < jack_settled:
+                time.sleep(POLL)
+                continue
+            jack_settled = 0
+            want = wanted_output(speaker, plugged)
+            if want != session.output and time.time() - last_switch > 1:
                 session.switch_output(want)
                 last_switch = time.time()
+                last_volume = pa_sink_volume_pct()
             pct = pa_sink_volume_pct()
             if pct != last_volume:
                 mirror_volume(session.output, pct)
                 last_volume = pct
+            if session.snapshot_due and time.time() >= session.snapshot_due:
+                session.snapshot_due = 0
+                snapshot("up")
             ticks += 1
             if ticks % int(10 / POLL) == 0:
                 snapshot("t+%ds" % int(ticks * POLL))
