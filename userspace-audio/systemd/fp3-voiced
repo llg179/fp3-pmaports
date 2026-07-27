@@ -35,7 +35,7 @@ import time
 
 CARD = "Fairphone_3"
 PCM = "hw:0,4"
-POLL = 0.5
+POLL = 0.25
 
 # ModemManager call states that mean "audio should be up"
 ACTIVE_STATES = {"dialing", "ringing-out", "active"}
@@ -658,7 +658,7 @@ class Session:
     def up(self):
         return bool(self.pcm)
 
-    def start(self, retry=False):
+    def start(self, retry=False, pa_ready=False):
         # a plugged headset wins over whatever pulseaudio was routed to
         self.output = self.forced_output or wanted_output(False, jack_plugged())
         mic = "Headset" if jack_state()[1] else "Mic"   # follows the jack, not the output
@@ -667,7 +667,9 @@ class Session:
         # first. Switching the pulseaudio profile opens its media sink on the
         # same backend, so: quiet pulseaudio, apply the routing ourselves, open
         # the call, and only then hand the profile over for the volume keys.
-        if not retry:
+        if not (retry or pa_ready):
+            # Only on the first build of a call: pulseaudio already let go of
+            # the card, and asking it again costs about a second per re-route.
             pa_streams(True)
             pa_release_card()
         if not ucm("set", "_verb", "Voice Call", "set", "_enadev", self.output,
@@ -675,6 +677,7 @@ class Session:
             pa_restore_card()
             pa_streams(False)
             return
+        restore_output_volume(self.output)     # before the sound appears
         for stream, label, pb in ((PLAYBACK, "downlink", True),
                                   (CAPTURE, "uplink", False)):
             h = open_leg(stream, label, pb)
@@ -690,11 +693,10 @@ class Session:
             self.pcm = []
             ucm("set", "_verb", "HiFi")
             time.sleep(1.0)
-            self.start(retry=True)
+            self.start(retry=True, pa_ready=True)
             return
         log("call audio up (%s + %s)" % (self.output, mic))
 
-        restore_output_volume(self.output)
         if _buttons_ref and _buttons_ref[0].muted:
             set_mic_muted(True)          # a re-route re-enabled the muted mixer
         self.snapshot_due = time.time() + 1.0
@@ -725,9 +727,9 @@ class Session:
         # EnableSequence instead, which is what keeps the frontend from picking
         # up two backends ("Quinary MI2S" and "SLIM Playback" at once).
         ucm("set", "_verb", "HiFi")          # drops the call devices and their BEs
-        time.sleep(0.4)                      # let the old backend leave the graph
+        time.sleep(0.3)                      # let the old backend leave the graph
         self.forced_output = output
-        self.start()
+        self.start(pa_ready=True)
 
     def stop(self):
         snapshot("down")
@@ -873,8 +875,8 @@ def main():
                 # the headset has one, because the MBHC is still deciding.
                 last_jack = plugged
                 jack_settled = time.time() + 0.6
-            if jack_settled and time.time() < jack_settled:
-                time.sleep(POLL)
+            if jack_settled and time.time() < jack_settled and not speaker:
+                time.sleep(POLL)             # the button still gets through
                 continue
             jack_settled = 0
             want = wanted_output(speaker, plugged)
