@@ -551,10 +551,30 @@ class ButtonWatch:
                 member = None
 
 
+# "DEC0 Volume" is the S8 decimator gain, and like the RX gains amixer takes it
+# raw: 0 is -84 dB (silence) and 84 is 0 dB. Passing "-84" would not even reach
+# the control - amixer parses a leading dash as an option.
+MIC_GAIN_ON = 84
+MIC_GAIN_MUTE = 0
+
+
 def set_mic_muted(muted):
-    """Mute the uplink at the codec, where the call actually passes."""
-    subprocess.run(["amixer", "-c", "0", "cset",
-                    "name=AIF1_CAP Mixer SLIM TX0", "0" if muted else "1"],
+    """Mute the uplink with the decimator gain, never by re-routing.
+
+    Muting used to switch "AIF1_CAP Mixer SLIM TX0" off. That does silence
+    the uplink, but it takes the microphone out of the DAPM graph, and this
+    codec does not bring the capture path back when it is routed in again:
+    measured on the media capture, the level goes to exactly zero and stays
+    there for the rest of the boot, through a fresh PCM open and a full
+    re-apply of the routing. So the unmute did nothing, and the microphone
+    stayed dead for every later call as well.
+
+    "DEC0 Volume" is the decimator's digital gain, which does not touch the
+    graph at all: -84 dB is silence, and going back to 0 dB restores the
+    level immediately.
+    """
+    subprocess.run(["amixer", "-c", "0", "cset", "name=DEC0 Volume",
+                    str(MIC_GAIN_MUTE if muted else MIC_GAIN_ON)],
                    capture_output=True)
     log("microphone %s" % ("muted" if muted else "unmuted"))
 
