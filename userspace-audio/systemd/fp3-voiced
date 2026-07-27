@@ -263,7 +263,11 @@ def pa_release_card():
     if not card:
         return
     prof = pa_active_profile()
-    if prof and prof != "off":
+    # Never remember a Voice Call profile: pulseaudio sometimes sits on one
+    # already (they are offered per output and it picks by availability), and
+    # restoring it after the call opens its sink straight back onto
+    # SLIMBUS_0_RX - which is exactly the ADSP_EALREADY wedge this avoids.
+    if prof and prof != "off" and not prof.startswith("Voice Call"):
         _saved_profile[:] = [prof]
     pa_set_profile(card, "off")
     for _ in range(20):
@@ -276,13 +280,34 @@ def pa_release_card():
 
 
 def pa_restore_card():
+    """Give the card back, but only once the voice path has really let go.
+
+    Handing it back in the same instant the call is torn down puts
+    pulseaudio's sink on SLIMBUS_0_RX while the DSP still has the port
+    started, so it gets ADSP_EALREADY and the sink is lost until reboot.
+    Wait for the port to settle, then check that a real sink actually
+    appeared and try once more if it did not.
+    """
     card = pa_card()
     if not card:
         return
-    prof = _saved_profile[0] if _saved_profile else "HiFi (Speaker)"
-    if not pa_set_profile(card, prof):
-        pa_set_profile(card, "HiFi (Speaker)")
-    log("pulseaudio card restored to %s" % prof)
+    fallback = "HiFi (Headphones)" if jack_plugged() else "HiFi (Speaker)"
+    prof = _saved_profile[0] if _saved_profile else fallback
+    time.sleep(1.5)                  # let the voice AFE port stop in the DSP
+    for attempt in (1, 2):
+        if not pa_set_profile(card, prof):
+            pa_set_profile(card, fallback)
+            prof = fallback
+        for _ in range(15):
+            if [l for l in pactl("list", "short", "sinks").splitlines()
+                    if l.split() and "auto_null" not in l]:
+                log("pulseaudio card restored to %s" % prof)
+                return
+            time.sleep(0.2)
+        log("no sink after restoring %s (attempt %d)" % (prof, attempt))
+        pa_set_profile(card, "off")
+        time.sleep(2)
+    log("warning: pulseaudio has no sink on the card")
 
 
 def pa_streams(suspend):
@@ -352,6 +377,13 @@ def open_leg(stream, label, playback):
     rc = a.snd_pcm_set_params(h, S16_LE, RW_INTERLEAVED, ctypes.c_uint(1),
                               ctypes.c_uint(8000), ctypes.c_int(1),
                               ctypes.c_uint(500000))
+    if rc == -22:
+        # -EINVAL here means the frontend ended up with two backends; the leg is
+        # unusable, so say so and let the caller rebuild rather than carrying a
+        # half-open stream that reports "up" but is silent.
+        log("%s: set_params failed: %s" % (label, a.snd_strerror(rc).decode()))
+        a.snd_pcm_close(h)
+        return None
     if rc < 0:
         log("%s: set_params failed: %s" % (label, a.snd_strerror(rc).decode()))
 
@@ -537,7 +569,7 @@ class Session:
     def up(self):
         return bool(self.pcm)
 
-    def start(self):
+    def start(self, retry=False):
         # a plugged headset wins over whatever pulseaudio was routed to
         self.output = self.forced_output or wanted_output(False, jack_plugged())
         mic = "Headset" if jack_state()[1] else "Mic"   # follows the jack, not the output
@@ -558,6 +590,20 @@ class Session:
             h = open_leg(stream, label, pb)
             if h:
                 self.pcm.append(h)
+        if len(self.pcm) < 2 and not retry:
+            # A leg that would not open means the frontend picked up a stale
+            # backend. Drop everything and build the session once more instead
+            # of leaving the call half connected.
+            log("only %d of 2 legs opened, rebuilding" % len(self.pcm))
+            for h in self.pcm:
+                a.snd_pcm_close(h)
+            self.pcm = []
+            ucm("set", "_disdev", self.output)
+            time.sleep(0.3)
+            ucm("set", "_verb", "HiFi")
+            time.sleep(1.5)
+            self.start(retry=True)
+            return
         log("call audio up (%s + %s)" % (self.output, mic))
 
         mirror_volume(self.output, pa_sink_volume_pct())
@@ -586,8 +632,15 @@ class Session:
         for h in self.pcm:
             a.snd_pcm_close(h)
         self.pcm = []
+        # Disable the device explicitly before dropping the verb. Going straight
+        # to HiFi left the codec's playback DAI in the graph long enough for the
+        # next session to pick up *both* backends ("Quinary MI2S" and "SLIM
+        # Playback" at once in the DPCM state), and then hw_params fails with
+        # -22 and the speakerphone downlink never starts.
+        ucm("set", "_disdev", self.output)
+        time.sleep(0.3)
         ucm("set", "_verb", "HiFi")          # drops the call devices and their BEs
-        time.sleep(0.4)
+        time.sleep(1.2)                      # let the old backend leave the graph
         self.forced_output = output
         self.start()
 
@@ -654,14 +707,32 @@ def calls_active():
     return active
 
 
-def main():
-    # Clean slate: a previous run (or a crash mid-call) can leave pulseaudio's
-    # streams suspended and the Voice Call verb applied, which looks like a
-    # completely silent phone - no ringtone, no media.
-    ucm("set", "_verb", "HiFi")
-    if pa_active_profile() == "off":
-        pa_restore_card()            # a crash mid-call leaves the card released
+def startup_reset():
+    """Clean slate: nothing but a HiFi profile may be active outside a call.
+
+    Two states are worth undoing here. A crash mid-call leaves the card
+    released ("off") and the Voice Call verb applied, which looks like a
+    completely silent phone. And pulseaudio remembers the last profile it used
+    across reboots, so once it has been on a Voice Call profile it comes back on
+    it - which puts its media sink, the ringtone included, on the call's
+    SLIMBUS_0_RX backend and wedges the AFE port for the whole boot.
+
+    The card can take a few seconds to appear after boot, so wait for it.
+    """
+    for _ in range(30):
+        if pa_card() and ucm("set", "_verb", "HiFi"):
+            break
+        time.sleep(1)
+    prof = pa_active_profile()
+    if prof is None or prof == "off" or prof.startswith("Voice Call"):
+        log("startup: card is on %s, putting it back on HiFi" % prof)
+        _saved_profile[:] = []
+        pa_restore_card()
     pa_streams(False)
+
+
+def main():
+    startup_reset()
     log("fp3-voiced: watching ModemManager for calls")
     session = Session()
     buttons = ButtonWatch()
