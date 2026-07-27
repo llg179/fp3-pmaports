@@ -148,6 +148,7 @@ WATCH_MIXERS = [
     "QUIN_MI2S_RX Voice Mixer VoiceMMode1",
     "VoiceMMode1 Capture Mixer SLIMBUS_0_TX",
     "SLIM RX0 MUX", "RX INT0_2 MUX", "ADC MUX0", "DMIC MUX0",
+    "RX0 Mix Digital Volume", "EAR PA Volume",
 ]
 
 
@@ -260,6 +261,21 @@ def pa_streams(suspend):
         f = line.split()
         if len(f) > 1 and "monitor" not in f[1]:
             pactl("suspend-source", f[1], arg)
+    if not suspend:
+        return
+    # Wait for the PCMs to actually close. Opening the voice path while
+    # pulseaudio still has the backend open means the AFE port was configured
+    # by its media stream first; ours then gets ADSP_EALREADY and the downlink
+    # stays silent - the failure is timing dependent, which is why the same
+    # routing sometimes worked and sometimes did not.
+    for _ in range(20):
+        busy = [l for l in pactl("list", "short", "sinks").splitlines()
+                if l.split() and "auto_null" not in l and "SUSPENDED" not in l]
+        if not busy:
+            time.sleep(0.3)      # let the backend finish tearing down
+            return
+        time.sleep(0.1)
+    log("warning: pulseaudio streams still running after 2s")
 
 
 def snapshot(tag):
@@ -326,6 +342,7 @@ class Session:
     def start(self):
         self.output = self.forced_output or active_output()
         mic = "Headset" if self.output == "Headphones" else "Mic"
+        pa_streams(True)          # nothing of ours on the backend yet
         prev = pa_active_profile()
         # never restore into another call profile (a leftover from a previous
         # call would leave the phone routed to the earpiece for media)
