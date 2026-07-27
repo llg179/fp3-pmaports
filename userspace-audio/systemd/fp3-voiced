@@ -26,6 +26,7 @@ Call state comes from ModemManager over D-Bus.
 """
 import ctypes
 import glob
+import threading
 import os
 import pwd
 import subprocess
@@ -329,6 +330,70 @@ def open_leg(stream, label, playback):
     return h
 
 
+class ButtonWatch:
+    """Watch the in-call buttons on the session bus.
+
+    SpeakerState can be polled (callaudiod keeps it even though it cannot apply
+    it here), but MicState is never updated on this device - callaudiod bails
+    out before it gets that far. So watch the method calls themselves: that is
+    what the app sends either way.
+    """
+
+    def __init__(self):
+        self.mute = None
+        self.speaker = None
+        self.proc = None
+
+    def start(self):
+        uid = session_uid()
+        if not uid:
+            return
+        try:
+            gid = pwd.getpwuid(uid).pw_gid
+        except KeyError:
+            return
+
+        def drop():
+            os.setgid(gid)
+            os.setuid(uid)
+
+        env = dict(os.environ)
+        env["DBUS_SESSION_BUS_ADDRESS"] = "unix:path=/run/user/%d/bus" % uid
+        env["XDG_RUNTIME_DIR"] = "/run/user/%d" % uid
+        try:
+            self.proc = subprocess.Popen(
+                ["dbus-monitor", "--session",
+                 "destination='%s'" % CALLAUDIO[0]],
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+                env=env, preexec_fn=drop)
+        except OSError as e:
+            log("button watch unavailable: %s" % e)
+            return
+        threading.Thread(target=self._read, daemon=True).start()
+
+    def _read(self):
+        member = None
+        for line in self.proc.stdout:
+            line = line.strip()
+            if "member=" in line:
+                member = line.rsplit("member=", 1)[1].strip()
+            elif line.startswith("boolean") and member:
+                val = line.endswith("true")
+                if member == "MuteMic":
+                    self.mute = val
+                elif member == "EnableSpeaker":
+                    self.speaker = val
+                member = None
+
+
+def set_mic_muted(muted):
+    """Mute the uplink at the codec, where the call actually passes."""
+    subprocess.run(["amixer", "-c", "0", "cset",
+                    "name=AIF1_CAP Mixer SLIM TX0", "0" if muted else "1"],
+                   capture_output=True)
+    log("microphone %s" % ("muted" if muted else "unmuted"))
+
+
 class Session:
     def __init__(self):
         self.pcm = []
@@ -342,30 +407,37 @@ class Session:
     def start(self):
         self.output = self.forced_output or active_output()
         mic = "Headset" if self.output == "Headphones" else "Mic"
-        pa_streams(True)          # nothing of ours on the backend yet
         prev = pa_active_profile()
         # never restore into another call profile (a leftover from a previous
         # call would leave the phone routed to the earpiece for media)
         self.prev_profile = prev if not (prev or "").startswith("Voice Call") else "HiFi (Speaker)"
-        card, profile = pa_profile(self.output)
-        if pa_set_profile(card, profile):
-            # pulseaudio applied the verb itself: routing and volume control
-            # now live in the same place.
-            log("pulseaudio profile -> %s" % profile)
-            pa_streams(True)
-        else:
-            # no usable profile (pulseaudio may have dropped the card) - fall
-            # back to applying the verb directly, volume keys will not follow
-            log("falling back to alsaucm (no pulseaudio Voice Call profile)")
-            if not ucm("set", "_verb", "Voice Call", "set", "_enadev",
-                       self.output, "set", "_enadev", mic):
-                return
+
+        # Order matters. Whoever starts the AFE port configures it, and a second
+        # start only answers ADSP_EALREADY - so the voice path has to get there
+        # first. Switching the pulseaudio profile opens its media sink on the
+        # same backend, so: quiet pulseaudio, apply the routing ourselves, open
+        # the call, and only then hand the profile over for the volume keys.
+        pa_streams(True)
+        if not ucm("set", "_verb", "Voice Call", "set", "_enadev", self.output,
+                   "set", "_enadev", mic):
+            pa_streams(False)
+            return
         for stream, label, pb in ((PLAYBACK, "downlink", True),
                                   (CAPTURE, "uplink", False)):
             h = open_leg(stream, label, pb)
             if h:
                 self.pcm.append(h)
         log("call audio up (%s + %s)" % (self.output, mic))
+
+        # Now let pulseaudio adopt the same routing: its profile carries the
+        # PlaybackVolume that maps the volume keys onto the codec gain. Its own
+        # stream stays suspended, and the port keeps our configuration.
+        card, profile = pa_profile(self.output)
+        if pa_set_profile(card, profile):
+            log("pulseaudio profile -> %s" % profile)
+            pa_streams(True)
+        else:
+            log("no pulseaudio Voice Call profile - volume keys will not follow")
         time.sleep(1)
         snapshot("up")
 
@@ -375,27 +447,32 @@ class Session:
         The ADSP builds the CVP with the RX port it was given when the session
         was created, so flipping the UCM device mid-call would move the codec
         routing but not the voice stream. Tear the session down and bring it up
-        again on the new port instead.
+        again on the new port instead - in the same order as start().
         """
         log("output switch -> %s" % output)
         for h in self.pcm:
             a.snd_pcm_close(h)
         self.pcm = []
         self.forced_output = output
-        card, profile = pa_profile(output)
-        pa_set_profile(card, profile)
+        mic = "Headset" if output == "Headphones" else "Mic"
         pa_streams(True)
+        ucm("set", "_verb", "Voice Call", "set", "_enadev", output,
+            "set", "_enadev", mic)
         for stream, label, pb in ((PLAYBACK, "downlink", True),
                                   (CAPTURE, "uplink", False)):
             h = open_leg(stream, label, pb)
             if h:
                 self.pcm.append(h)
         self.output = output
+        card, profile = pa_profile(output)
+        if pa_set_profile(card, profile):
+            pa_streams(True)
         time.sleep(1)
         snapshot("switched")
 
     def stop(self):
         snapshot("down")
+        set_mic_muted(False)
         for h in self.pcm:
             a.snd_pcm_close(h)
         self.pcm = []
@@ -429,6 +506,8 @@ def calls_active():
 def main():
     log("fp3-voiced: watching ModemManager for calls")
     session = Session()
+    buttons = ButtonWatch()
+    buttons.start()
     ticks = 0
     while True:
         try:
@@ -442,7 +521,14 @@ def main():
         elif not wanted and session.up():
             session.stop()
         elif session.up():
-            spk = speaker_wanted() if ticks % 2 == 0 else (session.output == "Speaker")
+            if buttons.mute is not None:
+                set_mic_muted(buttons.mute)
+                buttons.mute = None
+            spk = buttons.speaker
+            if spk is None:
+                spk = speaker_wanted() if ticks % 2 == 0 else (session.output == "Speaker")
+            else:
+                buttons.speaker = None
             if spk and session.output != "Speaker":
                 session.switch_output("Speaker")
             elif not spk and session.output == "Speaker":
