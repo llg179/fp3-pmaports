@@ -57,6 +57,74 @@ def ucm(*args):
     return r.returncode == 0
 
 
+CALLAUDIO = ("org.mobian_project.CallAudio", "/org/mobian_project/CallAudio")
+
+
+def session_uid():
+    for d in sorted(glob.glob("/run/user/*")):
+        if os.path.exists(os.path.join(d, "bus")):
+            return int(os.path.basename(d))
+    return 0
+
+
+def session_user():
+    try:
+        return pwd.getpwuid(session_uid()).pw_name
+    except KeyError:
+        return None
+
+
+def session_bus_env():
+    env = dict(os.environ)
+    for d in sorted(glob.glob("/run/user/*")):
+        bus = os.path.join(d, "bus")
+        if os.path.exists(bus):
+            env["DBUS_SESSION_BUS_ADDRESS"] = "unix:path=" + bus
+            break
+    return env
+
+
+def as_session_user(argv):
+    """Run a command as the session user, without PAM.
+
+    The session bus refuses a connection from root even with the right address,
+    so these have to run as the user - but going through su/sudo twice a second
+    would push a PAM record into the journal every time.
+    """
+    uid = session_uid()
+    if not uid:
+        return ""
+    try:
+        gid = pwd.getpwuid(uid).pw_gid
+    except KeyError:
+        return ""
+
+    def drop():
+        os.setgid(gid)
+        os.setuid(uid)
+
+    env = dict(os.environ)
+    env["DBUS_SESSION_BUS_ADDRESS"] = "unix:path=/run/user/%d/bus" % uid
+    env["XDG_RUNTIME_DIR"] = "/run/user/%d" % uid
+    try:
+        return subprocess.run(argv, capture_output=True, text=True, env=env,
+                              preexec_fn=drop).stdout
+    except OSError:
+        return ""
+
+
+def speaker_wanted():
+    """callaudiod's SpeakerState - i.e. the app's speakerphone button.
+
+    callaudiod cannot apply it on this device (it rejects the card for having
+    no usable source) but it does track the state, so it still tells us what
+    the user pressed.
+    """
+    out = as_session_user(["busctl", "--user", "get-property", CALLAUDIO[0],
+                           CALLAUDIO[1], CALLAUDIO[0], "SpeakerState"])
+    return out.strip().endswith("1")
+
+
 def active_output():
     """Earpiece unless pulseaudio is currently on the speaker or headphones."""
     try:
@@ -249,13 +317,14 @@ class Session:
     def __init__(self):
         self.pcm = []
         self.output = None
+        self.forced_output = None
         self.prev_profile = None
 
     def up(self):
         return bool(self.pcm)
 
     def start(self):
-        self.output = active_output()
+        self.output = self.forced_output or active_output()
         mic = "Headset" if self.output == "Headphones" else "Mic"
         prev = pa_active_profile()
         # never restore into another call profile (a leftover from a previous
@@ -283,11 +352,37 @@ class Session:
         time.sleep(1)
         snapshot("up")
 
+    def switch_output(self, output):
+        """Move an in-call stream to another output.
+
+        The ADSP builds the CVP with the RX port it was given when the session
+        was created, so flipping the UCM device mid-call would move the codec
+        routing but not the voice stream. Tear the session down and bring it up
+        again on the new port instead.
+        """
+        log("output switch -> %s" % output)
+        for h in self.pcm:
+            a.snd_pcm_close(h)
+        self.pcm = []
+        self.forced_output = output
+        card, profile = pa_profile(output)
+        pa_set_profile(card, profile)
+        pa_streams(True)
+        for stream, label, pb in ((PLAYBACK, "downlink", True),
+                                  (CAPTURE, "uplink", False)):
+            h = open_leg(stream, label, pb)
+            if h:
+                self.pcm.append(h)
+        self.output = output
+        time.sleep(1)
+        snapshot("switched")
+
     def stop(self):
         snapshot("down")
         for h in self.pcm:
             a.snd_pcm_close(h)
         self.pcm = []
+        self.forced_output = None
         pa_streams(False)
         card = pa_card()
         if self.prev_profile and pa_set_profile(card, self.prev_profile):
@@ -330,6 +425,11 @@ def main():
         elif not wanted and session.up():
             session.stop()
         elif session.up():
+            spk = speaker_wanted() if ticks % 2 == 0 else (session.output == "Speaker")
+            if spk and session.output != "Speaker":
+                session.switch_output("Speaker")
+            elif not spk and session.output == "Speaker":
+                session.switch_output(active_output() if active_output() != "Speaker" else "Earpiece")
             ticks += 1
             if ticks % int(10 / POLL) == 0:
                 snapshot("t+%ds" % int(ticks * POLL))
