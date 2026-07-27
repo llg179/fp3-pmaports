@@ -214,12 +214,16 @@ series version (v1, v2, …) lives in the cover letter, not in a branch name.
 
 ## Building
 
-```sh
-git clone https://github.com/llg179/fp3-pmaports
-cp -r fp3-pmaports/linux-fp3 <your-pmaports>/device/testing/
+Assumes the checkouts and the `pmb` wrapper from
+[Setting the checkouts up](#setting-the-checkouts-up-once-per-machine). After a
+change to the APKBUILD or the config, mirror it into pmaports and build:
 
-pmbootstrap checksum linux-fp3      # only needed if you changed _commit
-pmbootstrap build linux-fp3
+```sh
+cp fp3-pmaports/linux-fp3/{APKBUILD,config-fp3.aarch64} \
+   pmaports/device/testing/linux-fp3/
+
+./pmb checksum linux-fp3            # only needed if you changed _commit
+./pmb build --arch aarch64 linux-fp3
 ```
 
 The source tarball is ~250 MB straight from GitHub, so the first fetch takes a
@@ -228,7 +232,7 @@ means a new source directory and therefore a cold ccache, which is 20–35.
 
 ⚠️ **Push `integration/<base>` before you bump `_commit`.** The package fetches
 the tarball from GitHub, so a commit that only exists locally gives a 404 during
-`pmbootstrap checksum`. If you skip the checksum step, the build fails one step
+`./pmb checksum`. If you skip the checksum step, the build fails one step
 later with the far less helpful
 
 ```
@@ -239,12 +243,13 @@ which points at the checksums rather than at the missing push.
 
 ## Deploying
 
-The built package lands in `~/.local/var/pmbootstrap/packages/edge/aarch64/`
-(`$PMB_WORK/packages/...` if you moved the work dir). An apk is a gzipped tar,
-so unpack it and take the pieces you need:
+The built package lands in the work directory the wrapper pins
+(`work/packages/edge/aarch64/`, or `~/.local/var/pmbootstrap/packages/...` with
+a default pmbootstrap). An apk is a gzipped tar, so unpack it and take the
+pieces you need:
 
 ```sh
-APK=~/.local/var/pmbootstrap/packages/edge/aarch64/linux-fp3-7.1.3-r0.apk
+APK=work/packages/edge/aarch64/linux-fp3-7.1.3-r0.apk
 mkdir -p /tmp/apk && tar xzf "$APK" -C /tmp/apk
 
 tar tzf "$APK" | grep q6voice-dai        # check the module is actually in there
@@ -287,7 +292,7 @@ fallback is just a second set of boot files and a second extlinux entry. Full
 procedure, from the host (`$D` = device, e.g. `fp3@172.16.42.1`):
 
 ```sh
-APK=~/.local/var/pmbootstrap/packages/edge/aarch64/linux-fp3-7.1.3-r0.apk
+APK=work/packages/edge/aarch64/linux-fp3-7.1.3-r0.apk
 scp "$APK" $D:/tmp/linux-fp3.apk
 
 ssh $D 'sudo sh -c '"'"'
@@ -387,14 +392,38 @@ is there to catch.
 
 ## AI-assisted development
 
-The WCD9335 SLIMbus audio work — playback, the digital microphones, the headset
-(MBHC) jack detection and the voice-call routing — and the IMX363 and charger
-work were developed with the assistance of
-[Claude Code](https://www.anthropic.com/claude-code), Anthropic's generative-AI
-coding agent. Every commit on this repository and on the `wip`/`integration`
-branches records this in a `Co-authored-by: Claude` trailer; the `submit`
-branches, which are meant for the kernel, instead carry the kernel's
-`Assisted-by: Claude:<model>` trailer and **no** `Signed-off-by` from the AI.
+### What was written here, and what it builds on
+
+Almost nothing here is new code in isolation: every module is somebody else's
+driver with a Fairphone 3 shaped hole filled in. This table says, per module,
+whose work it is, where it came from, and what this port added on top —
+**everything in the "what this port adds" column was developed with the
+assistance of [Claude Code](https://www.anthropic.com/claude-code)**, Anthropic's
+generative-AI coding agent, exactly as the device tree section below records for
+the `.dts`.
+
+| module | upstream work it builds on | what this port adds (AI-assisted) |
+|---|---|---|
+| `sound/soc/codecs/wcd9335.c` | the WCD9335 codec driver — Qualcomm/Linux Foundation (2015–2016) and Linaro (2017–2018), maintained by Srinivas Kandagatla | init fixes (efuse sense, `MCLK_CFG`), the TX front-end hold release, mic-bias and DMIC rate from the DT, MBHC jack detection **revived from the 2018 series that was never merged**, the MBHC button debounce, and the missing `DEC0..DEC8` capture gains |
+| `sound/soc/qcom/apq8016_sbc.c` | the msm8916 machine driver — Qualcomm/Linux Foundation (2015), maintained by Srinivas Kandagatla | a SLIMbus backend, the Fairphone 3 WCD9335 card definition, and the digital-microphone widgets |
+| `sound/soc/qcom/qdsp6/q6voice*.c` | the Q6 Voice DAI driver, which is **not in mainline**: written by Stephan Gerhold, extended by Otto Pflüger (VoiceMMode1) and Vincent Knecht (voice port controls), carried by `msm8953-mainline` | the SLIMbus voice path: the VoiceMMode1 / CS-Voice mixers wired to `SLIMBUS_0_RX/TX`, including the mixer → port output route |
+| `sound/soc/qcom/qdsp6/q6afe.c` | the AFE proxy — Qualcomm/Linaro, maintained by Srinivas Kandagatla | `ADSP_EALREADY` on a port start treated as success, so two front ends may share a backend |
+| `drivers/remoteproc/qcom_q6v5_pas.c` | Sony Mobile (2014) and Linaro (2016), maintained by Bjorn Andersson | the QDSP6SS SLIMbus framer quirk msm8953 needs before the codec will answer |
+| `drivers/slimbus/qcom-ngd-ctrl.c` | Qualcomm/Linux Foundation (2011–2017) and Linaro (2018), maintained by Srinivas Kandagatla | re-clearing that framer bit immediately before the capability exchange |
+| `drivers/media/i2c/imx363.c` | Intel's IMX3xx sensor drivers (2018) as the structural template | the IMX363 register programming, reverse-engineered from the sensor as wired on the FP3 (same family as the Pixel 3a), plus its power sequence and link warm-up |
+| `drivers/power/supply/qcom_smbx.c` | the SMB2 charger driver — Qualcomm (2016–2019) and Linaro (2023), by Casey Connolly | SMB5 (PMI632) support, with the register layout taken from Qualcomm's downstream `qpnp-smb2`/`qpnp-smb5` in the Fairphone 3 kernel source release |
+| `arch/arm64/boot/dts/qcom/sdm632-fairphone-fp3.dts` | the upstream board file — see [Device tree provenance](#device-tree-provenance) for its 21-commit genealogy and every contributor | the audio, camera and charger nodes |
+| `userspace-audio/`, `tests/`, this packaging | — | written for this port |
+
+### How the assistance is recorded
+
+Every commit on this repository and on the `wip`/`integration` branches carries
+a `Co-authored-by: Claude` trailer. The `submit` branches, which are meant for
+the kernel, instead carry the kernel's `Assisted-by: Claude:<model>` trailer and
+**no** `Signed-off-by` from the AI — a DCO sign-off is a human certification and
+an AI cannot give one.
+
+### Where it may and may not go
 
 Because of the AI assistance, **this code must not be submitted or upstreamed to
 postmarketOS.** postmarketOS's
