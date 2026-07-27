@@ -84,9 +84,66 @@ When `msm8953-mainline` cuts a new release — say `7.2.0/main` — this is the
 whole procedure. Nothing here is renamed for the version; only the base segment
 of the branches and the package `pkgver` change.
 
+### Setting the checkouts up (once per machine)
+
+Three trees are involved: the kernel fork, this repo, and a postmarketOS build
+environment. The kernel fork keeps upstream and our work on **separate
+remotes** — `origin` is `msm8953-mainline` and is never pushed to, `fork` is
+ours and is the only push target.
+
 ```sh
-# 0. fetch the new base
-git fetch upstream 7.2.0/main
+# the kernel: upstream as origin, our fork as fork
+git clone https://github.com/msm8953-mainline/linux.git linux-fp3
+cd linux-fp3
+#   port 443, because plain SSH (22) stalls on some networks
+git remote add fork ssh://git@ssh.github.com:443/llg179/linux.git
+git fetch fork
+cd ..
+
+# this repo: the APKBUILD, the config, the userspace bits and the tests
+git clone ssh://git@ssh.github.com:443/llg179/fp3-pmaports.git
+
+# the build environment: pmbootstrap + a pmaports checkout it works out of
+git clone https://gitlab.postmarketos.org/postmarketOS/pmbootstrap.git
+git clone https://gitlab.postmarketos.org/postmarketOS/pmaports.git
+./pmbootstrap/pmbootstrap.py init          # device fairphone-fp3, edge, aarch64
+
+# the package lives in pmaports; this repo is its home, so mirror it in
+mkdir -p pmaports/device/testing/linux-fp3
+cp fp3-pmaports/linux-fp3/{APKBUILD,config-fp3.aarch64} \
+   pmaports/device/testing/linux-fp3/
+```
+
+A wrapper keeps the config and work directory explicit, which matters once more
+than one checkout exists on the machine:
+
+```sh
+cat > pmb <<'EOF'
+#!/bin/bash
+exec "$PWD/pmbootstrap/pmbootstrap.py" -c "$PWD/pmbootstrap_v3.cfg" -w "$PWD/work" "$@"
+EOF
+chmod +x pmb
+```
+
+Two traps worth knowing before the first fetch:
+
+* **the base branch names contain a slash**, so `git fetch origin '7.2.0/main'`
+  leaves the result in `FETCH_HEAD` and there is usually **no
+  `origin/7.2.0/main` ref**. Resolve the SHA once (`git rev-parse FETCH_HEAD`)
+  and branch from that; `git checkout -b … origin/7.2.0/main` fails, and if it
+  is chained with `&&`-less commands the ones after it run on whatever branch
+  you were already on.
+* **a shallow clone lies about history.** `git log -- <path>` in a `depth=1`
+  checkout returns one commit for every path, which looks like an answer. Clone
+  in full, or query the API instead.
+
+### The procedure
+
+```sh
+# 0. fetch the new base (see the slash trap above) and give it a local ref, so
+#    the steps below can name it instead of carrying a SHA around
+git fetch origin '7.2.0/main'
+git branch -f 7.2.0/main FETCH_HEAD
 
 # 1. rebase each category's work onto the new base -> wip/7.2.0/<category>
 #    (start from the previous base's wip if it still exists, else its submit)
@@ -106,8 +163,9 @@ git push -f fork integration/7.2.0        # derived + disposable, force is fine
 # 3. build the package - the ONLY version edit
 #    linux-fp3/APKBUILD: pkgver=7.2.0, _commit=<integration/7.2.0 HEAD>
 git push fork integration/7.2.0           # push BEFORE checksum (404 trap below)
-pmbootstrap checksum linux-fp3
-pmbootstrap build linux-fp3
+cp linux-fp3/APKBUILD ../pmaports/device/testing/linux-fp3/   # keep the mirror in step
+./pmb checksum linux-fp3                  # or pmbootstrap, if it is on PATH
+./pmb build --arch aarch64 linux-fp3
 
 # 4. deploy KEEPING the last good kernel as a fallback boot entry, then test
 #    (see Deploying); the working integration/7.1.3 build stays bootable
