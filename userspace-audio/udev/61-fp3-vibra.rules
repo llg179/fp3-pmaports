@@ -1,0 +1,11 @@
+# feedbackd ships uaccess rules for the vibrators it knows (aw8695/aw86927
+# haptics, gpio-vibrator, pwm-vibra...). The Fairphone 3 uses the PMIC vibrator
+# through the ff-memless input driver, which none of them match, so the device
+# stays root:input and feedbackd - running as the session user - cannot open it:
+#
+#   feedbackd: Failed to init vibra device: Unable to open '/dev/input/eventN':
+#   Permission denied
+#
+# No vibration on an incoming call, and the failing event can take the rest of
+# the feedback with it.
+SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_INPUT}=="1", ATTRS{name}=="pm8xxx_vib_ffmemless", TAG+="uaccess", ENV{FEEDBACKD_TYPE}="vibra"

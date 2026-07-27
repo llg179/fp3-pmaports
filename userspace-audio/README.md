@@ -15,6 +15,7 @@ ucm2/Fairphone/fp3/VoiceCall.conf          -> /usr/share/alsa/ucm2/Fairphone/fp3
 pulse/90-fp3-mic.pa                         -> /etc/pulse/default.pa.d/
 systemd/fp3-mic-select                      -> /usr/local/bin/
 systemd/fp3-mic-select.service             -> /etc/systemd/system/   (systemctl enable)
+udev/61-fp3-vibra.rules                    -> /etc/udev/rules.d/     (vibration permissions)
 systemd/fp3-voiced                          -> /usr/local/bin/        (call audio daemon)
 systemd/fp3-voiced.service                 -> /etc/systemd/system/   (systemctl enable, replaces q6voiced)
 ```
@@ -144,6 +145,11 @@ and leaves only vibration and the LED. Turn it on per user:
 gsettings set org.sigxcpu.feedbackd profile 'full'
 # verify: fbcli -E phone-incoming-call  should create a sink-input for ~4 s
 ```
+
+There is no vibration either until `udev/61-fp3-vibra.rules` is installed:
+feedbackd ships uaccess rules only for the vibrators it knows by name, and the
+FP3's PMIC vibrator (`pm8xxx_vib_ffmemless`) is not among them, so the session
+user cannot open it (`Failed to init vibra device: ... Permission denied`).
 
 The ringtone itself comes from `sound-theme-freedesktop`
 (`/usr/share/sounds/freedesktop/stereo/phone-incoming-call.oga`) and plays

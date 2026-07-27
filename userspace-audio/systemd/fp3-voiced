@@ -517,24 +517,59 @@ class Session:
         log("call audio down")
 
 
+INACTIVE_STATES = {"ringing-in", "waiting", "terminated", "unknown"}
+_last_call_log = [""]
+
+
 def calls_active():
-    """True while a call is dialing/ringing-out/active (not while ringing in)."""
+    """True while a call is up (dialing, ringing out, or answered).
+
+    Deliberately permissive: anything the modem lists counts unless it is a
+    state where audio must not be taken over yet (an incoming call still
+    ringing, a waiting call, or one that is already gone). A call the daemon
+    fails to notice is silent audio, so err on the side of engaging.
+    """
     r = subprocess.run(["mmcli", "-m", "any", "--voice-list-calls"],
                        capture_output=True, text=True)
-    if r.returncode or "no calls" in r.stdout.lower():
+    out = (r.stdout or "") + (r.stderr or "")
+    if r.returncode:
+        if out.strip() != _last_call_log[0]:
+            _last_call_log[0] = out.strip()
+            log("mmcli failed (rc=%d): %s" % (r.returncode, out.strip()[:200]))
         return False
-    for path in [w for w in r.stdout.split() if "/Call/" in w]:
+    if "no calls" in out.lower():
+        _last_call_log[0] = ""
+        return False
+
+    paths = [w for w in out.split() if "/Call/" in w]
+    if out.strip() != _last_call_log[0]:
+        _last_call_log[0] = out.strip()
+        log("calls: %s" % " ".join(paths) if paths else "calls: %s" % out.strip()[:200])
+
+    active = False
+    for path in paths:
         idx = path.rsplit("/", 1)[-1]
         c = subprocess.run(["mmcli", "-K", "--call", idx],
                            capture_output=True, text=True)
+        state = ""
         for line in c.stdout.splitlines():
             if line.startswith("call.properties.state"):
-                if line.split(":", 1)[1].strip() in ACTIVE_STATES:
-                    return True
-    return False
+                state = line.split(":", 1)[1].strip()
+                break
+        log("  call %s state=%s" % (idx, state or "?"))
+        if state and state not in INACTIVE_STATES:
+            active = True
+        elif not state:
+            active = True          # cannot tell - assume it needs audio
+    return active
 
 
 def main():
+    # Clean slate: a previous run (or a crash mid-call) can leave pulseaudio's
+    # streams suspended and the Voice Call verb applied, which looks like a
+    # completely silent phone - no ringtone, no media.
+    ucm("set", "_verb", "HiFi")
+    pa_streams(False)
     log("fp3-voiced: watching ModemManager for calls")
     session = Session()
     buttons = ButtonWatch()
