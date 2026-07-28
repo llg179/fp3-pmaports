@@ -67,6 +67,50 @@ block:
 | **charger** — PMI632 | the charger node's interrupt numbers and ADC channel assignment from Qualcomm's downstream `pmi632.dtsi` in the same release; the battery's cell parameters and OCV curve from Fairphone's own fuel-gauge profile `qg-batterydata-Kayo-3000mah-Nov4th2019-pmi632` — 3000 mAh, 4.39 V float, the 25 °C column of its `pc-temp-v1` table converted from 100 µV units | mainline `simple-battery` plus the `qcom_smbx` SMB5 binding | the SMB5 charger node in mainline's `pmi632.dtsi` (added disabled, as a PMIC-level description should be) and the board-level `&pmi632_charger` + `fp3_battery` that enable it. **Deliberate deviation:** charge current held at 1 A instead of downstream's 2.0–2.7 A until the thermal/JEITA side is exercised |
 | **sound card** | — | — | nothing: we *extend* `&sound_card` rather than rewrite it. The card itself is **Vldly's** `5f0487e5a374` (2022, msm8953-mainline only, not in Linus' tree) and the AW8898/MI2S speaker path on it is **Luca Weiss'** `4fd8c23afa2e` + `4335b0ae1eb6` |
 
+### What it would take to charge at full current
+
+The phone charges at **1 A** where Fairphone's own profile for this cell says
+`qcom,fastchg-current-ma = <2700>`. That is not one conservative number in one
+place — it is two independent caps plus three missing safety mechanisms.
+
+**Where the 1 A actually comes from.** Not from our device tree. The
+`qcom_smbx` driver writes the fast-charge current register at probe, from a
+fixed table entry that exists for both charger variants:
+
+```c
+/*
+ * This overrides all of the current limit options exposed to userspace
+ * and prevents the device from pulling more than ~1A. This is done
+ * to minimise potential fire hazard risks.
+ */
+{ .addr = FAST_CHARGE_CURRENT_CFG, … .val = 1000000 / CURRENT_SCALE_FACTOR },
+```
+
+Our `constant-charge-current-max-microamp = <1000000>` is, today,
+**documentation only**: `power_supply_get_battery_info()` is called, but the
+only field the driver applies to the hardware is `voltage_max_design_uv`, which
+becomes the float voltage. Raising the DT number alone changes nothing.
+
+**What has to be built, in order:**
+
+| # | what | why it blocks the current |
+|---|---|---|
+| 1 | **Battery temperature.** Add the `BAT_THERM` channel to the charger node's `io-channels` (we currently read only `usbin_i`, `usbin_v`, `vbat`) and expose it — `POWER_SUPPLY_PROP_TEMP` and/or a thermal zone | nothing in the stack knows how hot the cell is, so nothing can back off. Everything below depends on this |
+| 2 | **JEITA.** Program `JEITA_EN_CFG` (hard limit + the hot/cold float-voltage and charge-current slots). The driver already defines those bits and reads the JEITA *status* register for `POWER_SUPPLY_PROP_HEALTH` — nothing writes the *enable* | at 1 A a mis-charge at temperature is survivable; at 2.7 A it is what the safety margin was for. Downstream sets `qcom,sw-jeita-enable` |
+| 3 | **Thermal mitigation.** Register the charger as a cooling device (`#cooling-cells = <2>`) and bind it to a thermal zone, mirroring downstream's `qcom,thermal-mitigation = <2000000 1500000 1000000 500000 …>` — plus its `qcom,hw-die-temp-mitigation` and `qcom,hw-connector-mitigation` | mainline has no path at all from "the phone is hot" to "charge slower" |
+| 4 | **Let the DT set the current.** Program `FAST_CHARGE_CURRENT_CFG` from `constant-charge-current-max-microamp` instead of the constant, then raise the battery node to `2700000` | this is the actual change — but it is an edit to an upstream driver whose cap is deliberate (see the comment above), so it belongs *after* 1–3, and should be discussed with its author, **Casey Connolly** (Linaro) |
+| 5 | **The input side.** A DCP gives 1.5 A at 5 V, so ≈1.9 A into a 3.8 V cell at best, even with the battery-side cap gone. Downstream reaches 2.7 A by negotiating a higher `Vbus` (QC); mainline `qcom_smbx` negotiates nothing | above ~1.5 A the ceiling stops being the charger and starts being the port |
+
+Optional but worth copying once the above works: downstream's
+`qcom,step-charging-enable` (taper near full) and `qcom,auto-recharge-vbat-mv =
+<4300>`.
+
+**How to verify.** Raise in steps — 1.0 → 1.5 → 2.0 → 2.7 A — and at each step
+charge from a low state of charge on both a high-current wall charger and a
+plain SDP port, watching a USB power meter against what the driver reports, and
+the die/connector temperatures. `fp3-selftest` covers that the charger works at
+all, not that it is safe at current.
+
 Two things worth keeping straight when reading the above. First, the board file
 we edit is **Luca Weiss'** work — he has carried the FP3 in mainline since
 2022-02-20; our commit is one entry in a 21-commit history (see
