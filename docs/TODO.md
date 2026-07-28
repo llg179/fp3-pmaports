@@ -95,12 +95,38 @@ carries no interconnect path. Adding one would make `bw_enable()` vote during
 The audio path works without it, so this is not a blocker — it is kept in case
 ADSP boot timing ever needs revisiting.
 
+## Unsettled: are the two QDSP6SS framer pokes needed at all?
+
+`integration/<base>` carries two commits that clear QDSP6SS `0x0c20002c` bit 3 —
+one in `qcom_q6v5_pas.c` after `AUTH_AND_RESET`, one in `qcom-ngd-ctrl.c` before
+the capability exchange (described in
+[`kernel/README.md`](kernel/README.md#the-qdsp6ss-slimbus-framer-pair)). As last
+measured (2026-07-26) the SLIMbus chain came up **identically with and without
+them** — one boot each way, which is not enough to conclude.
+
+**The measurement runs on `wip/7.1.3/audio-debug`.** That branch is not an
+offshoot of `wip/7.1.3/audio`: it forks `integration/7.1.3` and adds exactly
+three commits, which is the whole experiment —
+
+* a revert of the `qcom-ngd-ctrl.c` poke,
+* a revert of the `qcom_q6v5_pas.c` poke,
+* `vote TURBO CX for the ADSP` (`required-opps = <&rpmpd_opp_turbo>`).
+
+A few cold boots on that branch settle it; if the chain still comes up, both
+poke commits can be dropped from `wip/<base>/audio` and `integration/<base>`.
+
+**The CX-corner hypothesis behind the third commit is already disproven.** Its
+message argues that the ADSP firmware derives the Q6 core divider from the CX
+performance state, and that mainline never requests one. It does:
+`qcom_pas_pds_enable()` calls `dev_pm_genpd_set_performance_state(pds[i],
+INT_MAX)` on every proxy power domain before powering it up
+(`drivers/remoteproc/qcom_q6v5_pas.c`), which was confirmed live —
+`cx_perf = 2147483647` for roughly 160 ms across the ADSP boot window. So
+`required-opps` is a no-op here and that commit should not be carried forward;
+only the two reverts are the experiment.
+
 ## Also open, written up elsewhere
 
-* **The two QDSP6SS framer pokes may be unnecessary.** As last measured
-  (2026-07-26) the SLIMbus chain came up identically with and without them, one
-  boot each; a few cold boots would settle it, and then both commits can go —
-  [`kernel/README.md`](kernel/README.md#the-qdsp6ss-slimbus-framer-pair).
 * **Charging is capped at 1 A** where Fairphone's own profile says 2.7 A. What
   it would take to lift it — battery temperature, JEITA, a thermal cooling
   device, and letting the DT drive the register — is in
