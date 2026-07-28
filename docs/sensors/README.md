@@ -7,15 +7,91 @@ what was believed, what was measured, and what that forced us to conclude —
 including the three places where the belief was wrong. Every capture and every
 tool it refers to is checked in here, so nothing has to be taken on trust.
 
-**Status (2026-07-28): not working yet.** The blocker is understood and its first
-layer is removed; [step 9](#step-9--what-is-still-missing) says exactly what is
-left. Nothing here is a shipping feature.
+**Status (2026-07-28): not working yet, and a large part of what follows has just
+been invalidated.** See [the correction](#correction-2026-07-28--every-publish-in-steps-48-was-a-bye)
+first: the control code used to publish a QMI service was wrong throughout steps
+4–8, so those runs announced a *node death* rather than a service. The findings
+that survive and the ones that must be re-measured are listed there.
 
 | path | what it is |
 |---|---|
 | [`tools/`](tools/) | the instruments — see [Tools](#tools) |
 | [`data/`](data/) | registry, group map, service lists, factory `sns.reg` — see [Data](#data) |
 | [`captures/`](captures/) | the raw ADSP diag captures behind every number below |
+
+---
+
+## Correction (2026-07-28) — every "publish" in steps 4–8 was a BYE
+
+The tools here published a QMI service by sending a QRTR control packet whose
+`cmd` field they set from a hand-written constant table. That table was wrong.
+The kernel's `include/uapi/linux/qrtr.h` says:
+
+```c
+enum qrtr_pkt_type {
+	QRTR_TYPE_DATA		= 1,
+	QRTR_TYPE_HELLO		= 2,
+	QRTR_TYPE_BYE		= 3,
+	QRTR_TYPE_NEW_SERVER	= 4,
+	...
+```
+
+The enum starts at **1**, not 0. The tools used `3` for `NEW_SERVER` — which is
+`BYE`. (An earlier round used `2`, was correctly spotted as wrong, and was
+"fixed" to `3`: still wrong, by the same one.) So **not one service was ever
+published**. Every run announced that our entire node had died.
+
+That single fact explains, without any remaining mystery:
+
+* **why zero `SNS_REG_GROUP` requests were ever served** — there was nothing to
+  send them to;
+* **why the wake looked edge-triggered and one-shot per ADSP boot** — a `BYE`
+  forces the name service to tear down every server on the node and re-announce,
+  which is an edge by construction, not a property of the sensor task;
+* **why publishing the gate list "deleted the system's own daemons"** — it did,
+  and not because four entries collided: one `BYE` kills *every* server on the
+  node. The collision theory in [step 8](#the-gate-list-and-a-trap-that-cost-hours)
+  was the right symptom with the wrong mechanism.
+
+**What survives**, because it never depended on the control code:
+
+* the F3/diag instrument and the whole read side of the trace;
+* the reading of the wake message `L307 [1, 271, 0]` → service `0x10F`, and its
+  byte-for-byte agreement with `sns-reg`'s `SNS_REG_QMI_SVC_ID`;
+* the upstream survey in [step 7](#step-7--the-search-that-should-have-come-first);
+* the registry extracted from this phone's own `sns.reg`;
+* the co-processor-side elimination in [step 6](#step-6--rule-out-the-co-processor-side)
+  (rcinit diff, node 7 loopback, `pd-mapper`).
+
+**What must be re-measured**, because it was produced by BYE traffic:
+
+* the whole error-layer table in [step 5](#step-5--peel-the-error-layers-one-publish-at-a-time),
+  including `L1206 [1]` and "31 drivers up";
+* the "one port per service" conclusion — plausible, but currently unproven;
+* the ordering rule in [step 8](#the-wake-up-is-edge-triggered-and-ordering-decides-everything);
+* "Sensor Manager never registers": the enumeration behind it has to be redone.
+
+Two further method notes from the same afternoon, because both produced
+convincing-looking negatives:
+
+* **`sensdiag.py` captured 0 messages because `rpmsg_char` was not loaded.**
+  `bind_diag()` swallows the `OSError`, so a missing instrument is indistinguishable
+  from a silent ADSP. `modprobe rpmsg_char` and assert the driver directory exists
+  before trusting any empty capture.
+* **`tracing_on` was `0`,** so an ftrace-based check of whether packets reached the
+  name service returned an empty buffer — which read exactly like "the packets are
+  being dropped". Enabling events is not enough; check `tracing_on`.
+
+The codes now live in one place, [`tools/qrtrconst.py`](tools/qrtrconst.py),
+transcribed from the kernel header, and the three tools import them.
+
+> **Lesson.** A protocol constant is not a detail you may reconstruct from memory.
+> Two independent "corrections" landed on two different wrong values, and both
+> produced device behaviour interesting enough to build a week of theory on. The
+> check that would have caught it on day one costs one command: read the header.
+> And the deeper lesson — the wake-up *reproduced*, repeatedly, which is exactly
+> what made it convincing. A reproducible effect proves your action does
+> something, never that it does what you named it.
 
 ---
 
@@ -106,6 +182,11 @@ resume — `L275`/`L286`/`L383`, then `L464`+`L2451` pairs across ids 3300–332
 > and better evidence than observing X on a working system.
 
 ## Step 5 — peel the error layers, one publish at a time
+
+> ⚠️ **This whole step is invalid as written.** Every "published" row below was a
+> `BYE`, not a service registration — see [the correction](#correction-2026-07-28--every-publish-in-steps-48-was-a-bye).
+> The trace numbers are real; what produced them is not what the table claims. It
+> is kept here because the re-measurement has to be diffed against it.
 
 One service was not enough. The trace's closing message `L1206` carries `1` on
 success and `0` on failure — the cheapest pass/fail indicator in the whole log —
@@ -264,6 +345,11 @@ list for reference only.
 
 ### The wake-up is edge-triggered, and ordering decides everything
 
+> ⚠️ **Invalid as written** — see [the correction](#correction-2026-07-28--every-publish-in-steps-48-was-a-bye).
+> The ordering rule below is a faithful description of how *`BYE` traffic* behaves,
+> which is why it reproduced so cleanly. Whether a real `NEW_SERVER` is also
+> edge-triggered is now an open question, and the first thing to re-measure.
+
 Two behaviours make this very easy to mismeasure:
 
 * **It fires once per ADSP boot.** A second publish yields only `L307`.
@@ -296,13 +382,17 @@ against data already on disk.
 
 ## Step 9 — what is still missing
 
-* **Sensor Manager never registers.** Even after a completely clean init
-  (`L1206 [1]`, 31 drivers up), no `256 / v1 / instance 50` appears on node 5 — so
-  there is still no data path, and nothing for an IIO driver to read.
-* **Not one registry request has been served.** With `snsregd.py` published and
-  waiting, the request count has stayed at zero in every run, so the server's
-  response path is written but **unexercised**, and the group map and registry
-  values are untested. This is the gate everything else is behind.
+* **Not one registry request has been served** — now with a known cause: nothing
+  was ever published (see [the correction](#correction-2026-07-28--every-publish-in-steps-48-was-a-bye)).
+  The server's response path is written but **unexercised**, and the group map and
+  registry values are untested. This is still the gate everything else is behind,
+  but it is the first thing that has a plausible chance of opening.
+* **"Sensor Manager never registers" is unproven.** It rested on service
+  enumerations taken while nothing of ours was registered, and partly on a
+  lookup tool that was itself using wrong codes. Re-run
+  [`tools/qrtrls.py`](tools/qrtrls.py) after a real publish before believing it.
+* **The clean init (`L1206 [1]`, 31 drivers up) has to be reproduced** with real
+  `NEW_SERVER` traffic. It may well hold; it is simply not evidence yet.
 * **The kernel drivers are not ported** — `msm8996-staging-smgr` has to be rebased
   onto our 7.1.3 base.
 
@@ -355,9 +445,18 @@ fine, `ProximityNear` never flips, the screen never blanks.
 
 ### Traps worth knowing before touching any of this
 
-* **`QRTR_TYPE_*` is off by one from the obvious guess:** `DATA=0, HELLO=1,
-  BYE=2, NEW_SERVER=3, DEL_SERVER=4`. Sending `2` tells the name service the whole
-  node died, and it answers with `DEL_SERVER` for every server on it.
+* **`QRTR_TYPE_*` starts at 1:** `DATA=1, HELLO=2, BYE=3, NEW_SERVER=4,
+  DEL_SERVER=5, DEL_CLIENT=6, RESUME_TX=7, EXIT=8, PING=9, NEW_LOOKUP=10,
+  DEL_LOOKUP=11`. Take them from [`tools/qrtrconst.py`](tools/qrtrconst.py), never
+  from memory — guessing them wrong is what invalidated steps 4–8 (see [the
+  correction](#correction-2026-07-28--every-publish-in-steps-48-was-a-bye)).
+  Sending `3` where you meant `NEW_SERVER` tells the name service the whole node
+  died, and it answers with `DEL_SERVER` for every server on it — a very
+  reproducible effect that looks like a successful publish from the ADSP's side.
+* **`rpmsg_char` must be loaded before any diag capture,** or `bind_diag()`
+  silently binds nothing and the capture reports zero messages.
+* **Check `tracing_on`, not just the per-event `enable`** — an unarmed ftrace
+  buffer returns "no events", which reads as a negative result.
 * **`bind()` accepts only the local node id** (1 here); anything else is `EINVAL`.
   An unbound socket already reports it via `getsockname()`.
 * **A detached runner dies when the SSH session closes** — `nohup` and `setsid`

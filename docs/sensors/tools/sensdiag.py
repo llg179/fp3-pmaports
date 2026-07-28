@@ -24,6 +24,24 @@ RPROC = adsp_rproc()
 RP_STATE = '/sys/class/remoteproc/%s/state' % RPROC
 
 
+def ensure_rpmsg_char():
+    """Make sure the rpmsg_chrdev driver exists before we try to bind to it.
+
+    ☠️ Without this the binds below all raise OSError, bind_diag() swallows it,
+    and the capture ends with a perfectly formatted '0 F3 msgs' summary -- which
+    is indistinguishable from 'the ADSP said nothing'.  A missing instrument
+    must never look like a negative result.
+    """
+    if os.path.isdir('/sys/bus/rpmsg/drivers/rpmsg_chrdev'):
+        return True
+    os.system('modprobe rpmsg_char 2>/dev/null')
+    if os.path.isdir('/sys/bus/rpmsg/drivers/rpmsg_chrdev'):
+        return True
+    print('FATAL: no rpmsg_chrdev driver -- cannot capture, not even to say '
+          'that nothing was captured')
+    return False
+
+
 def bind_diag():
     """Attach rpmsg_chrdev to this remoteproc's DIAG + DIAG_CNTL channels."""
     for d in glob.glob('/sys/bus/rpmsg/devices/%s:*' % RPROC):
@@ -135,6 +153,8 @@ def main():
         time.sleep(0.1)
     if RPROC is None:
         print('no adsp remoteproc found after 60s'); return
+    if not ensure_rpmsg_char():
+        return
     RP_STATE = '/sys/class/remoteproc/%s/state' % RPROC
     print('[adsp] %s (%s)' % (RPROC, open(RP_STATE).read().strip()))
     # Default output goes to the rootfs, not /tmp: when armed at sysinit a later

@@ -395,25 +395,20 @@ is there to catch.
 ### What was written here, and what it builds on
 
 Almost nothing here is new code in isolation: every module is somebody else's
-driver with a Fairphone 3 shaped hole filled in. This table says, per module,
-whose work it is, where it came from, and what this port added on top —
-**everything in the "what this port adds" column was developed with the
-assistance of [Claude Code](https://www.anthropic.com/claude-code)**, Anthropic's
-generative-AI coding agent, exactly as the device tree section below records for
-the `.dts`.
+driver with a Fairphone 3 shaped hole filled in.
+**[`docs/kernel/README.md`](docs/kernel/README.md)** says per file whose work it
+is, what we added and what that was derived from, and what genuinely did not
+exist before — the same treatment
+[`docs/device_tree/README.md`](docs/device_tree/README.md) gives the `.dts`.
 
-| module | upstream work it builds on | what this port adds (AI-assisted) |
-|---|---|---|
-| `sound/soc/codecs/wcd9335.c` | the WCD9335 codec driver — Qualcomm/Linux Foundation (2015–2016) and Linaro (2017–2018), maintained by Srinivas Kandagatla | init fixes (efuse sense, `MCLK_CFG`), the TX front-end hold release, mic-bias and DMIC rate from the DT, MBHC jack detection **revived from the 2018 series that was never merged**, the MBHC button debounce, and the missing `DEC0..DEC8` capture gains |
-| `sound/soc/qcom/apq8016_sbc.c` | the msm8916 machine driver — Qualcomm/Linux Foundation (2015), maintained by Srinivas Kandagatla | a SLIMbus backend, the Fairphone 3 WCD9335 card definition, and the digital-microphone widgets |
-| `sound/soc/qcom/qdsp6/q6voice*.c` | the Q6 Voice DAI driver, which is **not in mainline**: written by Stephan Gerhold, extended by Otto Pflüger (VoiceMMode1) and Vincent Knecht (voice port controls), carried by `msm8953-mainline` | the SLIMbus voice path: the VoiceMMode1 / CS-Voice mixers wired to `SLIMBUS_0_RX/TX`, including the mixer → port output route |
-| `sound/soc/qcom/qdsp6/q6afe.c` | the AFE proxy — Qualcomm/Linaro, maintained by Srinivas Kandagatla | `ADSP_EALREADY` on a port start treated as success, so two front ends may share a backend |
-| `drivers/remoteproc/qcom_q6v5_pas.c` | Sony Mobile (2014) and Linaro (2016), maintained by Bjorn Andersson | the QDSP6SS SLIMbus framer quirk msm8953 needs before the codec will answer |
-| `drivers/slimbus/qcom-ngd-ctrl.c` | Qualcomm/Linux Foundation (2011–2017) and Linaro (2018), maintained by Srinivas Kandagatla | re-clearing that framer bit immediately before the capability exchange |
-| `drivers/media/i2c/imx363.c` | Intel's IMX3xx sensor drivers (2018) as the structural template | the IMX363 register programming, reverse-engineered from the sensor as wired on the FP3 (same family as the Pixel 3a), plus its power sequence and link warm-up |
-| `drivers/power/supply/qcom_smbx.c` | the SMB2 charger driver — Qualcomm (2016–2019) and Linaro (2023), by Casey Connolly | SMB5 (PMI632) support, with the register layout taken from Qualcomm's downstream `qpnp-smb2`/`qpnp-smb5` in the Fairphone 3 kernel source release |
-| `arch/arm64/boot/dts/qcom/sdm632-fairphone-fp3.dts` | the upstream board file — see [`docs/device_tree/README.md`](docs/device_tree/README.md) for its genealogy and every contributor | the audio, camera and charger nodes |
-| `userspace-audio/`, `tests/`, this packaging | — | written for this port |
+Thirteen files, in short: the WCD9335 codec and the `apq8016_sbc` machine driver
+(Srinivas Kandagatla), the Q6 voice DAI (Stephan Gerhold, Vincent Knecht, Otto
+Pflüger — not in Linus' tree) and `q6afe` (Kandagatla), the SLIMbus NGD
+controller (Kandagatla) and the Hexagon PAS driver (Bjorn Andersson), the SMB2
+charger driver (Casey Connolly), plus one new sensor driver structured on Intel's
+IMX3xx drivers. **Everything this port adds on top was developed with the
+assistance of [Claude Code](https://www.anthropic.com/claude-code)**, Anthropic's
+generative-AI coding agent.
 
 ### How the assistance is recorded
 

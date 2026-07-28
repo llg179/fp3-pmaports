@@ -24,9 +24,10 @@ import socket, struct, sys, time, os
 SERVICE = 0x010F
 VERSION = 2
 INSTANCE = 0
-QRTR_PORT_CTRL = 0xFFFFFFFE
-QRTR_TYPE_NEW_SERVER = 3
-QRTR_TYPE_DEL_SERVER = 4
+# ☠️ These were 3/4 here, i.e. BYE/NEW_SERVER -- so this daemon announced a
+# BYE instead of publishing SNS_REG and could never receive a request.
+from qrtrconst import (QRTR_PORT_CTRL, QRTR_TYPE_NEW_SERVER,
+                       QRTR_TYPE_DEL_SERVER)
 
 QMI_REQUEST = 0
 QMI_RESPONSE = 2

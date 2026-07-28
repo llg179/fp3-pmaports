@@ -13,24 +13,11 @@ import socket, struct, sys, time, binascii, select
 
 SERVICE = 0x10F
 INSTANCE = 0x2          # raw instance field from the UT dump: version 2, instance 0
-QRTR_PORT_CTRL = 0xFFFFFFFE
-# ☠️ These are off-by-one from the "obvious" guess: DATA is 0, so HELLO is 1 and
-# NEW_SERVER is 3.  Sending 2 (=BYE) tells the name service our whole node died
-# and it answers with DEL_SERVER for every server on it.
-QRTR_TYPE_DATA = 0
-QRTR_TYPE_HELLO = 1
-QRTR_TYPE_BYE = 2
-QRTR_TYPE_NEW_SERVER = 3
-QRTR_TYPE_DEL_SERVER = 4
-QRTR_TYPE_DEL_CLIENT = 5
-QRTR_TYPE_RESUME_TX = 6
-QRTR_TYPE_EXIT = 7
-QRTR_TYPE_PING = 8
-QRTR_TYPE_NEW_LOOKUP = 9
-QRTR_TYPE_DEL_LOOKUP = 10
-CTRL_NAME = {0: 'DATA', 1: 'HELLO', 2: 'BYE', 3: 'NEW_SERVER', 4: 'DEL_SERVER',
-             5: 'DEL_CLIENT', 6: 'RESUME_TX', 7: 'EXIT', 8: 'PING',
-             9: 'NEW_LOOKUP', 10: 'DEL_LOOKUP'}
+# ☠️ The control codes used to be hardcoded here and were WRONG twice (2, then
+# 3, where NEW_SERVER is 4) -- every "publish" was really a BYE.  They now come
+# from qrtrconst.py, which is a transcription of the kernel uapi header.
+from qrtrconst import (QRTR_PORT_CTRL, QRTR_TYPE_NEW_SERVER,
+                       QRTR_TYPE_DEL_SERVER, CTRL_NAME)
 
 
 def ctrl_pkt(cmd, service=0, instance=0, node=0, port=0):
