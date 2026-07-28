@@ -5,19 +5,19 @@ content came from, and how much of the surrounding tree is upstream. The trees
 themselves are checked in here, so none of the claims below have to be taken on
 trust.
 
-| directory | what it holds |
-|---|---|
-| [`before_update/`](before_update/) | the **upstream mainline** files exactly as the base ships them — what we had to touch |
-| [`after_update/`](after_update/) | the same files on `integration/<base>`, with our changes applied |
-| [`downstream/UT/`](downstream/UT/) | the **live** 4.9 tree dumped off the phone running Ubuntu Touch — the resolved tree, ground truth for values; plus in [`kernel-dt/`](downstream/UT/kernel-dt/) the sources it was built from |
-| [`downstream/fairphone/3.A.0136/`](downstream/fairphone/3.A.0136/) | the sources published by the vendor, **Fairphone**, from their official GPL release of Fairphone OS 3.A.0136 — <https://code.fairphone.com/projects/fairphone-3/gpl.html> |
+| directory | contents | what it is | its README |
+|---|---|---|---|
+| [`before_update/`](before_update/) | 2 files | the **upstream mainline** files exactly as the base ships them — what we had to touch | *(this page,* [below](#before--after)*)* |
+| [`after_update/`](after_update/) | 2 files | the same two files on `integration/<base>`, with our changes applied | *(idem)* |
+| [`downstream/`](downstream/) | — | the Android-era 4.9 tree, in the two forms below; where the values in the nodes we **add** come from | [README](downstream/README.md) — **compares the two**, and answers which Fairphone release the running tree is closest to |
+| &nbsp;&nbsp;└ [`downstream/UT/`](downstream/UT/) | `fp3-ubuntu-touch-live.dts` | the tree **as it runs**: dumped off the phone under Ubuntu Touch, fully resolved — ground truth for values | [README](downstream/UT/README.md) |
+| &nbsp;&nbsp;&nbsp;&nbsp;└ [`downstream/UT/kernel-dt/`](downstream/UT/kernel-dt/) | `arch/arm64/boot/dts/qcom/` + `include/dt-bindings/` | the **sources that dump was built from** — the UBports FP3 kernel's device tree; the only tree that reproduces the live one exactly | [README](downstream/UT/kernel-dt/README.md) |
+| &nbsp;&nbsp;└ [`downstream/fairphone/`](downstream/fairphone/) | one directory per release | the vendor's own sources, **Fairphone** (<https://code.fairphone.com/projects/fairphone-3/gpl.html>) | — |
+| &nbsp;&nbsp;&nbsp;&nbsp;└ [`downstream/fairphone/3.A.0136/`](downstream/fairphone/3.A.0136/) | `arch/arm64/boot/dts/qcom/` + `include/dt-bindings/` | the GPL sources of Fairphone OS **3.A.0136**, the last build for this phone | [README](downstream/fairphone/3.A.0136/README.md) |
 
-The first two are the change itself. Those under `downstream/` are where the
-content of the nodes we **add** came from — they have nothing to do with
-`before_update/`, which is plain upstream mainline. Each directory has its own
-README; [`downstream/README.md`](downstream/README.md) also compares the live
-tree against Fairphone's published sources node by node, and answers which
-Fairphone release the running tree is closest to.
+`before_update` → `after_update` is the change itself. Everything under
+`downstream/` is reference material and has nothing to do with `before_update`,
+which is plain upstream mainline.
 
 ## before / after
 
