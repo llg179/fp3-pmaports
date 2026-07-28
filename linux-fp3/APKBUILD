@@ -6,7 +6,7 @@
 # The sources are the integration/<base> branch of the fork, pinned by commit,
 # so this package carries no patches of its own. To move to a new base, bump
 # pkgver and _commit together - that is the single version edit (see the
-# README's "Rolling to a new kernel base").
+# repo's docs/rolling-a-new-base.md).
 _flavor="fp3"
 _commit="3221652e7fed39fb555a351b31337d55787dc865"
 pkgname=linux-$_flavor
