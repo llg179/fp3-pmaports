@@ -19,10 +19,12 @@ closely the two agree, [`../README.md`](../README.md).
 
 The Ubuntu Touch kernel tree (`lineageos_FP3_defconfig`, 4.9.218) contains **no
 FP3 board `.dts`** — nothing under `arch/arm64/boot/dts/qcom/` matches `fp3` or
-`fairphone`. The board description ships as a prebuilt blob and is picked at boot
-by index (`androidboot.dtb_idx=14 androidboot.dtbo_idx=14` on the kernel command
-line), so the only complete and authoritative form of the FP3 downstream tree is
-what the running kernel unflattened.
+`fairphone`. The phone is Qualcomm's `sdm632-mtp-s3` reference board there, and
+which blob the bootloader ends up handing the kernel (`androidboot.dtb_idx=14
+androidboot.dtbo_idx=14` on the command line) is not something the sources tell
+you. So the only complete and authoritative form of the FP3 downstream tree is
+what the running kernel unflattened. Which sources it does correspond to is
+answered in [`../README.md`](../README.md) — measured, not assumed.
 
 Identifying marks in the tree, which is otherwise generic:
 

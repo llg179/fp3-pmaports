@@ -1,97 +1,89 @@
 # Downstream device trees
 
-The 4.9 vendor device tree in two forms — as it **runs** and as it is
-**published** — because neither alone is sufficient: the running tree is
-authoritative but has no names or comments, and the sources are readable but do
-not tell you which of the 938 files the phone actually uses.
-
-| directory | what it is |
-|---|---|
-| [`UT/`](UT/) | the live tree dumped off the phone booted into Ubuntu Touch (kernel 4.9.218) — flattened, fully resolved, bootloader edits included |
-| [`FP3/3.A.0136/`](FP3/3.A.0136/) | the vendor sources from Fairphone's official GPL release for Fairphone OS 3.A.0136 |
-
-Both describe the *downstream* hardware view. They are the origin of the values
-in the nodes we **add** in `../before_update` → `../after_update`; the
-`before_update` files themselves are plain upstream mainline and have no
-relationship to anything here.
-
-## UT ⇄ FP3: how much do they differ?
-
-**They are the same tree.** Compiling the vendor sources and comparing the result
-against the live dump leaves five nodes with differing properties and one extra
-node on each side — out of 1804 nodes.
-
-### Which vendor file is the FP3
-
-Not obvious, and easy to get wrong. The live tree says `compatible =
-"qcom,sdm450"`, but `qcom,msm-id = <0x15d>` is **349 = SDM632**, and only
-`sdm632.dtsi` pulls in `sdm632-coresight.dtsi` — which is what makes the live
-ETM unit addresses (`etm@61b3000`…) differ from the SDM450 ones
-(`etm@61bc000`…). The match is:
-
-```
-arch/arm64/boot/dts/qcom/sdm632-mtp-s3.dts
-  ├── sdm632.dtsi                    → msm8953.dtsi + sdm632 CPU/regulator/coresight
-  ├── sdm450-pmi632.dtsi             → the PMI632 side (and the "qcom,sdm450" compatible)
-  └── sdm450-pmi632-mtp-s3.dtsi      → the board itself (model = "MTP S3")
-```
-
-Taking the `sdm450-pmi632.dts` + `sdm450-mtp-s3-overlay.dtbo` pair instead — the
-obvious reading of the `Makefile` — gives a tree that differs in 167/190 nodes.
-It is the wrong SoC.
-
-### The comparison
-
-```sh
-# vendor: sources → dtb → canonical dts
-cpp -nostdinc -I../include -I. -undef -x assembler-with-cpp sdm632-mtp-s3.dts \
-	| dtc -I dts -O dtb -o v632.dtb
-dtc -I dtb -O dts -s -o v632.dts v632.dtb
-
-# live: the phone's flat blob → canonical dts
-dtc -I dtb -O dts -s -o live.dts fdt.dtb
-```
-
-A plain `diff` of the two is useless — phandle numbering differs between builds,
-so nearly every `clocks`, `iommus`, `pinctrl-0` or `remote-endpoint` looks
-changed. Compare structurally instead: match nodes by path, and treat two cells
-as equal when both are phandles resolving to the same node path. On that basis:
+The 4.9 vendor device tree in two forms:
 
 | | |
 |---|---|
-| nodes | **1804 live / 1804 vendor**, 1803 in common |
-| only live | `/reserved-memory/ramoops_mem@0` |
-| only vendor | `/firmware/android/fstab/product` |
-| nodes with differing properties | **5** (11 properties total) |
+| [`UT/`](UT/) | as it **runs** — dumped off the phone booted into Ubuntu Touch |
+| [`FP3/3.A.0136/`](FP3/3.A.0136/) | as Fairphone **publishes** it — the GPL sources for Fairphone OS 3.A.0136 |
 
-### Every difference, and why
+Both are only reference material: they are where the *values* in the nodes we
+**add** come from (addresses, GPIOs, supply and clock names). The
+`../before_update/` files are plain upstream mainline and have nothing to do
+with them.
 
-| node | property | live | vendor | why |
-|---|---|---|---|---|
-| `/` | `model` | `MTP S3` | `Qualcomm Technologies, Inc. SDM632 + PMI632 MTP S3` | bootloader/dtbo rewrite |
-| `/` | `compatible` | `qcom,sdm450` | `qcom,sdm632-mtp`, `qcom,sdm632`, `qcom,mtp` | ditto |
-| `/` | `qcom,board-id` | absent | `<0x08 0x03>` | consumed by the bootloader when it selects the dtb |
-| `/` | `qcom,pmic-name` | `PMI632` | absent | added by the bootloader |
-| `/chosen` | `bootargs` | the full 1.5 kB Android command line | `kpti=0` | filled in at boot |
-| `/chosen` | `kaslr-seed`, `linux,initrd-start`, `linux,initrd-end` | present | absent | filled in at boot |
-| `/memory` | `reg` | `<0 0x10000000 0 0x70000000  0 0x80000000 0 0x80000000>` (4 GB) | `<0 0 0 0>` | filled in at boot |
-| `/reserved-memory/mem_dump_region` | `size` | `<0x00 0x400000>` | `<0x400000>` | 2-cell vs 1-cell encoding of the same value |
-| `/firmware/android/vbmeta` | `parts` | `vbmeta,boot,system,vendor,dtbo` | …`,product` | see below |
-| `/reserved-memory/ramoops_mem@0` | (whole node) | present | — | pstore/ramoops, added downstream of the vendor sources |
+## Are the two the same tree?
 
-Everything above the last two rows is the bootloader populating the tree it was
-handed, i.e. not a difference in the description at all. That leaves exactly two
-real ones:
+Yes. Out of **1804 nodes**, exactly two differ, and neither is a version
+difference:
 
-* **`product` partition** — 3.A.0136 declares a `product` partition in
-  `/firmware/android/fstab` and lists it in `vbmeta parts`; the tree running on
-  this phone does not. The blob in the device's `dtb`/`dtbo` partition therefore
-  is **not** the 3.A.0136 build — the firmware slot is on an earlier release.
-* **`ramoops_mem@0`** — a pstore/ramoops carve-out that the published vendor
-  sources do not contain.
+| difference | which side | what it is |
+|---|---|---|
+| `/reserved-memory/ramoops_mem@0` | only live | pstore/ramoops crash log buffer |
+| `/firmware/android/fstab/product` (+ `product` in `vbmeta parts`) | only vendor | the `product` partition |
 
-So: the FP3 downstream device tree has been stable across releases, the vendor
-sources describe the running hardware faithfully, and the two artefacts here can
-be used interchangeably for looking up register addresses, GPIOs and supply
-names — as long as you read the *values* from the live dump when they matter,
-since it is the one that was really loaded.
+Nine more properties differ, all of them written by the bootloader into the tree
+it was handed: `/chosen` (`bootargs`, `kaslr-seed`, initrd range), `/memory`
+(`reg` — the real 4 GB), and on `/` the `model` / `compatible` /
+`qcom,board-id` / `qcom,pmic-name` rewrite. Nothing that describes hardware.
+
+## Which Fairphone release does the running tree correspond to?
+
+**None of them — and not because it is old.** The two differences above come from
+Ubuntu Touch, not from an older Fairphone build:
+
+| tree compared against the live dump | node mismatches | property mismatches |
+|---|---|---|
+| Fairphone 3.A.0136 (newest) | 1 + 1 | 5 nodes / 11 props |
+| Fairphone 3.A.0107 (mid) | 1 + 1 | identical |
+| Fairphone 3.A.0033 (oldest Android 10) | 1 + 1 | identical |
+| Fairphone 2.A.0118 (newest Android 9) | 7 + 2 | 26 nodes / 40 props |
+| **Ubuntu Touch's own kernel** | **0 + 0** | **3 nodes / 9 props — bootloader only** |
+
+Every Android 10 release gives the *same* delta, so the delta does not date the
+tree; going back to Android 9 makes it worse (it moves the audio amplifier to a
+`tas2557`, drops `sar_sensor`, changes the ADSP nodes). The perfect match is the
+Ubuntu Touch kernel itself, and its sources say why:
+
+```
+arch/arm64/boot/dts/qcom/msm8953.dtsi
+	ramoops_mem: ramoops_mem@0 { compatible = "ramoops"; … }   ← added by LineageOS/UT
+	//[TracyChui] Add product image and mount partition        ← Fairphone's block, commented out
+```
+
+So the phone boots the **DTB appended to the Ubuntu Touch kernel**, which is
+Fairphone's Android 10 tree with those two edits — not the blob in the device's
+`dtbo` partition, and not any stock release verbatim.
+
+## Which vendor file is the FP3
+
+Not obvious. The live tree says `compatible = "qcom,sdm450"`, but `qcom,msm-id =
+<0x15d>` is **349 = SDM632**. The match is `sdm632-mtp-s3.dts`:
+
+```
+sdm632-mtp-s3.dts
+	├── sdm632.dtsi                → msm8953.dtsi + SDM632 CPU/regulator/coresight
+	├── sdm450-pmi632.dtsi         → the PMI632 side (and that "qcom,sdm450" string)
+	└── sdm450-pmi632-mtp-s3.dtsi  → the board, model = "MTP S3"
+```
+
+The near-miss to avoid is `sdm450-mtp-s3-overlay.dts` — same `model = "MTP S3"`,
+paired by the `Makefile` with `sdm450-pmi632.dtb`, but it is the SDM450 variant
+and differs from the live tree in 167/190 nodes.
+
+## Reproducing the comparison
+
+```sh
+# vendor sources → dtb → canonical dts
+cpp -nostdinc -I../include -I. -undef -x assembler-with-cpp sdm632-mtp-s3.dts \
+	| dtc -I dts -O dtb -o v.dtb
+dtc -I dtb -O dts -s -o vendor.dts v.dtb
+
+# the phone's flat blob → canonical dts
+dtc -I dtb -O dts -s -o live.dts fdt.dtb
+```
+
+Do **not** `diff` those two directly: phandle numbering differs per build, so
+almost every `clocks`, `iommus`, `pinctrl-0` and `remote-endpoint` looks changed
+(352 nodes of noise). Compare structurally — match nodes by path, and treat two
+cells as equal when both are phandles resolving to the same node path.
