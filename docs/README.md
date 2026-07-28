@@ -13,6 +13,12 @@ here.
 | [`kernel/`](kernel/README.md) | the thirteen C files we change: whose driver each one is, what we added on top and what genuinely did not exist before |
 | [`sensors/`](sensors/README.md) | the proximity / ambient-light / IMU bring-up, which runs through the SSC and is not solved yet |
 
+## What is still open
+
+[`TODO.md`](TODO.md) — the known-broken and deliberately-unfinished list: the
+notification LED that blinks forever after a missed call, the parked camera
+flash node, and pointers to the items written up on the pages below.
+
 ## How to work on it
 
 | page | what it answers |
