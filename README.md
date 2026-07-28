@@ -701,17 +701,22 @@ stay untouched.
 
 ### Genealogy of the board file (21 commits, oldest first)
 
-| commit | origin |
-|---|---|
-| `308b26cddb04` initial dts for Fairphone 3 | Luca Weiss, 2022-02-20 |
-| `b08f5cbd69dc`, `372698e8df26` gpio-key / RPM-regulator node names | tree-wide dtschema alignment, not FP3-specific |
-| `6d9a666d49bf` touchscreen · `29dcf3c1a815` NFC · `0c4f10917d22` notification LED · `5b006a82a2bb` WiFi/BT · `2dee68e77cb5` **LPASS** · `90053b1574f8` USB-C · `ffaa4b5d5d07` vibrator | Luca Weiss, one commit per feature |
-| `09a3840bcb72` status properties last · `a4600b160eca` newlines between regulators | pure style commits, no functional change |
-| `9ab813d5191f` adsp+wcnss firmware-name · `d0c38cbe3556` modem · `4ea55ecb4990` display+GPU · `9e834e768d0b` camera fixed regulators · `cfc22c2121cb` CCI + EEPROM | Luca Weiss |
-| `4fd8c23afa2e` **AW8898 amplifier** | Luca Weiss, 2025-04-06 — the `FROMLIST v2` subject prefix says it plainly: **not in mainline yet**, carried by msm8953-mainline |
-| `4335b0ae1eb6` enable speaker | Luca Weiss, 2023-04-18 — builds on the AW8898 node, so it is carried along with it |
-| `60f6f604cf3c` enable venus | Luca Weiss, 2026-05-06 — already present in the 7.0.9 base too, *not* something the 7.1.3 bump brought in |
-| **`ca2896133002`** integrated DT (audio + charger + camera) | **ours**, 2026-07-25 |
+The "in mainline" column is the answer to `git merge-base --is-ancestor <sha>
+torvalds/master`, and the release is `git describe --contains`. **17 of the 20
+upstream commits are in Linus' tree**; three are carried only by
+msm8953-mainline.
+
+| commit | origin | in mainline |
+|---|---|---|
+| `308b26cddb04` initial dts for Fairphone 3 | Luca Weiss, 2022-02-20 | ✅ v5.18-rc1 |
+| `b08f5cbd69dc`, `372698e8df26` gpio-key / RPM-regulator node names | tree-wide dtschema alignment, not FP3-specific | ✅ v6.0-rc1, v6.2-rc1 |
+| `6d9a666d49bf` touchscreen · `29dcf3c1a815` NFC · `0c4f10917d22` notification LED · `5b006a82a2bb` WiFi/BT · `2dee68e77cb5` **LPASS** · `90053b1574f8` USB-C · `ffaa4b5d5d07` vibrator | Luca Weiss, one commit per feature | ✅ v6.2-rc1 … v6.11-rc1 (LPASS + WiFi/BT in v6.8-rc1) |
+| `09a3840bcb72` status properties last · `a4600b160eca` newlines between regulators | pure style commits, no functional change | ✅ v6.16-rc1 |
+| `9ab813d5191f` adsp+wcnss firmware-name · `d0c38cbe3556` modem · `4ea55ecb4990` display+GPU · `9e834e768d0b` camera fixed regulators · `cfc22c2121cb` CCI + EEPROM | Luca Weiss | ✅ v6.16-rc1 (first two), v6.18-rc1, v7.0-rc1 (last two) |
+| `4fd8c23afa2e` **AW8898 amplifier** | Luca Weiss, 2025-04-06 — the `FROMLIST v2` subject prefix says it plainly | ❌ **fork-only** — still not in Linus' tree, and no equivalent landed under another hash |
+| `4335b0ae1eb6` enable speaker | Luca Weiss, 2023-04-18 — builds on the AW8898 node | ❌ **fork-only**, carried along with it |
+| `60f6f604cf3c` enable venus | Luca Weiss, 2026-05-06 — already present in the 7.0.9 base too, *not* something the 7.1.3 bump brought in | ❌ **fork-only** |
+| **`ca2896133002`** integrated DT (audio + charger + camera) | **ours**, 2026-07-25 | ❌ ours, see `submit/<base>/*` |
 
 ### What our commit adds, and what it was derived from
 
@@ -761,11 +766,42 @@ confirm they are line-for-line identical (358+/4− in the board file, 21+ in
 `pmi632.dtsi`); that is what proves the rebase neither dropped one of our hunks
 nor reverted an upstream one.
 
-One caveat on the strength of the evidence above: which of the Luca Weiss commits
-are already in `torvalds/linux` and which are carried only by msm8953-mainline
-cannot be told from a shallow clone with no torvalds remote. The one hard signal
-is the `FROMLIST` prefix on `4fd8c23afa2e`. For an exact split, query the mainline
-history per file with `gh api "repos/torvalds/linux/commits?path=..."`.
+### How much of the device tree is actually mainline
+
+Answering this needs the real history, so the working clone carries a `torvalds`
+remote and full (un-shallowed) history:
+
+```
+git fetch --unshallow origin
+git remote add torvalds https://github.com/torvalds/linux.git
+git fetch torvalds
+git commit-graph write --reachable   # or every ancestry query below crawls
+```
+
+Then, per file, split the commits by `git merge-base --is-ancestor <sha>
+torvalds/master`:
+
+| file | commits at `v7.1.3-r0` | in Linus' tree | msm8953-mainline only | fork delta vs `torvalds/master` |
+|---|---|---|---|---|
+| `sdm632-fairphone-fp3.dts` | 20 | 17 | **3** | +91 / −2 |
+| `pmi632.dtsi` | 5 | 5 | 0 | +1 |
+| `sdm632.dtsi` | 8 | 3 | 5 | +53 |
+| `msm8953.dtsi` | 84 | 62 | **22** | +1001 / −49 |
+| `pm8953.dtsi` | 10 | 6 | 4 | +72 |
+
+So the FP3 **board** file is almost entirely upstream — the three exceptions are
+`4fd8c23afa2e` (AW8898 amplifier), `4335b0ae1eb6` (enable speaker) and
+`60f6f604cf3c` (enable venus), and a subject search over `torvalds/master`
+confirms none of them landed under a different hash either. The `FROMLIST v2`
+prefix on `4fd8c23afa2e` was therefore the correct signal, just not the only one.
+
+The **SoC** file is a different story: 22 of the 84 `msm8953.dtsi` commits and 5
+of the 8 `sdm632.dtsi` ones exist only in msm8953-mainline — including things our
+work sits directly on top of, notably `5f0487e5a374` "add sound card" (we extend
+`&sound_card`), `e54a56452736` hardware codec, `ccf0e0d540ba` camss, and
+`de3e8dc98213` "replace CS-Voice with VoiceMMode1" (the voice path). That is
+worth keeping in mind when writing a `submit/<base>/*` series: an LKML patch may
+not assume any of those nodes exist.
 
 ## License
 
