@@ -1,3 +1,15 @@
+Not applied by anything here - kept as a record, and because the bug is not
+specific to this phone.
+
+q6voiced is postmarketOS's own daemon
+(https://gitlab.postmarketos.org/postmarketOS/q6voiced/). This port used a
+patched build of it for one round before fp3-voiced replaced it, and the patch
+below is what that round produced. Any device whose DPCM backends are triggered
+by starting the front end hits the same silence, so the fix belongs upstream -
+but postmarketOS forbids AI-assisted contributions, and this patch was written
+with AI assistance, so it cannot be sent there. Report the behaviour instead and
+let the project write its own fix.
+
 From: Lajoshazi, Laszlo Gergely <lajoshazilg@gmail.com>
 Subject: [PATCH] q6voiced: actually start the voice PCM streams
 

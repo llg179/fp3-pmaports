@@ -18,6 +18,7 @@ systemd/fp3-mic-select.service             -> /etc/systemd/system/   (systemctl 
 udev/61-fp3-vibra.rules                    -> /etc/udev/rules.d/     (vibration permissions)
 systemd/fp3-voiced                          -> /usr/local/bin/        (call audio daemon)
 systemd/fp3-voiced.service                 -> /etc/systemd/system/   (systemctl enable, replaces q6voiced)
+q6voiced-start-streams.patch                (not installed - a record, see the note in the file)
 ```
 
 ## Why it is not just a UCM file
@@ -129,8 +130,14 @@ have to line up; miss any one and the call is silent:
    ever starts. The playback direction additionally needs XRUN detection off
    (`stop_threshold = boundary`), because the voice PCM carries no data and the
    ALSA core refuses to start an empty playback stream (`-EPIPE`). `fp3-voiced`
-   does both. (`../q6voiced/` holds a patched build of upstream q6voiced from an
-   earlier round; it is kept for reference and is **not** used.)
+   does both. (An earlier round patched upstream q6voiced instead; that aport is
+   gone, but the patch is kept as `q6voiced-start-streams.patch` because the bug
+   is not specific to this phone - see the note at the top of the file.)
+
+   `q6voiced` itself stays installed either way: the device meta-package
+   `soc-qcom-msm8953-modem` depends on it, so `apk del q6voiced` refuses. It is
+   `disabled`, and `fp3-voiced.service` carries `Conflicts=q6voiced.service`, so
+   nothing can start the two together.
 
 4. **Nothing else may hold the card.** pulseaudio and callaudiod must not own
    `hw:0,4` while the call runs. `fp3-voiced` sets the card profile to `off`

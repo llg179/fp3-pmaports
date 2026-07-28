@@ -412,7 +412,7 @@ the `.dts`.
 | `drivers/slimbus/qcom-ngd-ctrl.c` | Qualcomm/Linux Foundation (2011–2017) and Linaro (2018), maintained by Srinivas Kandagatla | re-clearing that framer bit immediately before the capability exchange |
 | `drivers/media/i2c/imx363.c` | Intel's IMX3xx sensor drivers (2018) as the structural template | the IMX363 register programming, reverse-engineered from the sensor as wired on the FP3 (same family as the Pixel 3a), plus its power sequence and link warm-up |
 | `drivers/power/supply/qcom_smbx.c` | the SMB2 charger driver — Qualcomm (2016–2019) and Linaro (2023), by Casey Connolly | SMB5 (PMI632) support, with the register layout taken from Qualcomm's downstream `qpnp-smb2`/`qpnp-smb5` in the Fairphone 3 kernel source release |
-| `arch/arm64/boot/dts/qcom/sdm632-fairphone-fp3.dts` | the upstream board file — see [Device tree provenance](#device-tree-provenance) for its 21-commit genealogy and every contributor | the audio, camera and charger nodes |
+| `arch/arm64/boot/dts/qcom/sdm632-fairphone-fp3.dts` | the upstream board file — see [`docs/device_tree/README.md`](docs/device_tree/README.md) for its genealogy and every contributor | the audio, camera and charger nodes |
 | `userspace-audio/`, `tests/`, this packaging | — | written for this port |
 
 ### How the assistance is recorded
@@ -598,10 +598,11 @@ sequenceDiagram
 | `userspace-audio/ucm2/Fairphone/fp3/HiFi.conf` | media use case: the sinks and sources PulseAudio exposes, with their `PlaybackVolume` controls and the jack each one follows |
 | `userspace-audio/ucm2/Fairphone/fp3/VoiceCall.conf` | the call use case: codec routing per output (`Earpiece`, `Speaker`, `Headphones`) and per input (`Mic`, `Headset`), plus the voice mixers. Every output also **drops the other outputs' routes and gains**, and the capture devices deliberately have **no `CapturePCM`** — the call's uplink is not a PulseAudio source |
 | `userspace-audio/ucm2/conf.d/Fairphone_3/Fairphone_3.conf` | registers both verbs — a verb that is not listed here does not exist as far as PulseAudio is concerned |
-| `userspace-audio/systemd/fp3-voiced` (+ `.service`) | the call-audio daemon described above. Replaces `q6voiced` (`Conflicts=`), which neither applies the routing nor starts the streams |
+| `userspace-audio/systemd/fp3-voiced` (+ `.service`) | the call-audio daemon described above. Replaces `q6voiced` (`Conflicts=`), which neither applies the routing nor starts the streams — and which stays installed regardless, because the `soc-qcom-msm8953-modem` meta-package depends on it |
 | `userspace-audio/systemd/fp3-mic-select` (+ `.service`) | picks the built-in microphone for media capture at boot |
 | `userspace-audio/pulse/90-fp3-mic.pa` | PulseAudio drop-in for the capture side |
 | `userspace-audio/udev/61-fp3-vibra.rules` | tags `pm8xxx_vib_ffmemless` so feedbackd may use it — without it an incoming call is silent *and* still |
+| `userspace-audio/q6voiced-start-streams.patch` | not installed: the fix an earlier round made to postmarketOS's `q6voiced`, kept because the bug it describes is not specific to this phone |
 
 ### The rules this arrangement obeys
 
