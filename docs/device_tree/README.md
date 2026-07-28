@@ -53,6 +53,29 @@ audio path needs (`wcd_intr_default`, `cdc_reset_active` on `&tlmm`,
 `tasha_mclk_default` on `&pm8953_gpios`) live in the board file as
 `&`-references.
 
+### What we took from where, and what is actually new
+
+Almost none of the *values* in the added nodes are ours — they are read out of
+the downstream 4.9 tree, which is why both copies of it are checked in here.
+What is ours is the translation into mainline bindings and the composition. Per
+block:
+
+| block | numbers taken from | shape / binding taken from | what did not exist before |
+|---|---|---|---|
+| **audio** — WCD9335 over SLIMbus | Fairphone's published 4.9 sources ([`downstream/fairphone/3.A.0136/`](downstream/fairphone/3.A.0136/)): `msm8953.dtsi` (SLIMbus BAM `c104000`, NGD `c140000`), `msm8953-audio.dtsi` (the `slim217,1a0` device address, mic-bias voltages, DMIC clock), `msm8953-pinctrl.dtsi` (`cdc_reset`, `wcd_intr`, MCLK muxes) — Qualcomm BSP code as shipped by Fairphone | the existing **mainline** WCD9335 boards (DragonBoard 820c / MSM8996): codec binding and driver by **Srinivas Kandagatla** (`ASoC: wcd9335`, 2019) on his SLIMbus NGD controller (2018); binding conversion **Yassine Oudjana** (2022), node moved to the boards by **Krzysztof Kozlowski** (2023). We follow that shape, *not* downstream's `qcom,tasha-slim-pgd` | **the combination**: mainline had WCD9335 only on MSM8996, never on MSM8953. The NGD/BAM nodes at msm8953 addresses, `divclk1_cdc`, `wcd_vout_1p8`, the three pin-mux nodes, the MBHC button thresholds and the `slim-playback`/`slim-capture` DAI links are written here for the first time |
+| **camera** — Sony IMX363 | Fairphone's `msm8953-camera-sensor-mtp.dtsi`: regulators, CCI wiring, power sequence. The I²C address `0x1a` is **not** from there — the FP3 straps SLASEL high, confirmed by probing the bus | the mainline **camss** graph binding (`port@0` / `csiphy0_ep`); it sits on **Luca Weiss'** groundwork in the board file — `9e834e768d0b` camera fixed regulators and `cfc22c2121cb` CCI + EEPROM, both in Linus' tree | the `camera@1a` node and the `&camss` port graph for this board — and the driver under it, whose register programming was reverse-engineered on the FP3 (same sensor family as the Pixel 3a) |
+| **charger** — PMI632 | the charger node's interrupt numbers and ADC channel assignment from Qualcomm's downstream `pmi632.dtsi` in the same release; the battery's cell parameters and OCV curve from Fairphone's own fuel-gauge profile `qg-batterydata-Kayo-3000mah-Nov4th2019-pmi632` — 3000 mAh, 4.39 V float, the 25 °C column of its `pc-temp-v1` table converted from 100 µV units | mainline `simple-battery` plus the `qcom_smbx` SMB5 binding | the SMB5 charger node in mainline's `pmi632.dtsi` (added disabled, as a PMIC-level description should be) and the board-level `&pmi632_charger` + `fp3_battery` that enable it. **Deliberate deviation:** charge current held at 1 A instead of downstream's 2.0–2.7 A until the thermal/JEITA side is exercised |
+| **sound card** | — | — | nothing: we *extend* `&sound_card` rather than rewrite it. The card itself is **Vldly's** `5f0487e5a374` (2022, msm8953-mainline only, not in Linus' tree) and the AW8898/MI2S speaker path on it is **Luca Weiss'** `4fd8c23afa2e` + `4335b0ae1eb6` |
+
+Two things worth keeping straight when reading the above. First, the board file
+we edit is **Luca Weiss'** work — he has carried the FP3 in mainline since
+2022-02-20; our commit is one entry in a 21-commit history (see
+[Genealogy](#genealogy-of-the-board-file-21-commits-oldest-first)). Second,
+several nodes we build on top of exist **only in msm8953-mainline**, not in
+Linus' tree — the sound card above, `e54a56452736` hardware codec (**Sireesh
+Kodali**), `ccf0e0d540ba` camss (**Vldly**) — which is why an upstream series
+cannot assume they are there.
+
 ### Refreshing this snapshot after a base bump
 
 From a `llg179/linux` checkout, with `<base>` the new kernel base:
