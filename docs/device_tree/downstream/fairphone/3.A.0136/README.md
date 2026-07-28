@@ -1,8 +1,12 @@
-# Fairphone 3 vendor device tree — Fairphone OS 3.A.0136
+# Fairphone's published device tree — Fairphone OS 3.A.0136
 
-The device-tree sources as Fairphone publishes them, unmodified, from the
-official GPL release for **3.A.0136** (the last Fairphone OS build for the FP3,
-Android 10 / "Q", kernel 4.9).
+The device-tree sources as the vendor publishes them, unmodified, from the
+official GPL release for **3.A.0136** — the last Fairphone OS build for this
+phone (Android 10 / "Q", kernel 4.9).
+
+The vendor is **Fairphone** (<https://www.fairphone.com>), who make the FP1
+through FP5; **FP3** is the model this port targets, and the one these sources
+describe.
 
 ## Source
 
@@ -31,7 +35,7 @@ upstream path:
 | `arch/arm64/boot/dts/Makefile` | the arm64 dts Makefile |
 | `include/dt-bindings/` | the binding headers the tree `#include`s, so the snapshot is self-contained |
 
-Only the other SoC vendors' directories (`nvidia/`, `rockchip/`, …) were left
+Only the other SoC platforms' directories (`nvidia/`, `rockchip/`, …) were left
 out — they are unrelated to this device.
 
 One deviation from the tarball: `include/dt-bindings/input/linux-event-codes.h`
@@ -39,7 +43,7 @@ is a symlink to `include/uapi/linux/input-event-codes.h` in the kernel tree, and
 is stored here as a regular file with that content, so the snapshot does not
 point outside itself.
 
-## Where the FP3 actually is in this tree
+## Where this phone actually is in this tree
 
 Fairphone did not add a board file named after the phone — the FP3 ships as
 Qualcomm's **MTP S3** reference-board description, on the SDM632 base:

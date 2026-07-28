@@ -23,13 +23,13 @@ Licence: GPL-2.0, as the kernel it is part of.
 
 ⚠️ Re-fetching `origin/ubuntutouch` today yields `6d508b49` (2021-08-05), whose
 device tree is **older and does not match this device** — it compares like the
-Android 9 vendor tree (7 extra nodes live, 25 nodes with property differences:
+Android 9 Fairphone tree (7 extra nodes live, 25 nodes with property differences:
 `tas2557` amplifier, `sar_sensor`, different ADSP nodes). If you re-clone, check
 against the live dump before trusting it.
 
 ## What is here
 
-Same layout as the vendor snapshot, mirroring the kernel paths:
+Same layout as Fairphone's snapshot, mirroring the kernel paths:
 
 | path | contents |
 |---|---|
@@ -37,7 +37,7 @@ Same layout as the vendor snapshot, mirroring the kernel paths:
 | `arch/arm64/boot/dts/Makefile` | the arm64 dts Makefile |
 | `include/dt-bindings/` | the binding headers, so the snapshot is self-contained |
 
-As in the vendor snapshot, `include/dt-bindings/input/linux-event-codes.h` is a
+As in Fairphone's snapshot, `include/dt-bindings/input/linux-event-codes.h` is a
 symlink in the kernel tree and is stored here as a regular file.
 
 ## How it differs from Fairphone's own sources
@@ -51,7 +51,7 @@ ramoops_mem: ramoops_mem@0 { compatible = "ramoops"; … }   /* added */
 ```
 
 Everything else in the FP3's include chain is Fairphone's Android 10 tree — see
-[`../../FP3/3.A.0136/`](../../FP3/3.A.0136/).
+[`../../fairphone/3.A.0136/`](../../fairphone/3.A.0136/).
 
 ## Building it
 

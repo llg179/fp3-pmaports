@@ -694,12 +694,13 @@ be taken on trust:
 |---|---|
 | [`before_update/`](docs/device_tree/before_update/) → [`after_update/`](docs/device_tree/after_update/) | the two files we modify, in both states — `diff` them for our exact delta |
 | [`downstream/UT/`](docs/device_tree/downstream/UT/) | the 4.9 downstream tree as it **runs**, dumped off the phone under Ubuntu Touch |
-| [`downstream/FP3/3.A.0136/`](docs/device_tree/downstream/FP3/3.A.0136/) | the same tree as Fairphone **publishes** it, from their official GPL release |
+| [`downstream/UT/kernel-dt/`](docs/device_tree/downstream/UT/kernel-dt/) | the sources that dump was built from — the UBports FP3 kernel's device tree |
+| [`downstream/fairphone/3.A.0136/`](docs/device_tree/downstream/fairphone/3.A.0136/) | the same tree as the vendor, **Fairphone** (fairphone.com), publishes it — their official GPL release |
 
 [`docs/device_tree/downstream/README.md`](docs/device_tree/downstream/README.md)
-compares the last two node by node: they are the same tree (1804 nodes each, five
+compares these node by node: they are the same tree (1804 nodes each, five
 nodes differing, nearly all of it the bootloader filling in `/chosen` and
-`/memory`), and it identifies which vendor file the FP3 actually is —
+`/memory`), and it identifies which of Fairphone's files this phone actually is —
 `sdm632-mtp-s3.dts`, not the SDM450 board of the same name.
 
 The board `.dtb` is assembled from **five** files through the `#include` chain,

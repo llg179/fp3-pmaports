@@ -17,8 +17,9 @@ plain upstream mainline and owes nothing to this tree. Where the downstream
 binding disagrees with the mainline one, the mainline shape wins — see the
 top-level [`README.md`](../../../../README.md).
 
-For the vendor *sources* of the same tree see [`../FP3/`](../FP3/), and for how
-closely the two agree, [`../README.md`](../README.md).
+For the same tree as the vendor publishes it see
+[`../fairphone/`](../fairphone/), and for how closely the two agree,
+[`../README.md`](../README.md).
 
 ## Why keep the dump at all
 
@@ -42,7 +43,7 @@ qcom,pmic-name = "PMI632"
 
 `MTP S3` is Qualcomm reference-board naming that Fairphone kept. Do not trust the
 `compatible` string: it says `sdm450`, but `qcom,msm-id` 349 is **SDM632**, and
-the tree matches the vendor's `sdm632-mtp-s3.dts` — see the comparison one level
+the tree matches Fairphone's `sdm632-mtp-s3.dts` — see the comparison one level
 up.
 
 ## How it was produced

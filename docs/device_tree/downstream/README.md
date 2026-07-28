@@ -1,12 +1,15 @@
 # Downstream device trees
 
-The 4.9 vendor device tree in two forms:
+The 4.9 downstream device tree in two forms. "Downstream" here is the
+Android-era tree the device shipped with, as opposed to the mainline one we
+work on; the **vendor is Fairphone** (fairphone.com), who make this phone — the
+FP3 being the third model in their FP1…FP5 line.
 
 | | |
 |---|---|
 | [`UT/`](UT/) | as it **runs** — dumped off the phone booted into Ubuntu Touch |
 | [`UT/kernel-dt/`](UT/kernel-dt/) | the **sources** that dump was built from — the UBports FP3 kernel's device tree |
-| [`FP3/3.A.0136/`](FP3/3.A.0136/) | as Fairphone **publishes** it — the GPL sources for Fairphone OS 3.A.0136 |
+| [`fairphone/3.A.0136/`](fairphone/3.A.0136/) | as the vendor **publishes** it — Fairphone's GPL sources for Fairphone OS 3.A.0136 |
 
 Both are only reference material: they are where the *values* in the nodes we
 **add** come from (addresses, GPIOs, supply and clock names). The
@@ -21,7 +24,7 @@ difference:
 | difference | which side | what it is |
 |---|---|---|
 | `/reserved-memory/ramoops_mem@0` | only live | pstore/ramoops crash log buffer |
-| `/firmware/android/fstab/product` (+ `product` in `vbmeta parts`) | only vendor | the `product` partition |
+| `/firmware/android/fstab/product` (+ `product` in `vbmeta parts`) | only Fairphone | the `product` partition |
 
 Nine more properties differ, all of them written by the bootloader into the tree
 it was handed: `/chosen` (`bootargs`, `kaslr-seed`, initrd range), `/memory`
@@ -56,7 +59,7 @@ So the phone boots the **DTB appended to the Ubuntu Touch kernel**, which is
 Fairphone's Android 10 tree with those two edits — not the blob in the device's
 `dtbo` partition, and not any stock release verbatim.
 
-## Which vendor file is the FP3
+## Which of Fairphone's files is this phone
 
 Not obvious. The live tree says `compatible = "qcom,sdm450"`, but `qcom,msm-id =
 <0x15d>` is **349 = SDM632**. The match is `sdm632-mtp-s3.dts`:
@@ -75,10 +78,10 @@ and differs from the live tree in 167/190 nodes.
 ## Reproducing the comparison
 
 ```sh
-# vendor sources → dtb → canonical dts
+# Fairphone's sources → dtb → canonical dts
 cpp -nostdinc -I../include -I. -undef -x assembler-with-cpp sdm632-mtp-s3.dts \
 	| dtc -I dts -O dtb -o v.dtb
-dtc -I dtb -O dts -s -o vendor.dts v.dtb
+dtc -I dtb -O dts -s -o fairphone.dts v.dtb
 
 # the phone's flat blob → canonical dts
 dtc -I dtb -O dts -s -o live.dts fdt.dtb
