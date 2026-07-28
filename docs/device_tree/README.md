@@ -1,12 +1,19 @@
-# Device tree: before and after
+# Device tree
+
+| directory | what it holds |
+|---|---|
+| `before_update/` | the **upstream mainline** files exactly as the base ships them — what we had to touch |
+| `after_update/` | the same files on `integration/<base>`, with our changes applied |
+| `downstream/` | the **live** device tree dumped off the phone running Ubuntu Touch (kernel 4.9) — the resolved tree, ground truth for values |
+| `fp3/3.A.0136/` | the **vendor sources** from Fairphone's official GPL release for Fairphone OS 3.A.0136 |
+
+The first two are the change itself; the last two are where its content came
+from. Each directory has its own README.
+
+## before / after
 
 The two device-tree files the FP3 port modifies, in both states, so the change
 can be read without a kernel checkout.
-
-| directory | state |
-|---|---|
-| `before_update/` | the **upstream** file exactly as the base ships it — what we had to touch |
-| `after_update/` | the same file on `integration/<base>`, with our changes applied |
 
 Provenance, as of this snapshot:
 
