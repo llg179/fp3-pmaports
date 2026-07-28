@@ -680,6 +680,9 @@ autospawned empty daemon, which looks exactly like "the card lost its sink".
 * [`docs/device_tree/`](docs/device_tree/) — the device trees themselves: our
   change before and after, plus both downstream references (the live Ubuntu
   Touch dump and Fairphone's published 3.A.0136 sources)
+* [`docs/sensors/`](docs/sensors/) — the sensor (proximity/ALS/IMU) investigation:
+  why nothing works, what was measured, the upstream Sensor Manager work this
+  builds on, and what we add on top — **not working yet**, see the page
 
 ## Device tree
 
