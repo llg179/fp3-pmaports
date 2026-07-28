@@ -373,6 +373,45 @@ fine, `ProximityNear` never flips, the screen never blanks.
 * **Use `time.monotonic()`** — the wall clock jumps mid-boot, silently truncating a
   capture to nothing.
 
+### The boot-hang safety net
+
+Three times in one session the phone stopped mid-boot: the USB gadget enumerated
+(so the kernel and initramfs ran) but the link never came up, no sshd, no adb, no
+fastboot — only a physical power cycle got it back. That is fatal to unattended
+work, so the net below was built. What each layer does, and what it does *not*:
+
+| layer | catches | does not catch |
+|---|---|---|
+| `systemd-run --on-active=N --unit=deadman systemctl reboot`, cancelled with `systemctl stop deadman` | a wedge on a **running** system | anything before systemd — it never gets armed |
+| `panic=10` on the cmdline | a kernel **panic** | a hang. Measured: with `panic=10` active the phone still sat there, which is how we know these are hangs, not panics |
+| ramoops (`ramoops@8ee00000`) | nothing by itself — it *records* | it only pays off on the next boot, and needs the DT node to exist |
+| SoC watchdog + `CONFIG_WATCHDOG_OPEN_TIMEOUT` | **a hung boot** | nothing else does |
+
+The last one is the only real fix. Mainline never described the FP3's watchdog,
+so the kernel config had `# CONFIG_WATCHDOG is not set` and the SoC watchdog was
+simply not there. The pieces:
+
+* **DT**: `watchdog@b017000`, `compatible = "qcom,kpss-wdt"`, `clocks = <&sleep_clk>`
+  — the same address the downstream tree drives, and nothing in `msm8953.dtsi`
+  occupies it (nearest neighbours are `b011000` and `b018000`). The driver needs
+  the clock; the interrupt is optional.
+* **config**: `CONFIG_WATCHDOG=y`, `CONFIG_WATCHDOG_CORE=y`, `CONFIG_QCOM_WDT=y`,
+  `CONFIG_WATCHDOG_HANDLE_BOOT_ENABLED=y`, **`CONFIG_WATCHDOG_OPEN_TIMEOUT=300`**.
+* **userspace**: `RuntimeWatchdogSec=60` in `/etc/systemd/system.conf.d/`, so a
+  healthy boot takes ownership and the watchdog never bites in normal use.
+
+`OPEN_TIMEOUT` is the load-bearing part: if nothing opens `/dev/watchdog` within
+300 s, the core stops petting and the SoC resets itself. And the failure mode of
+the safety net is itself safe — if systemd somehow never takes over, the phone
+resets every 300 s, each reset decrements the A/B retry counter, and the
+bootloader eventually falls back to the Ubuntu Touch slot, which is reachable
+over wifi. Worst case still recovers without hands.
+
+**☠️ Deploy order.** `apk add linux-fp3` **overwrites `/boot/*.dtb`** with the
+package's copy and **regenerates `extlinux.conf`**, so the DT nodes and `panic=10`
+must be laid down *after* the install, not before. Otherwise you believe the net
+is in place and it is not.
+
 ### Recovering the rootfs from the other slot
 
 The pmOS root lives inside `system_b` in its own DOS table, so it is reachable
