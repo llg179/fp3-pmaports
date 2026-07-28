@@ -5,6 +5,7 @@ The 4.9 vendor device tree in two forms:
 | | |
 |---|---|
 | [`UT/`](UT/) | as it **runs** — dumped off the phone booted into Ubuntu Touch |
+| [`UT/kernel-dt/`](UT/kernel-dt/) | the **sources** that dump was built from — the UBports FP3 kernel's device tree |
 | [`FP3/3.A.0136/`](FP3/3.A.0136/) | as Fairphone **publishes** it — the GPL sources for Fairphone OS 3.A.0136 |
 
 Both are only reference material: they are where the *values* in the nodes we
@@ -38,7 +39,7 @@ Ubuntu Touch, not from an older Fairphone build:
 | Fairphone 3.A.0107 (mid) | 1 + 1 | identical |
 | Fairphone 3.A.0033 (oldest Android 10) | 1 + 1 | identical |
 | Fairphone 2.A.0118 (newest Android 9) | 7 + 2 | 26 nodes / 40 props |
-| **Ubuntu Touch's own kernel** | **0 + 0** | **3 nodes / 9 props — bootloader only** |
+| **Ubuntu Touch's own kernel** ([`UT/kernel-dt/`](UT/kernel-dt/)) | **0 + 0** | **3 nodes / 9 props — bootloader only** |
 
 Every Android 10 release gives the *same* delta, so the delta does not date the
 tree; going back to Android 9 makes it worse (it moves the audio amplifier to a

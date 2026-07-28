@@ -1,8 +1,13 @@
-# Downstream device tree as it runs — Ubuntu Touch (Halium, kernel 4.9)
+# Ubuntu Touch downstream device tree (Halium, kernel 4.9)
 
-`fp3-ubuntu-touch-live.dts` is the **complete, fully resolved** device tree the
-Fairphone 3 actually runs under Ubuntu Touch: dumped from the live device, not
-reconstructed from sources.
+| | |
+|---|---|
+| `fp3-ubuntu-touch-live.dts` | the tree **as it runs** — complete and fully resolved, dumped off the live device |
+| [`kernel-dt/`](kernel-dt/) | the **sources** it was built from: the UBports FP3 kernel's device tree |
+
+The two agree exactly: compiling `sdm632-mtp-s3.dts` from `kernel-dt/` gives the
+live tree node for node, with only the nine properties the bootloader fills in
+left over ([comparison](../README.md)).
 
 This is where the *values* in our mainline nodes come from — the addresses, GPIO
 numbers, regulator names and clock wiring for the WCD9335 SLIMbus codec, the
@@ -15,7 +20,7 @@ top-level [`README.md`](../../../../README.md).
 For the vendor *sources* of the same tree see [`../FP3/`](../FP3/), and for how
 closely the two agree, [`../README.md`](../README.md).
 
-## Why a dump and not the kernel sources
+## Why keep the dump at all
 
 The Ubuntu Touch kernel tree (`lineageos_FP3_defconfig`, 4.9.218) contains **no
 FP3 board `.dts`** — nothing under `arch/arm64/boot/dts/qcom/` matches `fp3` or
