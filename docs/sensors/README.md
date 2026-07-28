@@ -7,12 +7,19 @@ what was believed, what was measured, and what that forced us to conclude —
 including the three places where the belief was wrong. Every capture and every
 tool it refers to is checked in here, so nothing has to be taken on trust.
 
-**Status (2026-07-28): the Sensor Manager is up.** After a one-line fix to a
-QRTR control constant, the registry server works, the SSC reads it, and
-`256 / v1 / instance 50` registers on node 5 across every boot — the thing this
-page spent nine steps saying never happens. There is still **no sensor reading**:
-the kernel IIO driver is not ported yet, so proximity blanking does not work.
-See [step 9](#step-9--the-gate-opens-the-sensor-manager-registers).
+**Status (2026-07-29): the accelerometer reads 1 g.** After a one-line fix to a
+QRTR control constant, the registry server works, the SSC brings up the real
+hardware, and the ported IIO drivers deliver data:
+
+```
+      x        y        z     |g|
+   -0.343    0.409   -9.685   9.700 m/s^2
+   -0.348    0.425   -9.695   9.710 m/s^2
+```
+
+That is the first sensor reading on this port. Proximity is the next channel —
+the SSC enumerates it, the driver for it is written but not yet measured. See
+[step 10](#step-10--the-first-reading).
 
 ⚠️ Read [the correction](#correction-2026-07-28--every-publish-in-steps-48-was-a-bye)
 before trusting steps 4–8: the control code used to publish a QMI service was
@@ -68,13 +75,25 @@ That single fact explains, without any remaining mystery:
 * the co-processor-side elimination in [step 6](#step-6--rule-out-the-co-processor-side)
   (rcinit diff, node 7 loopback, `pd-mapper`).
 
+**Already re-measured and gone: the gate list.** Every run since the fix has
+published **`0x10F` and nothing else** — `qrtrls.py` shows node 1 carrying only
+the system's own four services plus our `SNS_REG` — and the sensor stack still
+comes up in full. The 31 "gates", the one-port-per-service rule and the trap
+about colliding entries were all artifacts of the BYE: publishing 31 of them
+meant sending 31 node-death announcements, which is why more of them "helped".
+[`data/gates.txt`](data/gates.txt) is kept only as a record of the oracle's
+service table; nothing needs it.
+
 **What must be re-measured**, because it was produced by BYE traffic:
 
 * the whole error-layer table in [step 5](#step-5--peel-the-error-layers-one-publish-at-a-time),
   including `L1206 [1]` and "31 drivers up";
-* the "one port per service" conclusion — plausible, but currently unproven;
-* the ordering rule in [step 8](#the-wake-up-is-edge-triggered-and-ordering-decides-everything);
-* "Sensor Manager never registers": the enumeration behind it has to be redone.
+* the ordering rule in [step 8](#the-wake-up-is-edge-triggered-and-ordering-decides-everything)
+  — already contradicted: the SSC reads the registry the moment `0x10F` appears,
+  with no SSR and no ordering to get right;
+* "Sensor Manager never registers": **disproved** — see
+  [step 9](#step-9--the-gate-opens-the-sensor-manager-registers);
+* the error-layer table itself, which is the only item on this list still open.
 
 Two further method notes from the same afternoon, because both produced
 convincing-looking negatives:
@@ -444,18 +463,76 @@ services and the Sensor Manager are up on every boot with no manual step.
 > hardware upstream has; here it is a hang. When a correct implementation stalls,
 > look at what it does when it does not know something.
 
+## Step 10 — the first reading
+
+With the Sensor Manager registered, the rest was a port rather than an
+investigation. Four commits from `msm8996-mainline/linux`
+`msm8996-staging-smgr` (`30bb1314cc79`), all Yassine Oudjana's, apply to the
+7.1.3 base unchanged:
+
+| commit | what it does |
+|---|---|
+| net: qrtr: Turn QRTR into a bus | makes discovered QMI services bindable devices |
+| net: qrtr: Define macro to convert QMI version and instance | |
+| WIP: iio: Add Qualcomm Sensor Manager driver | the SMGR core: enumerates sensors, requests buffering, pushes samples to IIO |
+| WIP: iio: accel: Add driver for SMGR accelerometers | |
+
+They build clean on 7.1.3 — the `bus_type`, `uevent` and `devm_iio_kfifo_buffer_setup`
+signatures all still match. On the device the bus creates ~70 devices, and the
+core enumerates four sensors:
+
+```
+/sys/bus/platform/devices/qcom-smgr-accel.0
+/sys/bus/platform/devices/qcom-smgr-gyro.10
+/sys/bus/platform/devices/qcom-smgr-mag.20
+/sys/bus/platform/devices/qcom-smgr-prox-light.40
+```
+
+`iio:device2` appears as `qcom-smgr-accel`. It is buffer-only — no `*_raw`
+attributes — so a reading means enabling the scan elements and reading 24-byte
+records from `/dev/iio:device2`: three s32 values, four bytes of padding, then a
+64-bit timestamp. Scaled by `in_accel_scale`:
+
+```
+      x        y        z     |g|
+   -0.343    0.409   -9.685   9.700 m/s^2
+   -0.348    0.425   -9.695   9.710 m/s^2
+   -0.329    0.425   -9.695   9.709 m/s^2
+```
+
+9.70 m/s² with the phone flat on a desk. **The chain works end to end**:
+`snsregd` → SSC init → Sensor Manager on QRTR → QRTR bus → SMGR core →
+`smgr_accel` → IIO.
+
+### What the SSC is actually driving
+
+The boot trace is no longer QShrink-stripped once the registry is served, and it
+names the hardware:
+
+* **`sns_dd_icm206xx.c`** — an InvenSense ICM-206xx IMU, taken through
+  `chip_read_id`, soft reset, FSR, filter, FIFO, ODR and `chip_enable_sensor`.
+* **`dd_epl259x.c`** — an EPL259x proximity + ambient light sensor:
+  `set_psensor_intr_threshold`, `set_lsensor_intr_threshold`, `enable_pflag`,
+  `enable_lflag`.
+* `sns_sam_*` — the algorithm manager, reading gyro_cal and qmag_cal parameters
+  out of the registry we serve.
+
+1233 SENSORS messages on a boot, **zero error lines**. Compare that with the 12
+messages and silence of [step 2](#step-2--the-task-is-not-failing-it-is-waiting).
+
 ### What is still missing
 
+* **Proximity is written but unmeasured.** `qcom-smgr-prox-light` was enumerated
+  and unbound, because upstream only has an accelerometer driver;
+  `drivers/iio/proximity/smgr_prox.c` here binds it and exposes proximity and
+  light channels. Which of the report's three u32 values is which is an
+  assumption until someone puts a finger over the sensor.
 * **Groups 20, 2691 and 3050 are zero-filled, not real.** The stack initialises,
   but whatever those groups configure is wrong. They need their real offsets in
   `sns.reg`, or their key lists.
-* **No IIO driver yet.** The Sensor Manager is reachable, but nothing in the
-  kernel talks to it — `msm8996-staging-smgr` still has to be rebased onto our
-  7.1.3 base. Until then there is no `/sys/bus/iio` device and no proximity
-  blanking.
+* **Gyro and magnetometer have no driver** — both are enumerated and unbound.
 * **`snsregd.py` is still the Python stand-in** for upstream's C `sns-reg`,
   which should be packaged as an aport.
-* **No sensor has produced a reading yet.** Registration is not data.
 
 ## Will this bring up *all* the sensors?
 
@@ -652,13 +729,11 @@ not checked in for size; it lives in the working directory
 
 ## Next steps
 
-1. **Port `msm8996-staging-smgr` onto the 7.1.3 base.** This is now the only
-   thing between a registered Sensor Manager and an actual reading. Everything
-   below it is done.
-2. **Find the real content of groups 20, 2691 and 3050** — their offsets in
-   `sns.reg`, or their key lists. They are zero-filled today, so whatever they
-   configure is wrong even though the stack initialises.
-3. Re-run the step-5 error-layer table with real `NEW_SERVER` traffic, to see
-   which of those layers were ever real.
-4. Package upstream's C `sns-reg` as an aport, replacing `snsregd.py`.
-5. Proximity through `iio-sensor-proxy` → in-call blanking, end to end.
+1. **Measure proximity.** The driver is in; a finger over the sensor decides
+   whether the value mapping is right.
+2. **Proximity through `iio-sensor-proxy` → in-call blanking**, which is the
+   original goal and the only step left after 1.
+3. **Find the real content of groups 20, 2691 and 3050** — their offsets in
+   `sns.reg`, or their key lists.
+4. Drivers for the enumerated gyro and magnetometer.
+5. Package upstream's C `sns-reg` as an aport, replacing `snsregd.py`.
