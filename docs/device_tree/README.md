@@ -1,0 +1,48 @@
+# Device tree: before and after
+
+The two device-tree files the FP3 port modifies, in both states, so the change
+can be read without a kernel checkout.
+
+| directory | state |
+|---|---|
+| `before_update/` | the **upstream** file exactly as the base ships it — what we had to touch |
+| `after_update/` | the same file on `integration/<base>`, with our changes applied |
+
+Provenance, as of this snapshot:
+
+* base: `v7.1.3-r0` (tag in `llg179/linux`, the msm8953-mainline 7.1.3 release)
+* ours: `integration/7.1.3` — the change itself is commit `ca2896133002`,
+  *"FP3: integrated device tree (audio + charger + camera) for 7.1.3 testing"*
+
+Both copies are byte-identical to the corresponding git blobs, so
+`diff -u before_update/<file> after_update/<file>` reproduces our delta:
+**+375 / −4 lines** across the two files.
+
+## The files
+
+| file | delta | what we add |
+|---|---|---|
+| `sdm632-fairphone-fp3.dts` | 537 → 887 lines | the board changes: WCD9335 SLIMbus audio (`slimbam`, `slim_msm`, `tasha_ifd`, `wcd9335`, `divclk1_cdc`, `wcd_vout_1p8`, three pin-mux nodes, the `slim-playback` / `slim-capture` DAI links), the IMX363 rear camera (`camera@1a` plus the `&camss` port graph), and the charger side (`&pmi632_charger`, `fp3_battery`) |
+| `pmi632.dtsi` | 209 → 230 lines | the PMI632 charger node itself, the counterpart of the board-level `&pmi632_charger` |
+
+The other three files in the `#include` chain — `sdm632.dtsi`, `msm8953.dtsi`,
+`pm8953.dtsi` — are **not** here because we do not touch them; the pin muxes our
+audio path needs (`wcd_intr_default`, `cdc_reset_active` on `&tlmm`,
+`tasha_mclk_default` on `&pm8953_gpios`) live in the board file as
+`&`-references. See the "Device tree provenance" section of the top-level
+[`README.md`](../../README.md) for how much of each file is upstream and how the
+snapshot is verified across a base bump.
+
+## Refreshing this snapshot after a base bump
+
+From a `llg179/linux` checkout, with `<base>` the new kernel base:
+
+```sh
+for f in sdm632-fairphone-fp3.dts pmi632.dtsi; do
+	git show "v<base>-r0:arch/arm64/boot/dts/qcom/$f"        > before_update/$f
+	git show "integration/<base>:arch/arm64/boot/dts/qcom/$f" > after_update/$f
+done
+```
+
+Then update the base/commit references above. Do not hand-edit the files here —
+they are a snapshot of the kernel tree, not a source of truth.
