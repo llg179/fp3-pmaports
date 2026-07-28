@@ -31,23 +31,32 @@ it was handed: `/chosen` (`bootargs`, `kaslr-seed`, initrd range), `/memory`
 (`reg` — the real 4 GB), and on `/` the `model` / `compatible` /
 `qcom,board-id` / `qcom,pmic-name` rewrite. Nothing that describes hardware.
 
-## Which Fairphone release does the running tree correspond to?
+## Which Fairphone release is the running tree closest to?
 
-**None of them — and not because it is old.** The two differences above come from
-Ubuntu Touch, not from an older Fairphone build:
+The question: the phone boots Ubuntu Touch from slot `_a`, and its device tree
+can be dumped live. Fairphone publishes the sources of every Fairphone OS build
+at <https://code.fairphone.com/projects/fairphone-3/gpl.html> — 3.A.0136 down to
+2.A.0101. **Which of those releases does the dumped tree match?**
 
-| tree compared against the live dump | node mismatches | property mismatches |
+Answer: **all the Android 10 ones equally well, and none of them exactly.** Four
+releases spanning the range were compiled and compared against the live dump:
+
+| tree compiled and compared against the live dump | extra nodes (live + other side) | properties differing |
 |---|---|---|
-| Fairphone 3.A.0136 (newest) | 1 + 1 | 5 nodes / 11 props |
-| Fairphone 3.A.0107 (mid) | 1 + 1 | identical |
-| Fairphone 3.A.0033 (oldest Android 10) | 1 + 1 | identical |
-| Fairphone 2.A.0118 (newest Android 9) | 7 + 2 | 26 nodes / 40 props |
+| Fairphone 3.A.0136 — newest | 1 + 1 | 5 nodes / 11 props |
+| Fairphone 3.A.0107 — mid Android 10 | 1 + 1 | identical |
+| Fairphone 3.A.0033 — oldest Android 10 | 1 + 1 | identical |
+| Fairphone 2.A.0118 — newest Android 9 | 7 + 2 | 26 nodes / 40 props |
 | **Ubuntu Touch's own kernel** ([`UT/kernel-dt/`](UT/kernel-dt/)) | **0 + 0** | **3 nodes / 9 props — bootloader only** |
 
-Every Android 10 release gives the *same* delta, so the delta does not date the
-tree; going back to Android 9 makes it worse (it moves the audio amplifier to a
-`tas2557`, drops `sar_sensor`, changes the ADSP nodes). The perfect match is the
-Ubuntu Touch kernel itself, and its sources say why:
+Two things follow. First, **the residual difference does not date the tree**:
+every Android 10 release, three years apart, produces the *same* delta, so it
+cannot be used to pick one. (Going back to Android 9 does change the picture,
+for the worse — a `tas2557` amplifier, no `sar_sensor`, different ADSP nodes.)
+
+Second, the tree the phone runs is not a Fairphone release at all: it is the
+**DTB built into the Ubuntu Touch kernel**, which matches perfectly. Its sources
+show the two edits exactly:
 
 ```
 arch/arm64/boot/dts/qcom/msm8953.dtsi
@@ -55,11 +64,15 @@ arch/arm64/boot/dts/qcom/msm8953.dtsi
 	//[TracyChui] Add product image and mount partition        ← Fairphone's block, commented out
 ```
 
-So the phone boots the **DTB appended to the Ubuntu Touch kernel**, which is
-Fairphone's Android 10 tree with those two edits — not the blob in the device's
-`dtbo` partition, and not any stock release verbatim.
+So: Ubuntu Touch carries Fairphone's **Android 10** tree with those two changes.
+Within Android 10 the sources are identical as far as this device is concerned,
+which is why no single release stands out — and 3.A.0136, the newest, is
+therefore the right one to keep here as the reference.
 
-## Which of Fairphone's files is this phone
+## Which `.dts` file inside Fairphone's sources describes the FP3
+
+A different question from the one above: not *which release*, but *which file*
+in the ~938-file `arch/arm64/boot/dts/qcom/` directory of any given release.
 
 Not obvious. The live tree says `compatible = "qcom,sdm450"`, but `qcom,msm-id =
 <0x15d>` is **349 = SDM632**. The match is `sdm632-mtp-s3.dts`:

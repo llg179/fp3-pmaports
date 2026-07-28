@@ -695,7 +695,7 @@ be taken on trust:
 | [`before_update/`](docs/device_tree/before_update/) → [`after_update/`](docs/device_tree/after_update/) | the two files we modify, in both states — `diff` them for our exact delta |
 | [`downstream/UT/`](docs/device_tree/downstream/UT/) | the 4.9 downstream tree as it **runs**, dumped off the phone under Ubuntu Touch |
 | [`downstream/UT/kernel-dt/`](docs/device_tree/downstream/UT/kernel-dt/) | the sources that dump was built from — the UBports FP3 kernel's device tree |
-| [`downstream/fairphone/3.A.0136/`](docs/device_tree/downstream/fairphone/3.A.0136/) | the same tree as the vendor, **Fairphone** (fairphone.com), publishes it — their official GPL release |
+| [`downstream/fairphone/3.A.0136/`](docs/device_tree/downstream/fairphone/3.A.0136/) | the same tree as the vendor, **Fairphone**, publishes it — from their [GPL release page](https://code.fairphone.com/projects/fairphone-3/gpl.html) |
 
 [`docs/device_tree/downstream/README.md`](docs/device_tree/downstream/README.md)
 compares these node by node: they are the same tree (1804 nodes each, five

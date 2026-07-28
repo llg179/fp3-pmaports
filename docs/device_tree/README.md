@@ -5,7 +5,7 @@
 | `before_update/` | the **upstream mainline** files exactly as the base ships them — what we had to touch |
 | `after_update/` | the same files on `integration/<base>`, with our changes applied |
 | `downstream/UT/` | the **live** device tree dumped off the phone running Ubuntu Touch (kernel 4.9) — the resolved tree, ground truth for values, plus in `kernel-dt/` the sources it was built from |
-| `downstream/fairphone/3.A.0136/` | the sources published by the **vendor, Fairphone** (fairphone.com), from their official GPL release of Fairphone OS 3.A.0136 |
+| `downstream/fairphone/3.A.0136/` | the sources published by the **vendor, Fairphone**, from their official GPL release of Fairphone OS 3.A.0136 — <https://code.fairphone.com/projects/fairphone-3/gpl.html> |
 
 The first two are the change itself. Those under `downstream/` are where the
 content of the nodes we **add** came from — they have nothing to do with
