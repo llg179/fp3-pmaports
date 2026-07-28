@@ -7,13 +7,19 @@ trust.
 
 | directory | contents | what it is | its README |
 |---|---|---|---|
-| [`before_update/`](before_update/) | 2 files | the **upstream mainline** files exactly as the base ships them — what we had to touch | *(this page,* [below](#before--after)*)* |
-| [`after_update/`](after_update/) | 2 files | the same two files on `integration/<base>`, with our changes applied | *(idem)* |
+| [`before_update/`](before_update/) | [`sdm632-fairphone-fp3.dts`](before_update/sdm632-fairphone-fp3.dts) · [`pmi632.dtsi`](before_update/pmi632.dtsi) | the **upstream mainline** files exactly as the base ships them — what we had to touch | *(this page,* [below](#before--after)*)* |
+| [`after_update/`](after_update/) | [`sdm632-fairphone-fp3.dts`](after_update/sdm632-fairphone-fp3.dts) · [`pmi632.dtsi`](after_update/pmi632.dtsi) | the same two files on `integration/<base>`, with our changes applied | *(idem)* |
 | [`downstream/`](downstream/) | — | the Android-era 4.9 tree, in the two forms below; where the values in the nodes we **add** come from | [README](downstream/README.md) — **compares the two**, and answers which Fairphone release the running tree is closest to |
-| &nbsp;&nbsp;└ [`downstream/UT/`](downstream/UT/) | `fp3-ubuntu-touch-live.dts` | the tree **as it runs**: dumped off the phone under Ubuntu Touch, fully resolved — ground truth for values | [README](downstream/UT/README.md) |
-| &nbsp;&nbsp;&nbsp;&nbsp;└ [`downstream/UT/kernel-dt/`](downstream/UT/kernel-dt/) | `arch/arm64/boot/dts/qcom/` + `include/dt-bindings/` | the **sources that dump was built from** — the UBports FP3 kernel's device tree; the only tree that reproduces the live one exactly | [README](downstream/UT/kernel-dt/README.md) |
+| &nbsp;&nbsp;└ [`downstream/UT/`](downstream/UT/) | [`fp3-ubuntu-touch-live.dts`](downstream/UT/fp3-ubuntu-touch-live.dts) | the tree **as it runs**: dumped off the phone under Ubuntu Touch, fully resolved — ground truth for values | [README](downstream/UT/README.md) |
+| &nbsp;&nbsp;&nbsp;&nbsp;└ [`downstream/UT/kernel-dt/`](downstream/UT/kernel-dt/) | board file [`sdm632-mtp-s3.dts`](downstream/UT/kernel-dt/arch/arm64/boot/dts/qcom/sdm632-mtp-s3.dts) in [`…/dts/qcom/`](downstream/UT/kernel-dt/arch/arm64/boot/dts/qcom/) (938 files) + [`include/dt-bindings/`](downstream/UT/kernel-dt/include/dt-bindings/) | the **sources that dump was built from** — the UBports FP3 kernel's device tree; the only tree that reproduces the live one exactly | [README](downstream/UT/kernel-dt/README.md) |
 | &nbsp;&nbsp;└ [`downstream/fairphone/`](downstream/fairphone/) | one directory per release | the vendor's own sources, **Fairphone** (<https://code.fairphone.com/projects/fairphone-3/gpl.html>) | — |
-| &nbsp;&nbsp;&nbsp;&nbsp;└ [`downstream/fairphone/3.A.0136/`](downstream/fairphone/3.A.0136/) | `arch/arm64/boot/dts/qcom/` + `include/dt-bindings/` | the GPL sources of Fairphone OS **3.A.0136**, the last build for this phone | [README](downstream/fairphone/3.A.0136/README.md) |
+| &nbsp;&nbsp;&nbsp;&nbsp;└ [`downstream/fairphone/3.A.0136/`](downstream/fairphone/3.A.0136/) | board file [`sdm632-mtp-s3.dts`](downstream/fairphone/3.A.0136/arch/arm64/boot/dts/qcom/sdm632-mtp-s3.dts) in [`…/dts/qcom/`](downstream/fairphone/3.A.0136/arch/arm64/boot/dts/qcom/) (938 files) + [`include/dt-bindings/`](downstream/fairphone/3.A.0136/include/dt-bindings/) | the GPL sources of Fairphone OS **3.A.0136**, the last build for this phone | [README](downstream/fairphone/3.A.0136/README.md) |
+
+In both source trees the phone is Qualcomm's `sdm632-mtp-s3` reference board;
+that board file pulls in `sdm632.dtsi` → `msm8953.dtsi` and the
+`sdm450-pmi632*` files from the same directory. Which file it is, and the
+same-named SDM450 near-miss to avoid, is explained in
+[`downstream/README.md`](downstream/README.md).
 
 `before_update` → `after_update` is the change itself. Everything under
 `downstream/` is reference material and has nothing to do with `before_update`,
