@@ -15,13 +15,13 @@ branch `ubuntutouch`, at the state cloned for this port:
 
 | | |
 |---|---|
-| DT comes from | `12d9b944cd41fd5399b833f0d5fc1e2c083020ba` (Lukas, 2023-11-30) — the branch tip when the shallow clone was made |
-| local HEAD | `f81cdb87f418621f0df0f4a0aa8a5c65bfa29bb2`, our SLIMbus-framer debug commit on top; it does **not** touch the device tree |
+| DT comes from | [`12d9b944cd41fd5399b833f0d5fc1e2c083020ba`](https://gitlab.com/ubports/porting/community-ports/android10/fairphone/android_kernel_fairphone_sdm632/-/commit/12d9b944cd41fd5399b833f0d5fc1e2c083020ba) (Lukas, 2023-11-30) — the branch tip when the shallow clone was made |
+| local HEAD | `f81cdb87f418621f0df0f4a0aa8a5c65bfa29bb2` — our SLIMbus-framer debug commit on top, local only (never pushed, so it has no link); it does **not** touch the device tree |
 | kernel | 4.9.218, `lineageos_FP3_defconfig` (LineageOS-derived, Android 10 era) |
 
 Licence: GPL-2.0, as the kernel it is part of.
 
-⚠️ Re-fetching `origin/ubuntutouch` today yields `6d508b49` (2021-08-05), whose
+⚠️ Re-fetching `origin/ubuntutouch` today yields [`6d508b49`](https://gitlab.com/ubports/porting/community-ports/android10/fairphone/android_kernel_fairphone_sdm632/-/commit/6d508b49475678dbafcd106504c65ff2b8e7dc4f) (2021-08-05), whose
 device tree is **older and does not match this device** — it compares like the
 Android 9 Fairphone tree (7 extra nodes live, 25 nodes with property differences:
 `tas2557` amplifier, `sar_sensor`, different ADSP nodes). If you re-clone, check
@@ -29,7 +29,7 @@ against the live dump before trusting it.
 
 ### `ubuntutouch` vs `master` in that repo
 
-`master` is the untouched vendor import — `33e4fcc0f` *"Import
+`master` is the untouched vendor import — [`33e4fcc0f`](https://gitlab.com/ubports/porting/community-ports/android10/fairphone/android_kernel_fairphone_sdm632/-/commit/33e4fcc0f650b8d1bb75539a05561fedc237e267) *"Import
 FP3-REL-2.A.0110-20200109.202458"* (Luca Weiss, 2020-02-20), i.e. Fairphone's
 Android 9 sources. `ubuntutouch` is the porting branch on top of it.
 

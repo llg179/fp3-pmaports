@@ -693,7 +693,7 @@ compares the tree the phone runs against Fairphone's published sources.
 
 The short version: the board `.dtb` comes from five files, we touch **two** of
 them (`sdm632-fairphone-fp3.dts`, `pmi632.dtsi`, +375/−4 lines in commit
-`ca289613`), and 17 of the 20 upstream commits in the board file are in
+[`ca289613`](https://github.com/llg179/linux/commit/ca2896133002d44daee935ac45a749dab641ef45)), and 17 of the 20 upstream commits in the board file are in
 mainline — the SoC-level `msm8953.dtsi` much less so, which constrains what a
 `submit/<base>/*` series may assume.
 

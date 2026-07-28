@@ -18,13 +18,13 @@ Thirteen files, 3068 insertions:
 
 | file | Δ lines | whose code it is |
 |---|---|---|
-| `sound/soc/codecs/wcd9335.c` (+ `.h`) | +525 / +7 | the WCD9335 codec driver — **Srinivas Kandagatla** (Linaro), `20aedafdf492` *"ASoC: wcd9335: add support to wcd9335 codec"*, 2019-01-28 |
-| `sound/soc/qcom/apq8016_sbc.c` | +140 | the msm8916 machine driver — **Srinivas Kandagatla**, `bdb052e81f62` *"ASoC: qcom: add apq8016 sound card support"*, 2015-06-10 |
+| `sound/soc/codecs/wcd9335.c` (+ `.h`) | +525 / +7 | the WCD9335 codec driver — **Srinivas Kandagatla** (Linaro), [`20aedafdf492`](https://github.com/torvalds/linux/commit/20aedafdf4926e7a957f8b302a18c8fb75c7e332) *"ASoC: wcd9335: add support to wcd9335 codec"*, 2019-01-28 |
+| `sound/soc/qcom/apq8016_sbc.c` | +140 | the msm8916 machine driver — **Srinivas Kandagatla**, [`bdb052e81f62`](https://github.com/torvalds/linux/commit/bdb052e81f6236b4febb50ed74f79f770fa82cc5) *"ASoC: qcom: add apq8016 sound card support"*, 2015-06-10 |
 | `sound/soc/qcom/qdsp6/q6voice-dai.c` | +19 | the Q6 Voice DAI — **not in Linus' tree**: **Stephan Gerhold** (2020-04-28), extended by **Vincent Knecht** (voice port controls, 2021) and **Otto Pflüger** (VoiceMMode1, 2023); carried by msm8953-mainline |
-| `sound/soc/qcom/qdsp6/q6afe.c` | +35 | the AFE driver — **Srinivas Kandagatla**, `7fa2d70f9766` *"ASoC: qdsp6: q6afe: Add q6afe driver"*, 2018-05-18 |
-| `drivers/slimbus/qcom-ngd-ctrl.c` | +33 | the SLIMbus NGD controller — **Srinivas Kandagatla**, `917809e2280b`, 2018-06-19 |
-| `drivers/remoteproc/qcom_q6v5_pas.c` | +41 | the Hexagon PAS driver — **Bjorn Andersson**, `9e004f97161d`, 2018-09-24; today mostly Sibi Sankar, Bjorn Andersson and Luca Weiss |
-| `drivers/power/supply/qcom_smbx.c` | +363 | the SMB2 charger driver — **Casey Connolly** (Linaro); the file under this name since `5ec53bcc7fce`, 2025-06-19 |
+| `sound/soc/qcom/qdsp6/q6afe.c` | +35 | the AFE driver — **Srinivas Kandagatla**, [`7fa2d70f9766`](https://github.com/torvalds/linux/commit/7fa2d70f976657111a5ea4f3d16a738ddaa10c4f) *"ASoC: qdsp6: q6afe: Add q6afe driver"*, 2018-05-18 |
+| `drivers/slimbus/qcom-ngd-ctrl.c` | +33 | the SLIMbus NGD controller — **Srinivas Kandagatla**, [`917809e2280b`](https://github.com/torvalds/linux/commit/917809e2280bb83994be8b642373fd941d40c407), 2018-06-19 |
+| `drivers/remoteproc/qcom_q6v5_pas.c` | +41 | the Hexagon PAS driver — **Bjorn Andersson**, [`9e004f97161d`](https://github.com/torvalds/linux/commit/9e004f97161d637d2dc82299be494bcfd07043bb), 2018-09-24; today mostly Sibi Sankar, Bjorn Andersson and Luca Weiss |
+| `drivers/power/supply/qcom_smbx.c` | +363 | the SMB2 charger driver — **Casey Connolly** (Linaro); the file under this name since [`5ec53bcc7fce`](https://github.com/torvalds/linux/commit/5ec53bcc7fce6801977a0c125fb726d7b0e9102c), 2025-06-19 |
 | `drivers/media/i2c/imx363.c` (+ `Kconfig`, `Makefile`) | +1568 | **new file**, but not from nothing — it keeps `Copyright (C) 2018 Intel Corporation` from the Intel IMX3xx sensor driver it is structured on |
 
 ## Audio: the WCD9335 codec
@@ -35,27 +35,27 @@ worked on any of them.
 
 | commit | what it does | where it comes from |
 |---|---|---|
-| `6f866f84b367` | fix codec init: select the efuse sense state before enabling sensing, set `MCLK_CFG` bit 2 | **new** — found by comparing against the downstream Qualcomm sequence |
-| `44fbfd904873` | release the TX front-end hold after the ADC is up | **new** — `wcd9335_codec_enable_adc()` takes the hold and mainline never releases it, so the decimator returns exact zero. Nobody had noticed because nobody had captured audio on this codec in mainline |
-| `7c02495a3d85` | take mic-bias voltage and DMIC clock rate from the DT | the property names follow the existing WCD9335 binding; the FP3's values come from Fairphone's downstream `msm8953-audio.dtsi` |
-| `b07de6e52440` | MBHC headset jack detection | **revived from the 2018 MBHC series that was never merged** into mainline, adapted to this codec's measured behaviour (the insert/remove direction is a software toggle here, because `MECH_DETECT_TYPE` reads back unreliably) |
-| `2dfecc09f40c` | debounce the MBHC button reports | **new** — measured on the phone: an unplug trips the button comparator 84 ms before mechanical detection notices, so unplugging headphones started the media player |
-| `d7bab8e0e4fe` | expose the `DEC0..DEC8` capture gains | **new** — the registers exist and mirror the RX ones exactly; the driver simply never exposed them, so capture level could not be set at all |
+| [`6f866f84b367`](https://github.com/llg179/linux/commit/6f866f84b36778c72031daec9af588495da6237d) | fix codec init: select the efuse sense state before enabling sensing, set `MCLK_CFG` bit 2 | **new** — found by comparing against the downstream Qualcomm sequence |
+| [`44fbfd904873`](https://github.com/llg179/linux/commit/44fbfd90487329988f8577dd19f2789384e8ee01) | release the TX front-end hold after the ADC is up | **new** — `wcd9335_codec_enable_adc()` takes the hold and mainline never releases it, so the decimator returns exact zero. Nobody had noticed because nobody had captured audio on this codec in mainline |
+| [`7c02495a3d85`](https://github.com/llg179/linux/commit/7c02495a3d85dc98ebc1b1d2986a5e2c32d501aa) | take mic-bias voltage and DMIC clock rate from the DT | the property names follow the existing WCD9335 binding; the FP3's values come from Fairphone's downstream `msm8953-audio.dtsi` |
+| [`b07de6e52440`](https://github.com/llg179/linux/commit/b07de6e5244050318b4c20e99fe5e957e9a44f80) | MBHC headset jack detection | **revived from the 2018 MBHC series that was never merged** into mainline, adapted to this codec's measured behaviour (the insert/remove direction is a software toggle here, because `MECH_DETECT_TYPE` reads back unreliably) |
+| [`2dfecc09f40c`](https://github.com/llg179/linux/commit/2dfecc09f40cabe61da33a13ca95564ba8f6010e) | debounce the MBHC button reports | **new** — measured on the phone: an unplug trips the button comparator 84 ms before mechanical detection notices, so unplugging headphones started the media player |
+| [`d7bab8e0e4fe`](https://github.com/llg179/linux/commit/d7bab8e0e4fe97c6efba783e42f6e95d0fc772cc) | expose the `DEC0..DEC8` capture gains | **new** — the registers exist and mirror the RX ones exactly; the driver simply never exposed them, so capture level could not be set at all |
 
 ## Audio: the machine driver
 
-`09631218808a` on `sound/soc/qcom/apq8016_sbc.c` adds a SLIMbus backend, the FP3
+[`09631218808a`](https://github.com/llg179/linux/commit/09631218808a257ad75d7feac3eca519d6e3896e) on `sound/soc/qcom/apq8016_sbc.c` adds a SLIMbus backend, the FP3
 WCD9335 card definition and the digital-microphone DAPM widgets. The SLIMbus
 backend follows how the existing WCD9335 machine drivers wire the codec; the card
 itself is FP3-specific and **new**.
 
 ## Audio: the Q6 DSP side
 
-* `80dad2404f46` — `q6voice-dai.c`: wire the VoiceMMode1 / CS-Voice mixers to
+* [`80dad2404f46`](https://github.com/llg179/linux/commit/80dad2404f4661188ed90c496e6118ddea5a7296) — `q6voice-dai.c`: wire the VoiceMMode1 / CS-Voice mixers to
   `SLIMBUS_0_RX/TX`, including the mixer → port output route. **New**, and it
   goes on top of a driver that is itself not upstream (Gerhold / Knecht /
   Pflüger, above). Without it a call could only use the MI2S speaker path.
-* `114c2f0a7300` + `3221652e7fed` — `q6afe.c`: treat `ADSP_EALREADY` on
+* [`114c2f0a7300`](https://github.com/llg179/linux/commit/114c2f0a73001f0597965650f64d7ea0b4fa54af) + [`3221652e7fed`](https://github.com/llg179/linux/commit/3221652e7fed39fb555a351b31337d55787dc865) — `q6afe.c`: treat `ADSP_EALREADY` on
   `AFE_PORT_CMD_DEVICE_START` as success. **New**, and not FP3-specific: any two
   front ends sharing one backend hit it. Here a call and a media stream both use
   `SLIMBUS_0_RX`, the ADSP answers `ADSP_EALREADY`, and the driver turned that
@@ -64,11 +64,11 @@ itself is FP3-specific and **new**.
 
 ## The QDSP6SS SLIMbus framer pair
 
-* `6cd150e75fb7` — `qcom_q6v5_pas.c`: a msm8953 ADSP descriptor
+* [`6cd150e75fb7`](https://github.com/llg179/linux/commit/6cd150e75fb7f8d93cbc0f1fe6ca9cc23c33171e) — `qcom_q6v5_pas.c`: a msm8953 ADSP descriptor
   (`qcom,msm8953-adsp-pil`) that clears QDSP6SS `0x0c20002c` bit 3 after
   `AUTH_AND_RESET`, which the downstream PIL path does and the mainline PAS path
   does not.
-* `36c939972197` — `qcom-ngd-ctrl.c`: clear the same bit again immediately
+* [`36c939972197`](https://github.com/llg179/linux/commit/36c939972197288de5b5e690fd8740d8a8b9eb90) — `qcom-ngd-ctrl.c`: clear the same bit again immediately
   before the capability exchange, since the ADSP re-sets it during its own init.
 
 Both are **new**, and the starting point was a 2025 LKML thread on the same
@@ -94,7 +94,7 @@ substance, with two acknowledgements:
 
 ## Charger: `qcom_smbx.c`
 
-`50e36a502e28` adds SMB5 (PMI632) support to Casey Connolly's SMB2 driver. The
+[`50e36a502e28`](https://github.com/llg179/linux/commit/50e36a502e28ae8726ca70dadf83ac8806d082fe) adds SMB5 (PMI632) support to Casey Connolly's SMB2 driver. The
 differences are described in the variant structure rather than open-coded: the
 status register prefix (MISC `0x600` on SMB2, DCDC `0x100` on SMB5), the current
 step (25 mA vs 50 mA), the charge-status bit positions, and the JEITA status
