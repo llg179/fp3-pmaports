@@ -7,11 +7,16 @@ what was believed, what was measured, and what that forced us to conclude —
 including the three places where the belief was wrong. Every capture and every
 tool it refers to is checked in here, so nothing has to be taken on trust.
 
-**Status (2026-07-28): not working yet, and a large part of what follows has just
-been invalidated.** See [the correction](#correction-2026-07-28--every-publish-in-steps-48-was-a-bye)
-first: the control code used to publish a QMI service was wrong throughout steps
-4–8, so those runs announced a *node death* rather than a service. The findings
-that survive and the ones that must be re-measured are listed there.
+**Status (2026-07-28): the Sensor Manager is up.** After a one-line fix to a
+QRTR control constant, the registry server works, the SSC reads it, and
+`256 / v1 / instance 50` registers on node 5 across every boot — the thing this
+page spent nine steps saying never happens. There is still **no sensor reading**:
+the kernel IIO driver is not ported yet, so proximity blanking does not work.
+See [step 9](#step-9--the-gate-opens-the-sensor-manager-registers).
+
+⚠️ Read [the correction](#correction-2026-07-28--every-publish-in-steps-48-was-a-bye)
+before trusting steps 4–8: the control code used to publish a QMI service was
+wrong throughout, so those runs announced a *node death* rather than a service.
 
 | path | what it is |
 |---|---|
@@ -380,21 +385,77 @@ It is not. The oracle's service table has **no servreg locator either** (service
 the working system does not use that path. Hypothesis closed in one offline check
 against data already on disk.
 
-## Step 9 — what is still missing
+## Step 9 — the gate opens: the Sensor Manager registers
 
-* **Not one registry request has been served** — now with a known cause: nothing
-  was ever published (see [the correction](#correction-2026-07-28--every-publish-in-steps-48-was-a-bye)).
-  The server's response path is written but **unexercised**, and the group map and
-  registry values are untested. This is still the gate everything else is behind,
-  but it is the first thing that has a plausible chance of opening.
-* **"Sensor Manager never registers" is unproven.** It rested on service
-  enumerations taken while nothing of ours was registered, and partly on a
-  lookup tool that was itself using wrong codes. Re-run
-  [`tools/qrtrls.py`](tools/qrtrls.py) after a real publish before believing it.
-* **The clean init (`L1206 [1]`, 31 drivers up) has to be reproduced** with real
-  `NEW_SERVER` traffic. It may well hold; it is simply not evidence yet.
-* **The kernel drivers are not ported** — `msm8996-staging-smgr` has to be rebased
-  onto our 7.1.3 base.
+Fixing the control code changed everything within the hour. With a **real**
+`NEW_SERVER`, the name service accepts the registration —
+
+```
+  1       271 0x010f    2     0  0x4018  SNS_REG
+```
+
+— and the SSC starts reading the registry **immediately, with no SSR at all**.
+The requests arrived before the planned ADSP restart even ran, which settles the
+ordering question: the sensor task had been parked waiting since boot, and a
+genuine publish satisfies it. Everything about "edge-triggered, once per ADSP
+boot" belonged to the BYE, not to this.
+
+**1624 groups served in 90 s** — the first registry traffic in the whole
+investigation. But the init still did not finish: three groups came back
+forever.
+
+```
+43 × group 20      43 × group 2691      43 × group 3050
+```
+
+Those three are in **neither** of upstream's maps: not in the key map, and not
+in the `group_map[]` binary map that gives a group's offset and size inside
+`sns.reg`. Upstream answers `QMI_RESULT_FAILURE` for an unmapped group, and on
+this phone that deadlocks the SSC: it re-requests and never proceeds. So an FP3
+needs groups an msm8996 never had.
+
+Rather than guess three offsets into a 25 KB blob, the cheapest experiment was
+to answer **SUCCESS with a zero payload** (`snsregd.py`'s `ZEROFILL`, argv[3]) and
+watch whether the retries stopped. They did — and the sensor framework came up:
+
+| | before | after |
+|---|---|---|
+| QRTR services total | 49 | **74** |
+| services on node 5 (SSC) | 6 | **32** |
+| `256 / v1 / instance 50` | absent | **present, port 0x000a** |
+
+That is exactly the Sensor Manager registration this page spent nine steps
+saying never happens. It answers real QMI too — an empty request returns a
+proper response, not an echo:
+
+```
+msg 0x0004 <- (5, 10): 02 0100 0400 0700  02 0400 0100 1100
+                       ^RESPONSE          ^result=1 err=0x11 (MISSING_ARG)
+```
+
+`MISSING_ARG` is the correct complaint about an argument-less request. The
+service is alive.
+
+It survives a cold boot: with `snsregd` installed as a systemd unit, 32 sensor
+services and the Sensor Manager are up on every boot with no manual step.
+
+> **Lesson.** The deadlock was not in the protocol we had reverse-engineered but
+> in the *failure* path of it. Upstream's `FAILURE` answer is correct on the
+> hardware upstream has; here it is a hang. When a correct implementation stalls,
+> look at what it does when it does not know something.
+
+### What is still missing
+
+* **Groups 20, 2691 and 3050 are zero-filled, not real.** The stack initialises,
+  but whatever those groups configure is wrong. They need their real offsets in
+  `sns.reg`, or their key lists.
+* **No IIO driver yet.** The Sensor Manager is reachable, but nothing in the
+  kernel talks to it — `msm8996-staging-smgr` still has to be rebased onto our
+  7.1.3 base. Until then there is no `/sys/bus/iio` device and no proximity
+  blanking.
+* **`snsregd.py` is still the Python stand-in** for upstream's C `sns-reg`,
+  which should be packaged as an aport.
+* **No sensor has produced a reading yet.** Registration is not data.
 
 ## Will this bring up *all* the sensors?
 
@@ -442,6 +503,9 @@ fine, `ProximityNear` never flips, the screen never blanks.
 | [`tools/snsreg.py`](tools/snsreg.py) | publishes a list of QMI services over QRTR, **one socket per service**, dumping everything that arrives |
 | [`tools/snsregd.py`](tools/snsregd.py) | the Sensor Registry server |
 | [`tools/qmiprobe.py`](tools/qmiprobe.py) | sends empty QMI requests to a `node:port` and prints replies |
+| [`tools/qrtrconst.py`](tools/qrtrconst.py) | the QRTR control codes, transcribed from the kernel uapi header. **Import these; do not retype them** — see [the correction](#correction-2026-07-28--every-publish-in-steps-48-was-a-bye) |
+| [`tools/qrtrls.py`](tools/qrtrls.py) | enumerates every QMI service the name service knows, by node. The one command that shows whether the sensor stack is up |
+| [`tools/snsregd.service`](tools/snsregd.service) | systemd unit that keeps the registry server running from boot |
 
 ### Traps worth knowing before touching any of this
 
@@ -482,11 +546,11 @@ work, so the net below was built. What each layer does, and what it does *not*:
 | layer | catches | does not catch |
 |---|---|---|
 | `systemd-run --on-active=N --unit=deadman systemctl reboot`, cancelled with `systemctl stop deadman` | a wedge on a **running** system | anything before systemd — it never gets armed |
-| `panic=10` on the cmdline | a kernel **panic** | a hang. Measured: with `panic=10` active the phone still sat there, which is how we know these are hangs, not panics |
-| ramoops (`ramoops@8ee00000`) | nothing by itself — it *records* | it only pays off on the next boot, and needs the DT node to exist |
+| `panic=10` on the cmdline | a kernel **panic** (measured: 69 s, then 40 s, unattended) | a hang. With `panic=10` active the phone still sat there, which is how we know these are hangs, not panics |
 | SoC watchdog + `CONFIG_WATCHDOG_OPEN_TIMEOUT` | **a hung boot** | nothing else does |
+| ~~ramoops~~ | **nothing on this device** — see below | — |
 
-The last one is the only real fix. Mainline never described the FP3's watchdog,
+The watchdog is the only real fix. Mainline never described the FP3's watchdog,
 so the kernel config had `# CONFIG_WATCHDOG is not set` and the SoC watchdog was
 simply not there. The pieces:
 
@@ -496,15 +560,46 @@ simply not there. The pieces:
   the clock; the interrupt is optional.
 * **config**: `CONFIG_WATCHDOG=y`, `CONFIG_WATCHDOG_CORE=y`, `CONFIG_QCOM_WDT=y`,
   `CONFIG_WATCHDOG_HANDLE_BOOT_ENABLED=y`, **`CONFIG_WATCHDOG_OPEN_TIMEOUT=300`**.
-* **userspace**: `RuntimeWatchdogSec=60` in `/etc/systemd/system.conf.d/`, so a
+* **userspace**: `RuntimeWatchdogSec=20` in `/etc/systemd/system.conf.d/`, so a
   healthy boot takes ownership and the watchdog never bites in normal use.
 
-`OPEN_TIMEOUT` is the load-bearing part: if nothing opens `/dev/watchdog` within
-300 s, the core stops petting and the SoC resets itself. And the failure mode of
-the safety net is itself safe — if systemd somehow never takes over, the phone
-resets every 300 s, each reset decrements the A/B retry counter, and the
-bootloader eventually falls back to the Ubuntu Touch slot, which is reachable
-over wifi. Worst case still recovers without hands.
+**☠️ Two ways this net silently was not a net.** Both were found the hard way,
+by a hang that it failed to recover:
+
+1. **`RuntimeWatchdogSec=60` exceeds the hardware maximum.** systemd logs
+   `Failed to set watchdog hardware timeout to 1min: Invalid argument` and leaves
+   the watchdog **inactive**. 20 s arms it. Always check
+   `/sys/class/watchdog/watchdog0/state`, never assume.
+2. **`qcom_wdt` only marks the watchdog running if the *bootloader* left it
+   running** — it sets `WDOG_HW_RUNNING` inside `if (qcom_wdt_is_running())` and
+   does nothing otherwise. The FP3 bootloader leaves it disabled, so the core
+   never armed the open deadline and there was **no watchdog at all between
+   kernel start and systemd's open** — precisely the window an early hang falls
+   into. A phone that hung there sat for over ten minutes and needed a button.
+
+   The fix is a `qcom,start-at-probe` property and a small driver change that
+   starts the watchdog when the bootloader did not:
+
+   ```
+   [    0.176047] qcom_wdt b017000.watchdog: started at probe (bootloader left it disabled)
+   ```
+
+   With that, `OPEN_TIMEOUT=300` covers the whole boot. The failure mode is
+   itself safe: if systemd never takes over, the phone resets every 300 s, each
+   reset decrements the A/B retry counter, and the bootloader eventually falls
+   back to the Ubuntu Touch slot, which is reachable over wifi.
+
+**ramoops does not work on this device — do not rely on it.** It was tried at
+`0x8ee00000` and at `0xd0000000`; pstore registers and the console attaches
+(`printk: legacy console [ramoops-1] enabled`), but **nothing survives**: not a
+pmsg marker across a clean reboot, and not a `dmesg-ramoops` record after a real
+`echo c > /proc/sysrq-trigger` panic. `/sys/fs/pstore/` is empty every time. Two
+addresses on opposite sides of DRAM behaving identically points at the boot chain
+losing RAM across reset, not at placement. The node was removed rather than left
+to cost 2 MB and imply a post-mortem capability that is not there. **So after a
+hang there is currently no way to read *why*** — only the watchdog's
+`bootstatus` bit says *that* it was a watchdog reset. Real post-mortem on this
+hardware needs the UART.
 
 **☠️ Deploy order.** `apk add linux-fp3` **overwrites `/boot/*.dtb`** with the
 package's copy and **regenerates `extlinux.conf`**, so the DT nodes and `panic=10`
@@ -557,9 +652,13 @@ not checked in for size; it lives in the working directory
 
 ## Next steps
 
-1. Get one real `SNS_REG_GROUP` request served, using the ordering from step 8.
-2. Validate the group map against the FP3 (`sns-reg-validator`); fix what differs.
-3. Confirm Sensor Manager registers on node 5 once the registry is actually served.
-4. Port `msm8996-staging-smgr` onto the 7.1.3 base; package `sns-reg` as an aport,
-   replacing `snsregd.py`.
+1. **Port `msm8996-staging-smgr` onto the 7.1.3 base.** This is now the only
+   thing between a registered Sensor Manager and an actual reading. Everything
+   below it is done.
+2. **Find the real content of groups 20, 2691 and 3050** — their offsets in
+   `sns.reg`, or their key lists. They are zero-filled today, so whatever they
+   configure is wrong even though the stack initialises.
+3. Re-run the step-5 error-layer table with real `NEW_SERVER` traffic, to see
+   which of those layers were ever real.
+4. Package upstream's C `sns-reg` as an aport, replacing `snsregd.py`.
 5. Proximity through `iio-sensor-proxy` → in-call blanking, end to end.

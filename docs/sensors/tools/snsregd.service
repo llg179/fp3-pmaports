@@ -1,0 +1,21 @@
+[Unit]
+Description=Qualcomm Sensor Registry server (SNS_REG) for the FP3
+Documentation=https://github.com/llg179/fp3-pmaports/tree/main/docs/sensors
+# The SSC waits for this service indefinitely, so there is nothing to race and
+# nothing to order against: it may start at any point after the ADSP is up.
+# Deliberately NOT ordered before basic.target -- a boot-armed unit that blocks
+# there hangs the boot.
+After=multi-user.target
+
+[Service]
+Type=simple
+# argv[3] is the zero-fill length for groups this phone asks for that are in
+# neither upstream map (20, 2691, 3050 and others). Answering FAILURE for them,
+# which is what upstream sns-reg does, deadlocks the SSC's init: it re-requests
+# them forever and the Sensor Manager never registers.
+ExecStart=/usr/local/bin/snsregd.py /etc/sns-reg.d/registry.conf /etc/sns-reg.d/groups.txt 0x100
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

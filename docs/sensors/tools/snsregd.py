@@ -35,6 +35,10 @@ SNS_REG_GROUP_MSG_ID = 0x0004
 QMI_RESULT_SUCCESS = 0
 QMI_RESULT_FAILURE = 1
 
+# Length of the zero payload used for groups we have no map for; None keeps
+# upstream's FAILURE behaviour.  Set from argv[3].
+ZEROFILL = None
+
 
 def load_registry(path):
     reg = {}
@@ -79,8 +83,11 @@ def build_group_data(keys, reg):
 
 
 def main():
+    global ZEROFILL
     regpath = sys.argv[1] if len(sys.argv) > 1 else '/etc/sns-reg.d/registry.conf'
     grppath = sys.argv[2] if len(sys.argv) > 2 else '/etc/sns-reg.d/groups.txt'
+    if len(sys.argv) > 3:
+        ZEROFILL = int(sys.argv[3], 0)
     reg = load_registry(regpath)
     groups = load_groups(grppath)
     sys.stderr.write('registry: %d keys, %d groups\n' % (len(reg), len(groups)))
@@ -96,6 +103,7 @@ def main():
                      % (SERVICE, VERSION, INSTANCE, node, port))
 
     served = miss = 0
+    warned = set()
     try:
         while True:
             data, addr = s.recvfrom(65536)
@@ -111,10 +119,31 @@ def main():
 
             keys = groups.get(gid)
             if keys is None:
-                served_data = b''
-                result = QMI_RESULT_FAILURE
-                miss += 1
-                sys.stderr.write('group %d UNMAPPED\n' % gid)
+                # Upstream sns-reg answers FAILURE here, and on the FP3 that
+                # deadlocks: the SSC re-requests groups 20, 2691 and 3050
+                # forever (43 times each in 90 s) and its init never proceeds.
+                # Those three are in neither upstream's key map nor its binary
+                # map, so this phone needs groups msm8996 never had.
+                #
+                # ZEROFILL is the experiment that costs nothing while we are
+                # already stuck: answer SUCCESS with a zero payload of a guessed
+                # length and watch whether the retries stop.  Zeroed calibration
+                # cannot damage anything -- no sensor here drives an actuator --
+                # and "the loop stopped" is the cheapest possible evidence that
+                # the size was acceptable.
+                if ZEROFILL is not None:
+                    served_data = b'\x00' * ZEROFILL
+                    result = QMI_RESULT_SUCCESS
+                    miss += 1
+                    if gid not in warned:
+                        warned.add(gid)
+                        sys.stderr.write('group %d UNMAPPED -> zero-filled %d bytes\n'
+                                         % (gid, ZEROFILL))
+                else:
+                    served_data = b''
+                    result = QMI_RESULT_FAILURE
+                    miss += 1
+                    sys.stderr.write('group %d UNMAPPED\n' % gid)
             else:
                 served_data = build_group_data(keys, reg)
                 result = QMI_RESULT_SUCCESS
