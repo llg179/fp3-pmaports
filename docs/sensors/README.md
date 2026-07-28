@@ -7,7 +7,7 @@ what was believed, what was measured, and what that forced us to conclude —
 including the three places where the belief was wrong. Every capture and every
 tool it refers to is checked in here, so nothing has to be taken on trust.
 
-**Status (2026-07-29): the accelerometer reads 1 g.** After a one-line fix to a
+**Status (2026-07-29): the accelerometer reads 1 g; proximity does not stream yet.** After a one-line fix to a
 QRTR control constant, the registry server works, the SSC brings up the real
 hardware, and the ported IIO drivers deliver data:
 
@@ -17,9 +17,13 @@ hardware, and the ported IIO drivers deliver data:
    -0.348    0.425   -9.695   9.710 m/s^2
 ```
 
-That is the first sensor reading on this port. Proximity is the next channel —
-the SSC enumerates it, the driver for it is written but not yet measured. See
-[step 10](#step-10--the-first-reading).
+That is the first sensor reading on this port. Proximity has a driver and an IIO
+device, but its buffering request fails inside the kernel's QMI encoder — see
+[step 10](#step-10--the-first-reading) and
+[step 11](#step-11--proximity-binds-and-then-does-not-stream).
+
+⚠️ **The phone currently needs a power cycle** — a driver oops wedged a kernel
+thread while systemd kept the watchdog fed, so nothing reset it.
 
 ⚠️ Read [the correction](#correction-2026-07-28--every-publish-in-steps-48-was-a-bye)
 before trusting steps 4–8: the control code used to publish a QMI service was
@@ -504,6 +508,16 @@ records from `/dev/iio:device2`: three s32 values, four bytes of padding, then a
 `snsregd` → SSC init → Sensor Manager on QRTR → QRTR bus → SMGR core →
 `smgr_accel` → IIO.
 
+Userspace picks it up without any further work — `iio-sensor-proxy` answers
+
+```
+HasAccelerometer: true    AccelerometerTilt: 'face-down'
+HasProximity:     false   HasAmbientLight:   false
+```
+
+so the layers above IIO were, as [step 0](#step-0--the-question-and-why-it-is-not-a-driver-question)
+claimed, already in place and only ever waiting for a device.
+
 ### What the SSC is actually driving
 
 The boot trace is no longer QShrink-stripped once the registry is served, and it
@@ -520,13 +534,90 @@ names the hardware:
 1233 SENSORS messages on a boot, **zero error lines**. Compare that with the 12
 messages and silence of [step 2](#step-2--the-task-is-not-failing-it-is-waiting).
 
+## Step 11 — proximity binds, and then does not stream
+
+The driver loads and the device appears:
+
+```
+/sys/bus/iio/devices/iio:device2 = qcom-smgr-accel
+/sys/bus/iio/devices/iio:device3 = qcom-smgr-prox-light
+```
+
+with `in_proximity` and `in_illuminance` channels. But enabling its buffer fails:
+
+```
+smgr 5-10: Requesting buffering for sensor 0x28, report rate: 3072000, sample rate: 50
+qmi_encode: Invalid data length
+smgr 5-10: Failed to send buffering request: -22
+smgr 5-10: Buffering request failed: 0x501
+```
+
+Read that carefully — the `0x501` is a red herring. It is the response to the
+*teardown* IIO issues after the enable fails; the actual failure is `-22` from
+**`qmi_encode`, before anything reaches the SSC**.
+
+Two controls pin it down, and both say the SSC is innocent:
+
+* **Hand-built requests work.** [`tools/smgrbuf.py`](tools/smgrbuf.py) sends
+  `SNS_SMGR_BUFFERING` over QRTR with the wire format read off the driver's own
+  `qmi_elem_info`. For sensor 0x28 **all 19 parameter combinations succeed**,
+  including the driver's exact defaults. (The same sweep on the accelerometer
+  returns `result=1 error=5` — i.e. `0x501` — only for `data_type=1`, which is
+  how we know `0x501` means "no such data type on this sensor".)
+* **The accelerometer at the proximity sensor's rate works.** Set
+  `in_accel_sampling_frequency` to 50 and the driver sends
+  `report rate: 3072000, sample rate: 50` — byte-identical numbers to the
+  failing request — and gets `ack_nak 0`.
+
+So the same struct, same rates, same QMI handle, encodes for one sensor and not
+the other. That is not yet explained. The next step is one instrumented build:
+the encoder's `Invalid data length` branch only fires for a `VAR_LEN_ARRAY` whose
+`data_len_value` is zero or exceeds `elem_len`, so printing `data_type`,
+`tlv_type`, `elem_len` and `data_len_value` at that branch names the element
+immediately. That kernel is built and waiting; it could not be flashed because
+the phone needs a power cycle first (see below).
+
+> **Lesson.** The loudest error was not the error. `0x501` had a plausible story
+> attached to it — "proximity is an on-change sensor, buffering is for streaming
+> ones" — and that story would have led to writing a whole second QMI path. The
+> `-22` two lines above it was the real failure, and one userspace probe was
+> enough to show the SSC accepts what the driver is trying to send.
+
+### The oops that the safety net did not catch
+
+Binding a driver to the proximity device by hand hit a NULL dereference in
+`smgr_prox_remove()`: it reads `platform_get_drvdata(pdev)`, which probe never
+set — copied from `smgr_accel.c`, which has the same bug and never trips it
+because nothing unbinds these devices in normal use. Fixed by setting the
+drvdata in probe.
+
+The oops itself was survivable; what followed was not. It left a kernel thread
+wedged, so every later `sysfs` write to that driver blocked, the phone stopped
+answering over USB, and **the watchdog never fired** — because systemd was still
+running and still petting it. That is a real hole in the net described above:
+
+> `panic=10` covers panics and the watchdog covers a *whole-system* stall. Neither
+> covers a partial wedge where userspace keeps running well enough to pet
+> `/dev/watchdog` while the part you care about is dead.
+
+A `WatchdogSec`-style liveness check on something that actually matters — the
+network coming up, say — would close it. Until then, a driver oops on this device
+still costs a power cycle.
+
 ### What is still missing
 
-* **Proximity is written but unmeasured.** `qcom-smgr-prox-light` was enumerated
-  and unbound, because upstream only has an accelerometer driver;
-  `drivers/iio/proximity/smgr_prox.c` here binds it and exposes proximity and
-  light channels. Which of the report's three u32 values is which is an
-  assumption until someone puts a finger over the sensor.
+* **Proximity does not stream yet** — the driver binds, the IIO device exists,
+  and the buffering request fails inside `qmi_encode` for reasons
+  [step 11](#step-11--proximity-binds-and-then-does-not-stream) narrows down but
+  does not settle. One instrumented build should name the element.
+* **Even once it streams, the value mapping is a guess** — which of the report's
+  three u32 values is proximity and which is light needs a finger over the
+  sensor.
+* **The mount matrix is probably wrong.** `smgr_accel.c` carries an msm8996
+  matrix with a `TODO` next to it, and on the FP3 `iio-sensor-proxy` reports
+  `AccelerometerTilt: face-down` for a phone reading `z = -9.69`. Whether that
+  matches the physical orientation needs one deliberate check with the phone
+  held screen-up; if it does not, the matrix needs an FP3 value.
 * **Groups 20, 2691 and 3050 are zero-filled, not real.** The stack initialises,
   but whatever those groups configure is wrong. They need their real offsets in
   `sns.reg`, or their key lists.
@@ -583,6 +674,9 @@ fine, `ProximityNear` never flips, the screen never blanks.
 | [`tools/qrtrconst.py`](tools/qrtrconst.py) | the QRTR control codes, transcribed from the kernel uapi header. **Import these; do not retype them** — see [the correction](#correction-2026-07-28--every-publish-in-steps-48-was-a-bye) |
 | [`tools/qrtrls.py`](tools/qrtrls.py) | enumerates every QMI service the name service knows, by node. The one command that shows whether the sensor stack is up |
 | [`tools/snsregd.service`](tools/snsregd.service) | systemd unit that keeps the registry server running from boot |
+| [`tools/readaccel.py`](tools/readaccel.py) | reads the buffer-only accelerometer and prints m/s² and \|g\| — the physical sanity check that catches a wrong record size |
+| [`tools/readprox.py`](tools/readprox.py) | the same for the proximity/light device |
+| [`tools/smgrbuf.py`](tools/smgrbuf.py) | sends `SNS_SMGR_BUFFERING` by hand and sweeps its parameters, so a question costs a second instead of a 30-minute kernel build |
 
 ### Traps worth knowing before touching any of this
 
@@ -729,8 +823,11 @@ not checked in for size; it lives in the working directory
 
 ## Next steps
 
-1. **Measure proximity.** The driver is in; a finger over the sensor decides
-   whether the value mapping is right.
+0. **Power-cycle the phone** (see the warning at the top), then flash the
+   instrumented kernel that is already built and waiting.
+1. **Name the element `qmi_encode` rejects**, per
+   [step 11](#step-11--proximity-binds-and-then-does-not-stream). Then measure
+   proximity — a finger over the sensor decides the value mapping.
 2. **Proximity through `iio-sensor-proxy` → in-call blanking**, which is the
    original goal and the only step left after 1.
 3. **Find the real content of groups 20, 2691 and 3050** — their offsets in
