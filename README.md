@@ -710,7 +710,7 @@ stay untouched.
 | `9ab813d5191f` adsp+wcnss firmware-name · `d0c38cbe3556` modem · `4ea55ecb4990` display+GPU · `9e834e768d0b` camera fixed regulators · `cfc22c2121cb` CCI + EEPROM | Luca Weiss |
 | `4fd8c23afa2e` **AW8898 amplifier** | Luca Weiss, 2025-04-06 — the `FROMLIST v2` subject prefix says it plainly: **not in mainline yet**, carried by msm8953-mainline |
 | `4335b0ae1eb6` enable speaker | Luca Weiss, 2023-04-18 — builds on the AW8898 node, so it is carried along with it |
-| `60f6f604cf3c` enable venus | Luca Weiss, 2026-05-06 |
+| `60f6f604cf3c` enable venus | Luca Weiss, 2026-05-06 — already present in the 7.0.9 base too, *not* something the 7.1.3 bump brought in |
 | **`ca2896133002`** integrated DT (audio + charger + camera) | **ours**, 2026-07-25 |
 
 ### What our commit adds, and what it was derived from
@@ -729,6 +729,37 @@ per-subsystem split for upstream lives on the `submit/<base>/<category>`
 branches: `submit/7.1.3/audio` (`ef0d6d3d`), `submit/7.1.3/camera` (`f42f8162`),
 `submit/7.1.3/charger` (`5c0aa3dd` + `78bf6ee3`). `submit/7.1.3/voice` carries no
 DTS at all — it is pure driver routing, which is correct.
+
+### What a base bump does to the device tree (7.0.9 → 7.1.3, measured)
+
+The commit hashes in the tables above change on every base bump, because
+msm8953-mainline re-applies its series onto each new stable — so `git log
+<oldbase>..<newbase>` prints the *entire* history and tells you nothing. Compare
+**content**, not history:
+
+```
+git diff --stat <oldbase> <newbase> -- \
+  arch/arm64/boot/dts/qcom/sdm632-fairphone-fp3.dts \
+  arch/arm64/boot/dts/qcom/{sdm632,msm8953,pm8953,pmi632}.dtsi
+```
+
+Across 7.0.9 → 7.1.3 that came out as **6+/6− in `msm8953.dtsi` and nothing
+else** — the board file blob is bit-identical between the two bases — and the one
+change is a pure dtschema label rename on the PM8953-internal PDM pin muxes
+(`cdc_pdm_lines_act`/`_sus` → `cdc_pdm_lines_default`/`_sleep`, plus the
+`comp_lines` and `lines_2` pairs). The FP3 board file references none of them
+(our path is WCD9335 over SLIMbus, and the board file `/delete-property/`s the
+PM8953 codec's `audio-routing` anyway), so nothing had to be carried over.
+
+Two more checks worth repeating on the next bump, both of which came out clean
+here: the `#include` chain still resolves to the same five files, and the
+`dt-bindings` headers the board pulls in (`qcom,q6afe.h`, `q6asm.h`,
+`q6voice.h`, the msm8953 interconnect/GCC/rpmpd ones) are unchanged. Finally,
+diff *our own* delta on both bases — `git diff <oldbase> integration/<oldbase>`
+vs `git diff <newbase> integration/<newbase>` for the two touched files — and
+confirm they are line-for-line identical (358+/4− in the board file, 21+ in
+`pmi632.dtsi`); that is what proves the rebase neither dropped one of our hunks
+nor reverted an upstream one.
 
 One caveat on the strength of the evidence above: which of the Luca Weiss commits
 are already in `torvalds/linux` and which are carried only by msm8953-mainline
