@@ -48,35 +48,19 @@ The four categories are always the same:
 | `camera` | the Sony IMX363 rear sensor |
 | `charger` | the PMI632 charger, via `qcom_smbx` |
 
-Worked across two real bases — `7.0.9` (retired, kept as history) and `7.1.3`
-(current) — every branch reads off at a glance:
-
-| role | `7.0.9` (previous) | `7.1.3` (current) |
-|---|---|---|
-| base (upstream fork) | `7.0.9/main` | `7.1.3/main` |
-| work + fixes | `wip/7.0.9/{audio,voice,camera,charger}` | `wip/7.1.3/{audio,voice,camera,charger}` |
-| device build | `integration/7.0.9` | `integration/7.1.3` |
-| LKML minimal series | — *(rolled straight into 7.1.3)* | `submit/7.1.3/{audio,voice,camera,charger}` |
-| package `pkgver` | `7.0.9` | `7.1.3` |
-
 Reading it: "what runs on the phone" is always `integration/<pkgver>`; "what
 goes to the kernel" is always `submit/<pkgver>/<category>`; the base version is
-the only thing that changes. (`7.1.3` was brought up cleanly, so its `wip` and
-`submit` branches point at the same commits; on a messier bump they diverge —
-`wip` carries the fix history, `submit` the distilled series.)
+the only thing that changes.
 
 **The category rule (version-free):** a change lands on `wip/X.Y.Z/<category>`
 **and** is cherry-picked onto `integration/X.Y.Z` — the two never diverge,
 integration is only ever the sum of the `wip` branches. `submit/X.Y.Z/<category>`
 is regenerated from `wip` when the base is done; it is not edited by hand.
 
-**Why `integration` is versioned.** A base bump breaks things — a rebased driver
-that no longer applies cleanly, a renamed Kconfig symbol, a clock that changed
-under it — and fixing them takes iterations of build → deploy → test. Keeping
-`integration/<prev>` (and the package's previous `pkgver`) intact means the
-device always has a **known-good kernel to fall back to** while the new base is
-brought up. A single, mutable integration branch would destroy the working
-version the moment the new base was checked out.
+The two-base worked example, how `wip` and `submit` diverge on a messy bump, and
+why `integration` is versioned at all are in
+[`docs/rolling-a-new-base.md`](docs/rolling-a-new-base.md#the-model-this-procedure-moves)
+— that page is this model in motion.
 
 ## Rolling to a new kernel base
 

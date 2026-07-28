@@ -1,5 +1,34 @@
 # Rolling to a new kernel base
 
+## The model this procedure moves
+
+The layers and the category rule are on the
+[front page](../README.md#the-branch-model); this is the part you only need when
+a base actually changes.
+
+Worked across two real bases — `7.0.9` (retired, kept as history) and `7.1.3`
+(current) — every branch reads off at a glance:
+
+| role | `7.0.9` (previous) | `7.1.3` (current) |
+|---|---|---|
+| base (upstream fork) | `7.0.9/main` | `7.1.3/main` |
+| work + fixes | `wip/7.0.9/{audio,voice,camera,charger}` | `wip/7.1.3/{audio,voice,camera,charger}` |
+| device build | `integration/7.0.9` | `integration/7.1.3` |
+| LKML minimal series | — *(rolled straight into 7.1.3)* | `submit/7.1.3/{audio,voice,camera,charger}` |
+| package `pkgver` | `7.0.9` | `7.1.3` |
+
+`7.1.3` was brought up cleanly, so its `wip` and `submit` branches point at the
+same commits; on a messier bump they diverge — `wip` carries the fix history,
+`submit` the distilled series.
+
+**Why `integration` is versioned.** A base bump breaks things — a rebased driver
+that no longer applies cleanly, a renamed Kconfig symbol, a clock that changed
+under it — and fixing them takes iterations of build → deploy → test. Keeping
+`integration/<prev>` (and the package's previous `pkgver`) intact means the
+device always has a **known-good kernel to fall back to** while the new base is
+brought up. A single, mutable integration branch would destroy the working
+version the moment the new base was checked out.
+
 When `msm8953-mainline` cuts a new release — say `7.2.0/main` — this is the
 whole procedure. Nothing here is renamed for the version; only the base segment
 of the branches and the package `pkgver` change.
