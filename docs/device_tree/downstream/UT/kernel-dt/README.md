@@ -27,6 +27,33 @@ Android 9 Fairphone tree (7 extra nodes live, 25 nodes with property differences
 `tas2557` amplifier, `sar_sensor`, different ADSP nodes). If you re-clone, check
 against the live dump before trusting it.
 
+### `ubuntutouch` vs `master` in that repo
+
+`master` is the untouched vendor import — `33e4fcc0f` *"Import
+FP3-REL-2.A.0110-20200109.202458"* (Luca Weiss, 2020-02-20), i.e. Fairphone's
+Android 9 sources. `ubuntutouch` is the porting branch on top of it.
+
+For the whole `arch/arm64/boot/dts` tree, 13 files differ — but five of them
+(both `dsi-hx83112b-*` panel files and the three `qg-batterydata-*` profiles)
+are **whitespace-only**: `git diff -w` reports no change at all. The rest is:
+
+| file | change |
+|---|---|
+| `msm8953.dtsi` | the `product` partition dropped — removed from `vbmeta parts` and the `fstab` node deleted |
+| `pmi632.dtsi` | +50 lines of notification-LED tuning (`qcom,lut-patterns`, ramp step/pause/high-index on the three `lpg@` channels) |
+| `msm8953-ext-codec-mtp.dts`, `sdm632-ext-audio-mtp.dtsi` | `&cdc_us_euro_sw` commented out |
+| `apq8053-lat-concam.dtsi`, `apq8053-lite-dragon*.dts*`, `sdm632-rumi.dtsi` | `&spi_3` / `&blsp*_uart*` / `&blsp1_serial1` commented out — other boards, irrelevant here |
+
+Built as this device's dtb (`sdm632-mtp-s3.dts`), only the first two reach it:
+1799 nodes on `master` vs 1798 on `ubuntutouch`, the one node being
+`/firmware/android/fstab/product`, plus 14 properties — `vbmeta parts` and the
+LED ramp values. Note that the board file the FP3 is described by,
+`sdm450-pmi632-mtp-s3.dtsi`, is **byte-identical** on the two branches.
+
+Neither branch state matches the running device, though: `ramoops_mem` is absent
+from both `master` and today's `ubuntutouch` tip, and present in the 2023 state
+snapshotted here — which is the one the live dump agrees with.
+
 ## What is here
 
 Same layout as Fairphone's snapshot, mirroring the kernel paths:

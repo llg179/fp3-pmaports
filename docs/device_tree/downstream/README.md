@@ -60,8 +60,8 @@ show the two edits exactly:
 
 ```
 arch/arm64/boot/dts/qcom/msm8953.dtsi
-	ramoops_mem: ramoops_mem@0 { compatible = "ramoops"; … }   ← added by LineageOS/UT
-	//[TracyChui] Add product image and mount partition        ← Fairphone's block, commented out
+	ramoops_mem: ramoops_mem@0 { compatible = "ramoops"; … }   ← added by the UT port
+	//[TracyChui] Add product image and mount partition        ← Fairphone's block, disabled
 ```
 
 So: Ubuntu Touch carries Fairphone's **Android 10** tree with those two changes.
