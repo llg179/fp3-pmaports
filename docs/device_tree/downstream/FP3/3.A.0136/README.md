@@ -42,20 +42,25 @@ point outside itself.
 ## Where the FP3 actually is in this tree
 
 Fairphone did not add a board file named after the phone — the FP3 ships as
-Qualcomm's **MTP S3** reference-board description:
+Qualcomm's **MTP S3** reference-board description, on the SDM632 base:
 
 ```
-arch/arm64/boot/dts/qcom/sdm450-mtp-s3-overlay.dts     model = "MTP S3"
-  └── sdm450-pmi632-mtp-s3.dtsi                        the actual board content
-arch/arm64/boot/dts/qcom/sdm450-pmi632.dts             the base it overlays onto
+arch/arm64/boot/dts/qcom/sdm632-mtp-s3.dts
+  ├── sdm632.dtsi                → msm8953.dtsi + sdm632 CPU / regulator / coresight
+  ├── sdm450-pmi632.dtsi         → the PMI632 side (and the "qcom,sdm450" compatible)
+  └── sdm450-pmi632-mtp-s3.dtsi  → the board itself, model = "MTP S3"
 ```
 
-and the `Makefile` pairs them: `sdm450-mtp-s3-overlay.dtbo-base :=
-sdm450-pmi632.dtb`. That is what the running phone confirms — the live tree in
-[`../../downstream/`](../../downstream/) reports `model = "MTP S3"`,
-`compatible = "qcom,sdm450"`, `qcom,pmic-name = "PMI632"`, and the boot command
-line selects the pair by index (`androidboot.dtb_idx=14
-androidboot.dtbo_idx=14`).
+Compiling that file reproduces the tree the phone actually runs, node for node —
+see the comparison in [`../../README.md`](../../README.md).
+
+Beware the near-miss: the tree also contains `sdm450-mtp-s3-overlay.dts` with the
+same `model = "MTP S3"`, which the `Makefile` pairs with `sdm450-pmi632.dtb`.
+That is the SDM450 variant of the same board and it is **not** this phone — it
+differs from the live tree in 167/190 nodes. The discriminator is
+`qcom,msm-id`: the live tree reports `<0x15d>` = 349 = SDM632, not 338 = SDM450.
+The `compatible = "qcom,sdm450"` string in the running tree is misleading; it
+comes from the shared `sdm450-pmi632.dtsi`.
 
 The files our mainline work was derived from:
 
@@ -70,7 +75,7 @@ The files our mainline work was derived from:
 
 Note the downstream binding names (`qcom,tasha-slim-pgd` and friends) are **not**
 what our mainline nodes use — we follow the mainline WCD9335 shape and take only
-the *values* from here. See the top-level [`README.md`](../../../README.md).
+the *values* from here. See the top-level [`README.md`](../../../../../README.md).
 
 ## Verifying / rebuilding this snapshot
 
@@ -84,9 +89,9 @@ The snapshot is complete enough to compile on its own — from
 `arch/arm64/boot/dts/qcom/`:
 
 ```sh
-cpp -nostdinc -I../../../../../include -I. -undef -x assembler-with-cpp sdm450-pmi632.dts \
-	| dtc -I dts -O dtb -@ -o /tmp/sdm450-pmi632.dtb
+cpp -nostdinc -I../../../../../include -I. -undef -x assembler-with-cpp sdm632-mtp-s3.dts \
+	| dtc -I dts -O dtb -o /tmp/sdm632-mtp-s3.dtb
 ```
 
-which produces a 311 KB base dtb with warnings only (the usual downstream
+which produces a 353 KB dtb with warnings only (the usual downstream
 `unit address format` complaints), no errors.
