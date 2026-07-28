@@ -676,12 +676,31 @@ autospawned empty daemon, which looks exactly like "the card lost its sink".
 * <https://github.com/llg179/Claude-skills-Fairphone3> — the method: bring-up
   notes, ground-truth techniques, the guard-railed test loop, and the
   `msm8953-mainline-pr` skill for preparing a `submit` series
+* [`docs/device_tree/`](docs/device_tree/) — the device trees themselves: our
+  change before and after, plus both downstream references (the live Ubuntu
+  Touch dump and Fairphone's published 3.A.0136 sources)
 
 ## Device tree provenance
 
 Which `.dts`/`.dtsi` files the FP3 device tree is actually built from, and where
 each one came from. Measured on `integration/7.1.3`; the shape does not change
 across a base bump, only the commit hashes do.
+
+The trees themselves are checked in under
+**[`docs/device_tree/`](docs/device_tree/)**, so none of the claims below have to
+be taken on trust:
+
+| | |
+|---|---|
+| [`before_update/`](docs/device_tree/before_update/) → [`after_update/`](docs/device_tree/after_update/) | the two files we modify, in both states — `diff` them for our exact delta |
+| [`downstream/UT/`](docs/device_tree/downstream/UT/) | the 4.9 downstream tree as it **runs**, dumped off the phone under Ubuntu Touch |
+| [`downstream/FP3/3.A.0136/`](docs/device_tree/downstream/FP3/3.A.0136/) | the same tree as Fairphone **publishes** it, from their official GPL release |
+
+[`docs/device_tree/downstream/README.md`](docs/device_tree/downstream/README.md)
+compares the last two node by node: they are the same tree (1804 nodes each, five
+nodes differing, nearly all of it the bootloader filling in `/chosen` and
+`/memory`), and it identifies which vendor file the FP3 actually is —
+`sdm632-mtp-s3.dts`, not the SDM450 board of the same name.
 
 The board `.dtb` is assembled from **five** files through the `#include` chain,
 and only **two** of them carry any of our work:
