@@ -46,6 +46,7 @@ until grep -qE '^(PASS|FAIL) - ' /tmp/selftest.log; do sleep 15; done
 | `15-hwtest` | display, input devices, camera presence and vibrator against a recorded reference |
 | `20-audio` | codec enumerated on SLIMbus, playback and capture PCMs open |
 | `21/22-audio-*` | a tone on the speaker reaches the handset/headset mic (`--acoustic`) |
+| `25-sensor` | the SSC sensors enumerate and read: registry server running, all four IIO devices bound, proximity and ambient light readable, and `iio-sensor-proxy` sees both |
 | `30-voice` | the VoiceMMode1 path routes and opens — **the regression this suite was built for** |
 | `35-pulse` | userspace has a real sink and the handset mic — also proves the audio checks put the sound server back |
 | `40-camera` | the sensor is not merely probed but linked into CAMSS |
