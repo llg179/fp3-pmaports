@@ -1,27 +1,71 @@
-# How the FP3 sensors were brought up
+# Bringing up the FP3 sensors
 
-The investigation behind [`README.md`](README.md), kept as a narrative: what was
-believed at each step, what was measured, and what that forced us to conclude —
-including the places where the belief was wrong and had to be retracted. The
-reference material (what the port consists of, where each piece came from, how
-to build and test it) lives in the README; this file is the reasoning.
+The investigation behind [`../README.md`](../README.md), kept as a narrative:
+what was believed at each step, what was measured, and what that forced us to
+conclude — including the places where the belief was wrong and had to be
+retracted. The reference material — what the port consists of, where each piece
+came from, how to build and test it — is in the README; this is the reasoning,
+and the instruments and raw data that produced it.
 
-> **AI-generated.** This document was written by Claude (Opus 5) working under
-> the direction of Lajosházi, László Gergely, who reviewed it and performed
-> every physical measurement it reports. The same applies to most of the code it
-> describes — see the provenance table in [`README.md`](README.md#provenance)
-> for who wrote what. Treat the reasoning as reviewed but not infallible: three
+> **AI-generated.** Written by Claude (Opus 5) working under the direction of
+> Lajosházi, László Gergely, who reviewed it and performed every physical
+> measurement it reports. The same applies to most of the code it describes —
+> see the provenance table in [`../README.md`](../README.md#provenance) for who
+> wrote what. Treat the reasoning as reviewed but not infallible: three
 > conclusions in here were stated confidently and later retracted, and they are
 > left in place, marked, because the retractions are the useful part.
 
-Every capture and every tool referenced below is checked in, so nothing has to
-be taken on trust.
+Nothing here is needed to run the sensors. Everything that is, lives in
+[`../../../userspace-sensors/`](../../../userspace-sensors/).
 
-| path | what it is |
+## The instruments
+
+| file | what it does |
 |---|---|
-| [`tools/`](tools/) | the instruments — see [Tools](README.md#tools) |
-| [`data/`](data/) | registry, group map, service lists, factory `sns.reg` |
-| [`captures/`](captures/) | the raw ADSP diag captures behind every number below |
+| [`tools/sensdiag.py`](tools/sensdiag.py) | ADSP F3 capture on mainline: locates the ADSP remoteproc by name, binds `rpmsg_chrdev` to its DIAG channels, re-arms the F3 mask every 0.25 s, re-binds after an SSR; optional `ssr` argument restarts the ADSP mid-capture |
+| [`tools/parsef3.py`](tools/parsef3.py) | host-side parser: HDLC de-framing, message header, bounds-checked argument extraction |
+| [`tools/snsreg.py`](tools/snsreg.py) | publishes a list of QMI services over QRTR, **one socket per service**, dumping everything that arrives |
+| [`../../../userspace-sensors/snsregd.py`](../../../userspace-sensors/snsregd.py) | the Sensor Registry server |
+| [`tools/qmiprobe.py`](tools/qmiprobe.py) | sends empty QMI requests to a `node:port` and prints replies |
+| [`tools/qrtrconst.py`](tools/qrtrconst.py) | the QRTR control codes, transcribed from the kernel uapi header. **Import these; do not retype them** — see [the correction](#correction-2026-07-28--every-publish-in-steps-48-was-a-bye) |
+| [`tools/qrtrls.py`](tools/qrtrls.py) | enumerates every QMI service the name service knows, by node. The one command that shows whether the sensor stack is up |
+| [`../../../userspace-sensors/snsregd.service`](../../../userspace-sensors/snsregd.service) | systemd unit that keeps the registry server running from boot |
+| [`tools/readaccel.py`](tools/readaccel.py) | reads the buffer-only accelerometer and prints m/s² and \|g\| — the physical sanity check that catches a wrong record size |
+| [`tools/readprox.py`](tools/readprox.py) | the same for the proximity/light device |
+| [`tools/smgrbuf.py`](tools/smgrbuf.py) | sends `SNS_SMGR_BUFFERING` by hand and sweeps its parameters, so a question costs a second instead of a 30-minute kernel build |
+| [`tools/smgrind.py`](tools/smgrind.py) | asks for buffering on one sensor and prints the indications the SSC sends back — answers "is this data really from that sensor" from the wire |
+| [`../../../userspace-sensors/sensortest.py`](../../../userspace-sensors/sensortest.py) | reads any of the four sensors and prints per-axis ranges, so "it binds" can be told from "it measures"; for the gyroscope it also integrates the run, which turns a known rotation into a scale check |
+| [`../../../userspace-sensors/proxcal.sh`](../../../userspace-sensors/proxcal.sh) | prints `in_proximity_raw` once a second so a hand over the earpiece shows up as two levels — the measurement that decides `PROXIMITY_NEAR_LEVEL`, and the one that cannot be made remotely |
+| [`tools/sensinfo.py`](tools/sensinfo.py) | asks the SSC what a sensor advertises (`ALL_SENSOR_INFO`, `SINGLE_SENSOR_INFO`) — data types, rates, vendor and part name. Ask this before asking for data |
+| [`tools/smgrsweep.py`](tools/smgrsweep.py) | streams one sensor with the **driver's own** request parameters, data type as an argument, and counts indications. Use this rather than inventing a report rate: it is `sample_rate * 0xf000`, and a wrong one silently means "one report every two minutes" |
+
+## Raw data
+
+| file | contents |
+|---|---|
+| [`data/sns.reg`](data/sns.reg) | the FP3's factory binary sensor registry |
+| [`../../../userspace-sensors/registry.conf`](../../../userspace-sensors/registry.conf) | 1437 key/value pairs generated from it |
+| [`../../../userspace-sensors/groups.txt`](../../../userspace-sensors/groups.txt) | 68 groups / 1516 keys from upstream `map.c` |
+| [`data/gates.txt`](data/gates.txt) | the node-1 services to publish alongside `0x10F` |
+| [`data/node1_services.txt`](data/node1_services.txt) | the oracle's unfiltered 36 — reference only, see the collision warning |
+| [`data/ut_servers.txt`](data/ut_servers.txt) | the full QMI service table dumped from Ubuntu Touch |
+
+## Captures
+
+Raw ADSP F3 diag streams; parse with `tools/parsef3.py`.
+
+| file | what it shows |
+|---|---|
+| [`captures/pmos_f3_wake.bin`](captures/pmos_f3_wake.bin) | the sensor task waking on the `0x10F` publish |
+| [`captures/pmos_f3_long.bin`](captures/pmos_f3_long.bin) | `0x10F` alone → `L487 [-18]` ×31, `L1206 [0]` |
+| [`captures/pmos_f3_multi.bin`](captures/pmos_f3_multi.bin) | 36 services on one port → `L173 [-2]` ×31 |
+| [`captures/pmos_f3_ports.bin`](captures/pmos_f3_ports.bin) | **the clean run** — zero errors, `L1206 [1]` |
+| [`captures/pmos_f3_ssr_services.bin`](captures/pmos_f3_ssr_services.bin) | an SSR with services present; carries the rcinit text used for the oracle diff |
+
+The Ubuntu Touch reference capture (`ut_f3_boot.bin`, 13 MB, 82 211 messages) is
+not checked in for size; it lives in the working directory
+`/mnt/1TB/Fp3-Sailfish/fp3-sensors-oracle-20260728/` with everything else.
+
 
 ---
 
@@ -314,7 +358,7 @@ mount -o ro /dev/disk/by-partlabel/persist /mnt/persist
 ```
 
 * [`data/sns.reg`](data/sns.reg) — 25 468 B, md5 `30367ee6da871d9a65340532b2472a99`
-* [`data/registry.conf`](data/registry.conf) — **1437 key/value pairs**
+* [`../../../userspace-sensors/registry.conf`](../../../userspace-sensors/registry.conf) — **1437 key/value pairs**
 
 The same directory holds the factory calibration as plain files, which the
 registry embeds: `ps_near=1570`, `ps_far=0`, `als_factor=1297`, `accel_x=0.22`,
@@ -322,7 +366,7 @@ registry embeds: `ps_near=1570`, `ps_far=0`, `als_factor=1297`, `accel_x=0.22`,
 
 ### A Python registry server
 
-[`tools/snsregd.py`](tools/snsregd.py) — same protocol, same licence
+[`../../../userspace-sensors/snsregd.py`](../../../userspace-sensors/snsregd.py) — same protocol, same licence
 (GPL-3.0-or-later), ~150 lines. `sns-reg` is C + SCons + libqrtr and would need a
 cross-toolchain or an aport before answering a single request; the protocol is one
 message, so this gets a live answer in one step. The C daemon is the packaged end
@@ -332,7 +376,7 @@ Request `TLV 0x01 = u16 group id`; response `TLV 0x02 = u16 result`,
 `TLV 0x03 = u16 group id`, `TLV 0x04 = u16 length + payload`, the payload being
 the group's keys concatenated little-endian.
 
-[`data/groups.txt`](data/groups.txt) carries upstream's 68 groups / 1516 keys in a
+[`../../../userspace-sensors/groups.txt`](../../../userspace-sensors/groups.txt) carries upstream's 68 groups / 1516 keys in a
 form the server can read without parsing C. **Caveat:** that map was
 reverse-engineered on MSM8996 and is **not yet validated for the FP3** — upstream
 ships `sns-reg-validator` for exactly this.
@@ -736,7 +780,7 @@ $ sudo monitor-sensor --proximity
 ```
 
 The near level comes from a udev rule, since this device has no DT node to hang
-`proximity-near-level` on — see [`userspace-sensors/`](../../userspace-sensors/).
+`proximity-near-level` on — see [`userspace-sensors/`](../../../userspace-sensors/).
 
 **The blanking lags by about a second, and that is upstream's poll period, not
 ours.** Tracing the driver's read function shows `iio-sensor-proxy` reading the
@@ -767,7 +811,7 @@ see the `TODO`s in the drivers.
 ### Step 14 — all four sensors, measured against physical reality
 
 Binding a driver proves nothing about the numbers. Each sensor was moved by
-hand while [`tools/sensortest.py`](tools/sensortest.py) read it, so that "the
+hand while [`../../../userspace-sensors/sensortest.py`](../../../userspace-sensors/sensortest.py) read it, so that "the
 driver works" means something.
 
 | sensor | at rest | moved | verdict |

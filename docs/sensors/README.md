@@ -12,7 +12,7 @@ mainline kernel, through the Snapdragon Sensor Core.
 >
 > The investigation that produced all this — including three confident
 > conclusions that had to be retracted — is a separate document:
-> [`sensor_fix_blog.md`](sensor_fix_blog.md).
+> [`bringup/README.md`](bringup/README.md).
 
 ## Why there is no I2C driver here
 
@@ -66,9 +66,9 @@ Gergely with Claude.
 | Proximity + light driver | `drivers/iio/proximity/smgr_prox.c` | working, measured |
 | Gyroscope driver | `drivers/iio/gyro/smgr_gyro.c` | working, scale measured |
 | Magnetometer driver | `drivers/iio/magnetometer/smgr_mag.c` | responds; scale and hard-iron offset both unknown |
-| Registry server | [`tools/snsregd.py`](tools/snsregd.py) | Python stand-in for upstream's C `sns-reg`; should become an aport |
+| Registry server | [`../../userspace-sensors/snsregd.py`](../../userspace-sensors/snsregd.py) | Python stand-in for upstream's C `sns-reg`; should become an aport |
 | Near-level udev rule | [`../../userspace-sensors/`](../../userspace-sensors/) | required before `iio-sensor-proxy` will use the sensor |
-| Measurement tools | [`tools/`](tools/) | see [Tools](#tools) |
+| Measurement tools | [`bringup/tools/`](bringup/tools/) | see [Tools](#tools) |
 
 ### Fixes to pre-existing kernel code
 
@@ -82,9 +82,9 @@ Gergely with Claude.
 
 | file | source |
 |---|---|
-| [`data/sns.reg`](data/sns.reg) | the phone's own factory registry, from `/persist/sensors/` |
-| [`data/registry.conf`](data/registry.conf) | 1437 key/value pairs decoded from it |
-| [`data/groups.txt`](data/groups.txt) | group map from upstream [`sns-reg`](https://gitlab.com/msm8996-mainline/sns-reg)'s `map.c` |
+| [`bringup/data/sns.reg`](bringup/data/sns.reg) | the phone's own factory registry, from `/persist/sensors/` |
+| [`../../userspace-sensors/registry.conf`](../../userspace-sensors/registry.conf) | 1437 key/value pairs decoded from it |
+| [`../../userspace-sensors/groups.txt`](../../userspace-sensors/groups.txt) | group map from upstream [`sns-reg`](https://gitlab.com/msm8996-mainline/sns-reg)'s `map.c` |
 | `PROXIMITY_NEAR_LEVEL=1570` | the phone's factory `ps_near` calibration |
 
 ## Status
@@ -117,9 +117,9 @@ CONFIG_IIO_QCOM_SMGR_MAG=m
 Userspace, both required:
 
 ```
-sudo install -m755 tools/snsregd.py /usr/local/bin/
-sudo install -m644 tools/snsregd.service /etc/systemd/system/
-sudo mkdir -p /etc/sns-reg.d && sudo cp data/registry.conf data/groups.txt /etc/sns-reg.d/
+sudo install -m755 ../../userspace-sensors/snsregd.py /usr/local/bin/
+sudo install -m644 ../../userspace-sensors/snsregd.service /etc/systemd/system/
+sudo mkdir -p /etc/sns-reg.d && sudo cp ../../userspace-sensors/registry.conf ../../userspace-sensors/groups.txt /etc/sns-reg.d/
 sudo systemctl enable --now snsregd
 
 sudo install -m644 ../../userspace-sensors/90-fp3-proximity.rules /etc/udev/rules.d/
@@ -133,10 +133,10 @@ it in silence.
 ## Testing
 
 ```
-sudo python3 tools/sensortest.py accel 15     # tilt through all six faces
-sudo python3 tools/sensortest.py gyro 15      # still, then a known rotation
-sudo python3 tools/sensortest.py mag 15       # turn on a table
-sudo python3 tools/sensortest.py prox 12      # cover and uncover
+sudo python3 ../../userspace-sensors/sensortest.py accel 15     # tilt through all six faces
+sudo python3 ../../userspace-sensors/sensortest.py gyro 15      # still, then a known rotation
+sudo python3 ../../userspace-sensors/sensortest.py mag 15       # turn on a table
+sudo python3 ../../userspace-sensors/sensortest.py prox 12      # cover and uncover
 sudo monitor-sensor --proximity               # the phosh-facing path
 ```
 
@@ -216,34 +216,40 @@ ours: tracing the driver's read function shows `iio-sensor-proxy` reading every
 is compiled in. **Decided (2026-07-29): leave it** — every other pmOS phone has
 the same latency, and a local fork of a system package is not worth 500 ms.
 
-## Tools
+## What ships, and what was only used to find it
+
+Everything the phone needs is in
+[`userspace-sensors/`](../../userspace-sensors/), next to the kernel package:
 
 | file | what it does |
 |---|---|
-| [`tools/sensdiag.py`](tools/sensdiag.py) | ADSP F3 capture on mainline: locates the ADSP remoteproc by name, binds `rpmsg_chrdev` to its DIAG channels, re-arms the F3 mask every 0.25 s, re-binds after an SSR; optional `ssr` argument restarts the ADSP mid-capture |
-| [`tools/parsef3.py`](tools/parsef3.py) | host-side parser: HDLC de-framing, message header, bounds-checked argument extraction |
-| [`tools/snsreg.py`](tools/snsreg.py) | publishes a list of QMI services over QRTR, **one socket per service**, dumping everything that arrives |
-| [`tools/snsregd.py`](tools/snsregd.py) | the Sensor Registry server |
-| [`tools/qmiprobe.py`](tools/qmiprobe.py) | sends empty QMI requests to a `node:port` and prints replies |
-| [`tools/qrtrconst.py`](tools/qrtrconst.py) | the QRTR control codes, transcribed from the kernel uapi header. **Import these; do not retype them** — see [the correction](sensor_fix_blog.md#correction-2026-07-28--every-publish-in-steps-48-was-a-bye) |
-| [`tools/qrtrls.py`](tools/qrtrls.py) | enumerates every QMI service the name service knows, by node. The one command that shows whether the sensor stack is up |
-| [`tools/snsregd.service`](tools/snsregd.service) | systemd unit that keeps the registry server running from boot |
-| [`tools/readaccel.py`](tools/readaccel.py) | reads the buffer-only accelerometer and prints m/s² and \|g\| — the physical sanity check that catches a wrong record size |
-| [`tools/readprox.py`](tools/readprox.py) | the same for the proximity/light device |
-| [`tools/smgrbuf.py`](tools/smgrbuf.py) | sends `SNS_SMGR_BUFFERING` by hand and sweeps its parameters, so a question costs a second instead of a 30-minute kernel build |
-| [`tools/smgrind.py`](tools/smgrind.py) | asks for buffering on one sensor and prints the indications the SSC sends back — answers "is this data really from that sensor" from the wire |
-| [`tools/sensortest.py`](tools/sensortest.py) | reads any of the four sensors and prints per-axis ranges, so "it binds" can be told from "it measures"; for the gyroscope it also integrates the run, which turns a known rotation into a scale check |
-| [`tools/proxcal.sh`](tools/proxcal.sh) | prints `in_proximity_raw` once a second so a hand over the earpiece shows up as two levels — the measurement that decides `PROXIMITY_NEAR_LEVEL`, and the one that cannot be made remotely |
-| [`tools/sensinfo.py`](tools/sensinfo.py) | asks the SSC what a sensor advertises (`ALL_SENSOR_INFO`, `SINGLE_SENSOR_INFO`) — data types, rates, vendor and part name. Ask this before asking for data |
-| [`tools/smgrsweep.py`](tools/smgrsweep.py) | streams one sensor with the **driver's own** request parameters, data type as an argument, and counts indications. Use this rather than inventing a report rate: it is `sample_rate * 0xf000`, and a wrong one silently means "one report every two minutes" |
+| [`snsregd.py`](../../userspace-sensors/snsregd.py) | the Sensor Registry server — without it the SSC never starts its sensors |
+| [`snsregd.service`](../../userspace-sensors/snsregd.service) | keeps it running from boot |
+| [`registry.conf`](../../userspace-sensors/registry.conf) | 1437 key/value pairs decoded from this phone's own `sns.reg` |
+| [`groups.txt`](../../userspace-sensors/groups.txt) | 68 groups / 1516 keys, from upstream `sns-reg`'s `map.c` |
+| [`90-fp3-proximity.rules`](../../userspace-sensors/90-fp3-proximity.rules) | the near level, without which `iio-sensor-proxy` ignores the sensor |
+| [`sensortest.py`](../../userspace-sensors/sensortest.py) | reads any of the four sensors and prints per-axis ranges, so "it binds" can be told from "it measures"; for the gyroscope it also integrates the run, turning a known rotation into a scale check |
+| [`proxcal.sh`](../../userspace-sensors/proxcal.sh) | prints `in_proximity_raw` once a second, so a hand over the earpiece shows up as two levels — the measurement behind `PROXIMITY_NEAR_LEVEL` |
+
+The instruments that found all this — the ADSP F3 diag capture, the QRTR and QMI
+probes, the SSC parameter sweeps — are not needed to run anything, and live with
+the investigation in [`bringup/`](bringup/) along with the captures and the raw
+service tables they produced:
+
+| | |
+|---|---|
+| [`bringup/tools/`](bringup/tools/) | 12 probes and parsers |
+| [`bringup/data/sns.reg`](bringup/data/sns.reg) | the factory binary registry this port decodes |
+| [`bringup/data/`](bringup/data/) | service tables from both slots |
+| [`bringup/captures/`](bringup/captures/) | the raw ADSP diag streams behind every number in the write-up |
 
 ## Pitfalls
 
 * **`QRTR_TYPE_*` starts at 1:** `DATA=1, HELLO=2, BYE=3, NEW_SERVER=4,
   DEL_SERVER=5, DEL_CLIENT=6, RESUME_TX=7, EXIT=8, PING=9, NEW_LOOKUP=10,
-  DEL_LOOKUP=11`. Take them from [`tools/qrtrconst.py`](tools/qrtrconst.py), never
+  DEL_LOOKUP=11`. Take them from [`bringup/tools/qrtrconst.py`](bringup/tools/qrtrconst.py), never
   from memory — guessing them wrong is what invalidated steps 4–8 (see [the
-  correction](sensor_fix_blog.md#correction-2026-07-28--every-publish-in-steps-48-was-a-bye)).
+  correction](bringup/README.md#correction-2026-07-28--every-publish-in-steps-48-was-a-bye)).
   Sending `3` where you meant `NEW_SERVER` tells the name service the whole node
   died, and it answers with `DEL_SERVER` for every server on it — a very
   reproducible effect that looks like a successful publish from the ADSP's side.
@@ -353,33 +359,6 @@ Done once here after a forced reboot, and it found real damage: journal recovery
 two extent-tree optimisations, wrong free block and inode counts, and a stuck
 `orphan_present` flag.
 
-## Data
-
-| file | contents |
-|---|---|
-| [`data/sns.reg`](data/sns.reg) | the FP3's factory binary sensor registry |
-| [`data/registry.conf`](data/registry.conf) | 1437 key/value pairs generated from it |
-| [`data/groups.txt`](data/groups.txt) | 68 groups / 1516 keys from upstream `map.c` |
-| [`data/gates.txt`](data/gates.txt) | the node-1 services to publish alongside `0x10F` |
-| [`data/node1_services.txt`](data/node1_services.txt) | the oracle's unfiltered 36 — reference only, see the collision warning |
-| [`data/ut_servers.txt`](data/ut_servers.txt) | the full QMI service table dumped from Ubuntu Touch |
-
-## Captures
-
-Raw ADSP F3 diag streams; parse with `tools/parsef3.py`.
-
-| file | what it shows |
-|---|---|
-| [`captures/pmos_f3_wake.bin`](captures/pmos_f3_wake.bin) | the sensor task waking on the `0x10F` publish |
-| [`captures/pmos_f3_long.bin`](captures/pmos_f3_long.bin) | `0x10F` alone → `L487 [-18]` ×31, `L1206 [0]` |
-| [`captures/pmos_f3_multi.bin`](captures/pmos_f3_multi.bin) | 36 services on one port → `L173 [-2]` ×31 |
-| [`captures/pmos_f3_ports.bin`](captures/pmos_f3_ports.bin) | **the clean run** — zero errors, `L1206 [1]` |
-| [`captures/pmos_f3_ssr_services.bin`](captures/pmos_f3_ssr_services.bin) | an SSR with services present; carries the rcinit text used for the oracle diff |
-
-The Ubuntu Touch reference capture (`ut_f3_boot.bin`, 13 MB, 82 211 messages) is
-not checked in for size; it lives in the working directory
-`/mnt/1TB/Fp3-Sailfish/fp3-sensors-oracle-20260728/` with everything else.
-
 ## Next steps
 
 1. **Ambient light** — teach the Sensor Manager core to request more than one
@@ -395,5 +374,5 @@ not checked in for size; it lives in the working directory
 
 ## The investigation
 
-[`sensor_fix_blog.md`](sensor_fix_blog.md) — how all of this was found, in
+[`bringup/README.md`](bringup/README.md) — how all of this was found, in
 order, with the wrong turns left in.
