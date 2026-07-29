@@ -5,6 +5,12 @@ arrangement has to obey. For the driver changes behind it see
 [`../kernel/README.md`](../kernel/README.md); for the device-tree nodes,
 [`../device_tree/README.md`](../device_tree/README.md).
 
+> **AI-generated.** Written by Claude (Opus 5) under the direction of
+> Lajosházi, László Gergely, who made every acoustic measurement the
+> claims here rest on. How the arrangement was found — including the
+> conclusions that had to be retracted — is in
+> [`bringup/`](bringup/).
+
 This describes the setup that works today: what carries the sound, which piece
 configures what, and the rules the arrangement has to obey. Media playback and
 capture go one way through the stack, a phone call goes another; both are

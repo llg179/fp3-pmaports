@@ -3,6 +3,11 @@
 The device-tree sources of the kernel the phone actually boots under Ubuntu
 Touch — the counterpart of the live dump one level up.
 
+> **AI-generated.** Written by Claude (Opus 5) under the direction of
+> Lajosházi, László Gergely, who reviewed it. **Only this page is
+> generated.** The device tree beside it is UBports' published source,
+> unmodified.
+
 **This is the tree that matches the device.** Compiling `sdm632-mtp-s3.dts` from
 here and comparing against the live blob gives **zero** node differences (1804
 nodes each) and only the nine properties the bootloader fills in. See

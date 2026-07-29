@@ -5,6 +5,10 @@ context to pick up later. Each entry says what was measured, not what was
 guessed. Items that are already written up elsewhere are linked rather than
 repeated.
 
+> **AI-generated.** Written by Claude (Opus 5) under the direction of
+> Lajosházi, László Gergely, who decided what belongs here and what is
+> already settled. Each entry reports a measurement he made or reviewed.
+
 ## The notification LED blinks forever after a missed call
 
 **Symptom:** after a missed call the LED keeps blinking; dismissing the

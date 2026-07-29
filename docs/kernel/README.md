@@ -6,6 +6,11 @@ with a Fairphone 3 shaped hole filled in. This page says, per file, **where it
 came from and from whom**, **what we added and what that was derived from**, and
 **what genuinely did not exist before**.
 
+> **AI-generated.** Written by Claude (Opus 5) under the direction of
+> Lajosházi, László Gergely, who reviewed every change it describes.
+> Where a file is somebody else's work, the table says so; where the assistant
+> wrote it, the provenance line says that too.
+
 Measured on `integration/7.1.3` against its base `v7.1.3-r0`. Everything in the
 "what we add" column was developed with the assistance of
 [Claude Code](https://www.anthropic.com/claude-code); how that is recorded in the

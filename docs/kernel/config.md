@@ -5,6 +5,11 @@
 [`APKBUILD`](../../linux-fp3/APKBUILD)'s `prepare()` then turns on what that
 config misses:
 
+> **AI-generated.** Written by Claude (Opus 5) under the direction of
+> Lajosházi, László Gergely, who reviewed it. The symbols are recorded
+> here because a kernel that is missing one looks exactly like a kernel whose
+> driver is broken.
+
 | symbol | why |
 |---|---|
 | `CONFIG_SLIMBUS`, `CONFIG_SLIM_QCOM_NGD_CTRL`, `CONFIG_REGMAP_SLIMBUS` | the SLIMbus stack the codec lives on |

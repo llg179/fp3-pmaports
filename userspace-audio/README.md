@@ -6,6 +6,11 @@ not just `aplay`/`arecord`. Verified end-to-end on postmarketOS 7.0.9 (phosh,
 pulseaudio 17, alsa-lib 1.2.16): speaker playback and the built-in handset
 microphone both work through pulseaudio, surviving a cold reboot.
 
+> **AI-generated.** Written by Claude (Opus 5) under the direction of
+> Lajosházi, László Gergely, who made every acoustic measurement the
+> claims here rest on. How it was arrived at is in
+> [`../docs/audio/bringup/`](../docs/audio/bringup/).
+
 ## What's here
 
 ```

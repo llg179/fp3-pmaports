@@ -4,6 +4,11 @@ The device-tree sources as the vendor publishes them, unmodified, from the
 official GPL release for **3.A.0136** — the last Fairphone OS build for this
 phone (Android 10 / "Q", kernel 4.9).
 
+> **AI-generated.** Written by Claude (Opus 5) under the direction of
+> Lajosházi, László Gergely, who reviewed it. **Only this page is
+> generated.** The device tree beside it is Fairphone's own GPL release,
+> unmodified.
+
 The vendor is **Fairphone** (<https://www.fairphone.com>), who make the FP1
 through FP5; **FP3** is the model this port targets, and the one these sources
 describe.

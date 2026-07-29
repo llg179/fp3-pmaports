@@ -4,6 +4,11 @@ The [top-level README](../README.md) says what this repository is, how the
 branches are named and where the work may go. Everything longer than that lives
 here.
 
+> **AI-generated.** Written by Claude (Opus 5) under the direction of
+> Lajosházi, László Gergely, who reviewed it. The same applies to almost
+> everything it indexes; each page repeats the note so it survives being read
+> on its own.
+
 ## How the device works
 
 | page | what it answers |

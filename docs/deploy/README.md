@@ -3,6 +3,11 @@
 How a change gets from an edit to a booted phone, and how the last working
 kernel stays bootable while the new one is tried.
 
+> **AI-generated.** Written by Claude (Opus 5) under the direction of
+> Lajosházi, László Gergely, who ran every one of these procedures on
+> the device. The traps recorded here are ones that cost a build cycle in
+> practice, not ones anticipated on paper.
+
 ## Building
 
 Assumes the checkouts and the `pmb` wrapper from

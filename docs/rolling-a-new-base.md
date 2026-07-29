@@ -6,6 +6,10 @@ The layers and the category rule are on the
 [front page](../README.md#the-branch-model); this is the part you only need when
 a base actually changes.
 
+> **AI-generated.** Written by Claude (Opus 5) under the direction of
+> Lajosházi, László Gergely, who has run this procedure through the
+> base changes it describes.
+
 Worked across two real bases — `7.0.9` (retired, kept as history) and `7.1.3`
 (current) — every branch reads off at a glance:
 

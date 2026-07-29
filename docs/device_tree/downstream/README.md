@@ -5,6 +5,11 @@ Android-era tree the device shipped with, as opposed to the mainline one we
 work on; the **vendor is Fairphone** (fairphone.com), who make this phone — the
 FP3 being the third model in their FP1…FP5 line.
 
+> **AI-generated.** Written by Claude (Opus 5) under the direction of
+> Lajosházi, László Gergely, who reviewed it. **Only this page is
+> generated.** The trees it describes are the vendors' own published sources,
+> carried here unmodified.
+
 | | |
 |---|---|
 | [`UT/`](UT/) | as it **runs** — dumped off the phone booted into Ubuntu Touch |

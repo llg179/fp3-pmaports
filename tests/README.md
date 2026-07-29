@@ -3,6 +3,11 @@
 Run this after every kernel bump, so that "everything still works" is a
 repeatable measurement instead of a memory.
 
+> **AI-generated.** Written by Claude (Opus 5) under the direction of
+> Lajosházi, László Gergely, who reviewed the checks and ran them on the
+> device. Every check here exists because something it now catches went
+> unnoticed once.
+
 The suite exists because of a specific near-miss: a missing DAPM route
 (`SLIMBUS_0_RX` ← `SLIMBUS_0_RX Voice Mixer`) made the voice-call PCM impossible
 to open, and nothing in a manual pass would have caught it — playback and

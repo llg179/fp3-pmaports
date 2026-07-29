@@ -1,5 +1,10 @@
 # Ubuntu Touch downstream device tree (Halium, kernel 4.9)
 
+> **AI-generated.** Written by Claude (Opus 5) under the direction of
+> Lajosházi, László Gergely, who reviewed it. **Only this page is
+> generated.** The trees it describes are UBports' and the device's own,
+> unmodified.
+
 | | |
 |---|---|
 | `fp3-ubuntu-touch-live.dts` | the tree **as it runs** — complete and fully resolved, dumped off the live device |

@@ -8,6 +8,13 @@ Without this, the [kernel branches](https://github.com/llg179/linux) are only
 source: nothing records which config was used, which symbols had to be turned
 on by hand, or how the thing was actually built.
 
+> **AI-generated.** Written by Claude (Opus 5) under the direction of
+> Lajosházi, László Gergely, who reviewed every change and made the
+> measurements behind the numbers. Kernel commits carry `Co-authored-by:
+> Claude`; anything prepared for the LKML carries `Assisted-by:` instead and
+> never a `Signed-off-by` from the assistant, since only a human can certify
+> the DCO.
+
 ## The goal, and why the names have no version in them
 
 `llg179/linux` is a **rolling forward-port** of Fairphone 3 support onto the

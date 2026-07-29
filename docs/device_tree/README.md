@@ -5,6 +5,11 @@ content came from, and how much of the surrounding tree is upstream. The trees
 themselves are checked in here, so none of the claims below have to be taken on
 trust.
 
+> **AI-generated.** Written by Claude (Opus 5) under the direction of
+> Lajosházi, László Gergely, who reviewed it. The device trees checked
+> in under `downstream/` are **not** ours and not generated — they are the
+> vendor's and UBports' published sources, unmodified.
+
 | directory | contents | what it is | its README |
 |---|---|---|---|
 | [`before_update/`](before_update/) | [`sdm632-fairphone-fp3.dts`](before_update/sdm632-fairphone-fp3.dts) · [`pmi632.dtsi`](before_update/pmi632.dtsi) | the **upstream mainline** files exactly as the base ships them — what we had to touch | *(this page,* [below](#before--after)*)* |
