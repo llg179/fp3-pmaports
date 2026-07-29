@@ -44,19 +44,27 @@ can be read without a kernel checkout.
 Provenance, as of this snapshot:
 
 * base: `v7.1.3-r0` (tag in [`llg179/linux`](https://github.com/llg179/linux), the msm8953-mainline 7.1.3 release)
-* ours: `integration/7.1.3` — the change itself is commit [`ca2896133002`](https://github.com/llg179/linux/commit/ca2896133002d44daee935ac45a749dab641ef45),
+* ours: `integration/7.1.3` — four commits touch the device tree, the bulk of it
+  [`ca2896133002`](https://github.com/llg179/linux/commit/ca2896133002d44daee935ac45a749dab641ef45)
   *"FP3: integrated device tree (audio + charger + camera) for 7.1.3 testing"*
+  (+375/−4); then
+  [`b7a6d32e`](https://github.com/llg179/linux/commit/b7a6d32eb9b954ce45d5630ba653b85d081b4ea8)
+  adds the watchdog node (+41),
+  [`3b3043fe`](https://github.com/llg179/linux/commit/3b3043feab7c) removes the
+  three framer-poke lines again, and
+  [`1f5b95d9`](https://github.com/llg179/linux/commit/1f5b95d9d62adb7b31644903d14bc3b8aa8c0f8c)
+  adds the battery thermistor channel (+12/−2)
 
 Both copies are byte-identical to the corresponding git blobs, so
 `diff -u before_update/<file> after_update/<file>` reproduces our delta:
-**+375 / −4 lines** across the two files.
+**+423 / −4 lines** across the two files.
 
 ### The files
 
 | file | delta | what we add |
 |---|---|---|
-| `sdm632-fairphone-fp3.dts` | 537 → 887 lines | the board changes: WCD9335 SLIMbus audio (`slimbam`, `slim_msm`, `tasha_ifd`, `wcd9335`, `divclk1_cdc`, `wcd_vout_1p8`, three pin-mux nodes, the `slim-playback` / `slim-capture` DAI links), the IMX363 rear camera (`camera@1a` plus the `&camss` port graph), and the charger side (`&pmi632_charger`, `fp3_battery`) |
-| `pmi632.dtsi` | 209 → 230 lines | the PMI632 charger node itself, the counterpart of the board-level `&pmi632_charger` |
+| `sdm632-fairphone-fp3.dts` | 537 → 925 lines | the board changes: WCD9335 SLIMbus audio (`slimbam`, `slim_msm`, `tasha_ifd`, `wcd9335`, `divclk1_cdc`, `wcd_vout_1p8`, three pin-mux nodes, the `slim-playback` / `slim-capture` DAI links), the IMX363 rear camera (`camera@1a` plus the `&camss` port graph), the charger side (`&pmi632_charger`, `fp3_battery`), and the `&watchdog` node with `qcom,start-at-probe` |
+| `pmi632.dtsi` | 209 → 240 lines | the PMI632 charger node itself, the counterpart of the board-level `&pmi632_charger`, plus `channel@4a` — the battery thermistor the charger reads a temperature from |
 
 The other three files in the `#include` chain — `sdm632.dtsi`, `msm8953.dtsi`,
 `pm8953.dtsi` — are **not** here because we do not touch them; the pin muxes our
@@ -156,8 +164,8 @@ and only **two** of them carry any of our work:
 
 | file | lines | commits | where it comes from |
 |---|---|---|---|
-| `sdm632-fairphone-fp3.dts` | 887 | 21 | Luca Weiss' upstream FP3 board file (since 2022-02-20) **+ one commit of ours** ([`ca289613`](https://github.com/llg179/linux/commit/ca2896133002d44daee935ac45a749dab641ef45), +358) |
-| `pmi632.dtsi` | 230 | 6 | upstream PMI632 PMIC description ([`a1f0f2eb`](https://github.com/torvalds/linux/commit/a1f0f2ebb044c7248c3f30b98de0f151505bd4bd)) **+ one commit of ours** ([`ca289613`](https://github.com/llg179/linux/commit/ca2896133002d44daee935ac45a749dab641ef45), +21 — the charger node) |
+| `sdm632-fairphone-fp3.dts` | 925 | 23 | Luca Weiss' upstream FP3 board file (since 2022-02-20) **+ three commits of ours** ([`ca289613`](https://github.com/llg179/linux/commit/ca2896133002d44daee935ac45a749dab641ef45) +358, the watchdog node +41, the framer-poke revert −3) |
+| `pmi632.dtsi` | 240 | 7 | upstream PMI632 PMIC description ([`a1f0f2eb`](https://github.com/torvalds/linux/commit/a1f0f2ebb044c7248c3f30b98de0f151505bd4bd)) **+ two commits of ours** ([`ca289613`](https://github.com/llg179/linux/commit/ca2896133002d44daee935ac45a749dab641ef45) +21 — the charger node; [`1f5b95d9`](https://github.com/llg179/linux/commit/1f5b95d9d62adb7b31644903d14bc3b8aa8c0f8c) +10 — the `BAT_THERM` channel) |
 | `sdm632.dtsi` | 142 | 8 | upstream only — `msm8953.dtsi` plus the SDM632 CPU/rpmpd overrides; untouched |
 | `msm8953.dtsi` | 3435 | 84 | upstream msm8953-mainline SoC file; untouched |
 | `pm8953.dtsi` | 200 | 10 | upstream PM8953 PMIC file; untouched |
@@ -167,7 +175,7 @@ Note that the `wcd_intr_default` / `cdc_reset_active` (`&tlmm`) and
 `&`-references, not in the SoC-level files — which is why the bottom three rows
 stay untouched.
 
-### Genealogy of the board file (21 commits, oldest first)
+### Genealogy of the board file (23 commits, oldest first)
 
 The "in mainline" column is the answer to `git merge-base --is-ancestor <sha>
 torvalds/master`, and the release is `git describe --contains`. **17 of the 20
@@ -185,10 +193,12 @@ msm8953-mainline.
 | [`4335b0ae1eb6`](https://github.com/llg179/linux/commit/4335b0ae1eb6e9da37e2078f5affebb937b8e18d) enable speaker | Luca Weiss, 2023-04-18 — builds on the AW8898 node | ❌ **fork-only**, carried along with it |
 | [`60f6f604cf3c`](https://github.com/llg179/linux/commit/60f6f604cf3cda9d50364804317538b26162c747) enable venus | Luca Weiss, 2026-05-06 — already present in the 7.0.9 base too, *not* something the 7.1.3 bump brought in | ❌ **fork-only** |
 | **[`ca2896133002`](https://github.com/llg179/linux/commit/ca2896133002d44daee935ac45a749dab641ef45)** integrated DT (audio + charger + camera) | **ours**, 2026-07-25 | ❌ ours, see `submit/<base>/*` |
+| **[`b7a6d32eb9b9`](https://github.com/llg179/linux/commit/b7a6d32eb9b954ce45d5630ba653b85d081b4ea8)** `&watchdog` with `qcom,start-at-probe` | **ours**, 2026-07-28 | ❌ ours, and deliberately not upstream-bound — it is the `debug` category |
+| **[`3b3043feab7c`](https://github.com/llg179/linux/commit/3b3043feab7c)** revert the SLIMbus framer pokes | **ours**, 2026-07-29 | ❌ ours — drops the `qcom,slim-framer-quirk-reg` property `ca289613` had put on `slim_msm`, after measurement showed the codec comes up without the poke |
 
 ### What our commit adds, and what it was derived from
 
-[`ca289613`](https://github.com/llg179/linux/commit/ca2896133002d44daee935ac45a749dab641ef45) adds 375 of the 887 lines, in four separable blocks:
+[`ca289613`](https://github.com/llg179/linux/commit/ca2896133002d44daee935ac45a749dab641ef45) adds 375 of the board file's 925 lines, in four separable blocks:
 
 | block | nodes | derived from |
 |---|---|---|
@@ -230,9 +240,9 @@ here: the `#include` chain still resolves to the same five files, and the
 `q6voice.h`, the msm8953 interconnect/GCC/rpmpd ones) are unchanged. Finally,
 diff *our own* delta on both bases — `git diff <oldbase> integration/<oldbase>`
 vs `git diff <newbase> integration/<newbase>` for the two touched files — and
-confirm they are line-for-line identical (358+/4− in the board file, 21+ in
-`pmi632.dtsi`); that is what proves the rebase neither dropped one of our hunks
-nor reverted an upstream one.
+confirm they are line-for-line identical (392+/4− in the board file, 31+ in
+`pmi632.dtsi`, as of 2026-07-29); that is what proves the rebase neither dropped
+one of our hunks nor reverted an upstream one.
 
 ### How much of the device tree is actually mainline
 

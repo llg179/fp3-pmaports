@@ -16,7 +16,7 @@ Worked across two real bases — `7.0.9` (retired, kept as history) and `7.1.3`
 | role | `7.0.9` (previous) | `7.1.3` (current) |
 |---|---|---|
 | base (upstream fork) | `7.0.9/main` | `7.1.3/main` |
-| work + fixes | `wip/7.0.9/{audio,voice,camera,charger}` | `wip/7.1.3/{audio,voice,camera,charger}` |
+| work + fixes | `wip/7.0.9/{audio,voice,camera,charger}` | `wip/7.1.3/{audio,voice,camera,charger,sensor,debug}` |
 | device build | `integration/7.0.9` | `integration/7.1.3` |
 | LKML minimal series | — *(rolled straight into 7.1.3)* | `submit/7.1.3/{audio,voice,camera,charger}` |
 | package `pkgver` | `7.0.9` | `7.1.3` |
@@ -24,6 +24,11 @@ Worked across two real bases — `7.0.9` (retired, kept as history) and `7.1.3`
 `7.1.3` was brought up cleanly, so its `wip` and `submit` branches point at the
 same commits; on a messier bump they diverge — `wip` carries the fix history,
 `submit` the distilled series.
+
+Two categories have no `submit` branch, for different reasons: `sensor` is not
+distilled yet, and `debug` never will be — the watchdog-at-probe change is a
+bring-up safety net, not upstream material. Both still obey the category rule,
+so both must be rolled.
 
 **Why `integration` is versioned.** A base bump breaks things — a rebased driver
 that no longer applies cleanly, a renamed Kconfig symbol, a clock that changed
@@ -106,8 +111,9 @@ git branch -f 7.2.0/main FETCH_HEAD
 
 # 1. rebase each category's work onto the new base -> wip/7.2.0/<category>
 #    (start from the previous base's wip if it still exists, else its submit)
-for cat in audio voice camera charger; do
-	git checkout -b wip/7.2.0/$cat submit/7.1.3/$cat
+for cat in audio voice camera charger sensor debug; do
+	#   sensor and debug have no submit branch - always start from their wip
+	git checkout -b wip/7.2.0/$cat wip/7.1.3/$cat
 	git rebase --onto 7.2.0/main 7.1.3/main wip/7.2.0/$cat
 	#   resolve conflicts; the commit COUNT does not grow - a rebase replays
 	#   the same minimal series, it does not add commits
@@ -116,7 +122,7 @@ done
 
 # 2. build integration/7.2.0 = cherry-pick union of the wip branches
 git checkout -B integration/7.2.0 7.2.0/main
-git cherry-pick <wip/7.2.0/audio range> <voice> <camera> <charger>
+git cherry-pick <wip/7.2.0/audio range> <voice> <camera> <charger> <sensor> <debug>
 git push -f fork integration/7.2.0        # derived + disposable, force is fine
 
 # 3. build the package - the ONLY version edit
@@ -138,6 +144,7 @@ cd linux-fp3
 #    Loop until fp3-selftest is green.
 
 # 6. everything works -> distil the minimal upstream series
+#    (only the upstream-bound categories; debug never gets one)
 for cat in audio voice camera charger; do
 	git checkout -b submit/7.2.0/$cat wip/7.2.0/$cat
 	#   squash/reorder to the minimal set, checkpatch each commit, keep the
@@ -147,8 +154,10 @@ for cat in audio voice camera charger; do
 done
 
 # 7. the new base is validated -> prune the old one
-for cat in audio voice camera charger; do
+for cat in audio voice camera charger sensor debug; do
 	git push fork --delete wip/7.1.3/$cat
+done
+for cat in audio voice camera charger; do
 	git push fork --delete submit/7.1.3/$cat   # once its LKML business is done
 done
 git push fork --delete integration/7.1.3

@@ -19,7 +19,10 @@ commits, and where the result may and may not go, is in the
 
 ## The files
 
-Ten files, 2655 insertions:
+Ten files, 2655 insertions — audio, camera and charger. The `sensor` and `debug`
+categories are not in this table: the SMGR/QRTR sensor stack and the watchdog
+change are written up in [`../sensors/README.md`](../sensors/README.md#provenance),
+where the measurements that produced them are.
 
 | file | Δ lines | whose code it is |
 |---|---|---|

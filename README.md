@@ -1,8 +1,8 @@
 # fp3-pmaports
 
 The postmarketOS package that builds the Fairphone 3 mainline kernel — mainline
-`msm8953` with the WCD9335 SLIMbus audio work, the Sony IMX363 rear camera and
-the PMI632 charger.
+`msm8953` with the WCD9335 SLIMbus audio work, the Sony IMX363 rear camera, the
+PMI632 charger and the sensors the SSC keeps behind a QMI service.
 
 Without this, the [kernel branches](https://github.com/llg179/linux) are only
 source: nothing records which config was used, which symbols had to be turned
@@ -47,18 +47,24 @@ For a base `X.Y.Z` there are three layers, each base-relative:
 | `integration/X.Y.Z` | build | the cherry-pick union of the `wip/X.Y.Z/*` branches; **this is what the package builds**, and it is versioned so the last working `integration/<prev>` survives while the new base is still being fixed |
 | `submit/X.Y.Z/<category>` | upstream | the **minimal** series distilled from `wip/X.Y.Z/<category>` — created only once everything works, ready to post to the LKML |
 
-The four categories are always the same:
+A category is one subsystem's worth of work — the unit a `submit` series is cut
+from, where there is going to be one. There are six:
 
-| category | what it adds |
-|---|---|
-| `audio` | WCD9335 over SLIMbus: playback, the four digital mics, headset (MBHC) jack detection |
-| `voice` | call audio, by routing the voice mixers over SLIMbus |
-| `camera` | the Sony IMX363 rear sensor |
-| `charger` | the PMI632 charger, via `qcom_smbx` |
+| category | what it adds | `submit` series |
+|---|---|---|
+| `audio` | WCD9335 over SLIMbus: playback, the four digital mics, headset (MBHC) jack detection | yes |
+| `voice` | call audio, by routing the voice mixers over SLIMbus | yes |
+| `camera` | the Sony IMX363 rear sensor | yes |
+| `charger` | the PMI632 charger via `qcom_smbx`, including the battery thermistor | yes |
+| `sensor` | proximity, ambient light and the IMU, over the SSC's QMI Sensor Manager | not yet |
+| `debug` | the bring-up safety net: the SoC watchdog started at probe, so a hung boot resets instead of waiting for hands | never — it is deliberately not upstream material |
 
 Reading it: "what runs on the phone" is always `integration/<pkgver>`; "what
 goes to the kernel" is always `submit/<pkgver>/<category>`; the base version is
 the only thing that changes.
+
+A `wip/<base>/<category>-debug` branch is something else again: an ephemeral
+offshoot for one investigation, not a category, and not cherry-picked anywhere.
 
 **The category rule (version-free):** a change lands on `wip/X.Y.Z/<category>`
 **and** is cherry-picked onto `integration/X.Y.Z` — the two never diverge,
@@ -109,14 +115,19 @@ is, what we added and what that was derived from, and what genuinely did not
 exist before — the same treatment
 [`docs/device_tree/README.md`](docs/device_tree/README.md) gives the `.dts`.
 
-Thirteen files, in short: the WCD9335 codec and the `apq8016_sbc` machine driver
+In short. Audio, camera and charger are ten files of other people's drivers with
+holes filled in: the WCD9335 codec and the `apq8016_sbc` machine driver
 (Srinivas Kandagatla), the Q6 voice DAI (Stephan Gerhold, Vincent Knecht, Otto
-Pflüger — not in Linus' tree) and `q6afe` (Kandagatla), the SLIMbus NGD
-controller (Kandagatla) and the Hexagon PAS driver (Bjorn Andersson), the SMB2
-charger driver (Casey Connolly), plus one new sensor driver structured on Intel's
-IMX3xx drivers. **Everything this port adds on top was developed with the
-assistance of [Claude Code](https://www.anthropic.com/claude-code)**, Anthropic's
-generative-AI coding agent.
+Pflüger — not in Linus' tree) and `q6afe` (Kandagatla), the SMB2 charger driver
+(Casey Connolly), the PMIC ADC5 driver (Siddartha Mohanadoss), plus one new
+camera driver structured on Intel's IMX3xx drivers. The sensor stack is the
+other shape: Yassine Oudjana's QRTR-bus and Sensor Manager series, **carried
+verbatim** so the authorship survives, with three new drivers and four fixes on
+top — that split is in
+[`docs/sensors/README.md`](docs/sensors/README.md#provenance). **Everything this
+port adds on top was developed with the assistance of
+[Claude Code](https://www.anthropic.com/claude-code)**, Anthropic's generative-AI
+coding agent.
 
 ### How the assistance is recorded
 
@@ -160,14 +171,16 @@ arrangement obeys — playback, the microphones, headset detection and call audi
   stack works, the device trees (ours plus both downstream references), the
   kernel changes file by file, the sensor bring-up, and the build / deploy /
   base-rolling runbooks
-* [`docs/sensors/`](docs/sensors/) — the sensor (proximity/ALS/IMU) investigation:
-  why nothing works, what was measured, the upstream Sensor Manager work this
-  builds on, and what we add on top — **not working yet**, see the page
+* [`docs/sensors/`](docs/sensors/) — the sensor (proximity / ambient light / IMU)
+  bring-up: how the SSC hides them behind a QMI service, what was measured, the
+  upstream Sensor Manager work this builds on and what we add — **working**, with
+  the magnetometer's calibration still open
 
 ## Device tree
 
 The board `.dtb` comes from five files; we touch **two**
-(`sdm632-fairphone-fp3.dts`, `pmi632.dtsi`, +375/−4 lines in commit
+(`sdm632-fairphone-fp3.dts`, `pmi632.dtsi`, +423/−4 lines, most of it the
+integrated DT commit
 [`ca289613`](https://github.com/llg179/linux/commit/ca2896133002d44daee935ac45a749dab641ef45)),
 and 17 of the 20 upstream commits in the board file are in Linus' tree — the
 SoC-level `msm8953.dtsi` much less so, which constrains what a
