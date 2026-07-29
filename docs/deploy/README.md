@@ -148,3 +148,61 @@ simply is not there.
 ⚠️ The slot_b rootfs is 2.4 GB and normally sits around 90% full. At 100% the
 graphical session does not come up at all, which looks like a kernel
 regression and is not one — check `df -h /` before blaming the build.
+
+## Things that look like build or kernel bugs and are not
+
+Every one of these cost real time at least once.
+
+**Never pad an abbreviated commit hash.** `_commit` takes the full 40
+characters; extending the 12 from `git log --oneline` by guessing gives a
+GitHub 404 at `./pmb checksum` that reads like the push failed. Take it from
+`git rev-parse <branch>` or, better, from `git ls-remote fork <branch>`, which
+also proves the push landed.
+
+**Do not run `./pmb checksum` (or a second build) while a build is running.**
+They share `/home/pmos/build` in the chroot, so the running build loses its
+source tree mid-compile and dies with
+
+```
+<command-line>: fatal error: ./include/linux/compiler-version.h: No such file or directory
+```
+
+which points at the kernel source rather than at the concurrent command.
+
+**`apk add` finishing with `1 error` is usually the network, not the package.**
+With no route to the repositories the phone reports
+
+```
+WARNING: updating and opening https://...: DNS: transient error (try again later)
+1 error; 2035.3 MiB in 1208 packages
+```
+
+and still installs the local apk correctly — `apk list -I | grep linux-fp3`
+confirms it. It matters because a deploy script with `set -e` aborts here, which
+silently skips whatever came after (in one case the whole extlinux fix-up, so
+the fallback entry, `panic=10` and the menu timeout were all missing on the next
+boot).
+
+**`apk add` regenerates `extlinux.conf` and overwrites `/boot/*.dtb`,** so the
+fallback label, `panic=10` and the menu timeout have to be written *after* the
+install, never before. Check the file, do not assume:
+
+```sh
+ssh $D cat /boot/extlinux/extlinux.conf
+```
+
+**Watch the device's free space.** Each kernel apk is ~30 MB and they accumulate
+in `/home/fp3` and `/var/cache/apk`; on a 2.4 GB rootfs a day of iteration
+reaches 99% full, and the phone raises a low-disk notification long before
+anything fails visibly. Clean up between rounds:
+
+```sh
+ssh $D 'sudo sh -c "rm -f /home/fp3/*.apk; rm -rf /var/cache/apk/*; \
+    journalctl --vacuum-size=20M"'
+```
+
+⚠️ `journalctl --vacuum-size` is not free: it drops the kernel log of earlier
+boots, and a later comparison across boots then shows a *perfect* correlation
+that is really just missing data. If you are about to compare boots, check that
+each one still has a plausible number of lines
+(`journalctl -b -N -k | wc -l`).

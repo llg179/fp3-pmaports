@@ -904,3 +904,33 @@ A liveness check on something that actually matters — the network coming up, s
 — would close the running-system half. Note also that
 `/sys/class/watchdog/watchdog0/bootstatus` reads `0` after such a reset on this
 device, so it is not a usable "was this a watchdog reset?" indicator here.
+
+## Recovering the rootfs from the other slot
+
+The pmOS root lives inside `system_b` in its own DOS table, so it is reachable
+from the Ubuntu Touch slot without flashing:
+
+```
+fastboot set_active a          # boot UT
+losetup -P /dev/loopN /dev/mmcblk0p31
+e2fsck -f -y /dev/loopNp1      # pmOS_boot  (ext2)
+e2fsck -f -y /dev/loopNp2      # pmOS_root  (ext4)
+fastboot set_active b          # back to pmOS
+```
+
+Done once here after a forced reboot, and it found real damage: journal recovery,
+two extent-tree optimisations, wrong free block and inode counts, and a stuck
+`orphan_present` flag.
+
+## Next steps
+
+1. **Ambient light** — teach the Sensor Manager core to request more than one
+   data type per sensor, and split the reports by the data type in the metadata.
+2. **Calibrate the magnetometer** — a full-sphere fit to separate the hard-iron
+   offset from the scale, and a heading check against a known direction.
+3. **The mount matrix** — check `AccelerometerTilt` against the phone's physical
+   orientation and replace the inherited msm8996 matrix if it does not match.
+4. **The intermittent SLIMbus audio failure** — build without the two leftover
+   framer pokes and count the failure rate over several cold boots.
+5. **Find the real content of groups 20, 2691 and 3050**, which are zero-filled.
+6. **Package upstream's C `sns-reg` as an aport**, replacing `snsregd.py`.

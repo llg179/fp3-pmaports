@@ -103,8 +103,11 @@ on one boot and `iio:device3` on the next. Match on `name`, never on the index.
 
 ## Building and installing
 
-The kernel side is in the `linux-fp3` package; the sensor commits live on
-`wip/<base>/sensor` and are cherry-picked onto `integration/<base>`. Config:
+The procedure is the same as for any FP3 kernel change and lives in one place:
+**[`../deploy/README.md`](../deploy/README.md)**. What is specific to the
+sensors is only this.
+
+Kernel config:
 
 ```
 CONFIG_IIO_QCOM_SMGR=m
@@ -114,20 +117,10 @@ CONFIG_IIO_QCOM_SMGR_GYRO=m
 CONFIG_IIO_QCOM_SMGR_MAG=m
 ```
 
-Userspace, both required:
-
-```
-sudo install -m755 ../../userspace-sensors/snsregd.py /usr/local/bin/
-sudo install -m644 ../../userspace-sensors/snsregd.service /etc/systemd/system/
-sudo mkdir -p /etc/sns-reg.d && sudo cp ../../userspace-sensors/registry.conf ../../userspace-sensors/groups.txt /etc/sns-reg.d/
-sudo systemctl enable --now snsregd
-
-sudo install -m644 ../../userspace-sensors/90-fp3-proximity.rules /etc/udev/rules.d/
-sudo udevadm control --reload && sudo udevadm trigger --subsystem-match=iio
-```
-
-Without `snsregd` the SSC never brings its sensors up and no IIO device appears.
-Without the udev rule the proximity device exists and `iio-sensor-proxy` ignores
+Userspace — the registry server, its data and the udev rule, all of them
+required: **[`../../userspace-sensors/`](../../userspace-sensors/)**. Without
+the registry server the SSC never starts its sensors and no IIO device appears;
+without the udev rule the proximity device exists and `iio-sensor-proxy` ignores
 it in silence.
 
 ## Testing
@@ -341,36 +334,6 @@ hardware needs the UART.
 package's copy and **regenerates `extlinux.conf`**, so the DT nodes and `panic=10`
 must be laid down *after* the install, not before. Otherwise you believe the net
 is in place and it is not.
-
-## Recovering the rootfs from the other slot
-
-The pmOS root lives inside `system_b` in its own DOS table, so it is reachable
-from the Ubuntu Touch slot without flashing:
-
-```
-fastboot set_active a          # boot UT
-losetup -P /dev/loopN /dev/mmcblk0p31
-e2fsck -f -y /dev/loopNp1      # pmOS_boot  (ext2)
-e2fsck -f -y /dev/loopNp2      # pmOS_root  (ext4)
-fastboot set_active b          # back to pmOS
-```
-
-Done once here after a forced reboot, and it found real damage: journal recovery,
-two extent-tree optimisations, wrong free block and inode counts, and a stuck
-`orphan_present` flag.
-
-## Next steps
-
-1. **Ambient light** — teach the Sensor Manager core to request more than one
-   data type per sensor, and split the reports by the data type in the metadata.
-2. **Calibrate the magnetometer** — a full-sphere fit to separate the hard-iron
-   offset from the scale, and a heading check against a known direction.
-3. **The mount matrix** — check `AccelerometerTilt` against the phone's physical
-   orientation and replace the inherited msm8996 matrix if it does not match.
-4. **The intermittent SLIMbus audio failure** — build without the two leftover
-   framer pokes and count the failure rate over several cold boots.
-5. **Find the real content of groups 20, 2691 and 3050**, which are zero-filled.
-6. **Package upstream's C `sns-reg` as an aport**, replacing `snsregd.py`.
 
 ## The investigation
 
