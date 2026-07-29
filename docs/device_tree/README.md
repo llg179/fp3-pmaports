@@ -15,6 +15,12 @@ trust.
 | &nbsp;&nbsp;└ [`downstream/fairphone/`](downstream/fairphone/) | one directory per release | the vendor's own sources, **Fairphone** (<https://code.fairphone.com/projects/fairphone-3/gpl.html>) | — |
 | &nbsp;&nbsp;&nbsp;&nbsp;└ [`downstream/fairphone/3.A.0136/`](downstream/fairphone/3.A.0136/) | board file [`sdm632-mtp-s3.dts`](downstream/fairphone/3.A.0136/arch/arm64/boot/dts/qcom/sdm632-mtp-s3.dts) in [`…/dts/qcom/`](downstream/fairphone/3.A.0136/arch/arm64/boot/dts/qcom/) (938 files) + [`include/dt-bindings/`](downstream/fairphone/3.A.0136/include/dt-bindings/) | the GPL sources of Fairphone OS **3.A.0136**, the last build for this phone | [README](downstream/fairphone/3.A.0136/README.md) |
 
+## Review answers
+
+| question | answer |
+|---|---|
+| [`firmware-name.md`](firmware-name.md) | why `firmware-name` keeps its `qcom/<soc>/<vendor>/<board>/` path, with the mainline references and the MBN signing identities measured off this phone |
+
 In both source trees the phone is Qualcomm's `sdm632-mtp-s3` reference board;
 that board file pulls in `sdm632.dtsi` → `msm8953.dtsi` and the
 `sdm450-pmi632*` files from the same directory. Which file it is, and the
