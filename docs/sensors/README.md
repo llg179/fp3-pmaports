@@ -185,9 +185,6 @@ known size into a scale check: a quarter circle has to come out near 90°.
   `AccelerometerTilt: face-down` for a phone reading `z = -9.69`. Whether that
   matches the physical orientation needs one deliberate check with the phone
   held screen-up; if it does not, the matrix needs an FP3 value.
-* **Audio fails at the first use in some boots** — an intermittent SLIMbus
-  channel activation failure, not caused by the sensor stack (measured), with
-  the leftover framer pokes as the prime suspect.
 * **Groups 20, 2691 and 3050 are zero-filled, not real.** The stack initialises,
   but whatever those groups configure is wrong. They need their real offsets in
   `sns.reg`, or their key lists.

@@ -227,11 +227,18 @@ check_categories() {
 		echo "      (pass --offline to run without this guard)"
 		return 1
 	fi
+	# Debug branches are exempt on purpose. wip/<base>/<cat>-debug is an
+	# ephemeral offshoot of a category, and wip/<base>/debug carries
+	# instrumentation that helps the next investigation rather than a
+	# subsystem a user can exercise - the watchdog-at-probe work lives there.
+	# Requiring a check for them would either invent a meaningless one or keep
+	# the suite permanently red, and a guard that is always red stops being
+	# read. Everything else must still be listed.
 	for _ref in $(printf '%s\n' "$_heads" | awk '{print $2}'); do
 		_branch=${_ref#refs/heads/}		# wip/7.1.3/audio
 		_cat=${_branch##*/}			# audio
 		case "$_cat" in
-		*-debug) continue ;;		# debug offshoot, carries no category
+		debug|*-debug) continue ;;	# see below
 		esac
 		if ! categories | grep -qx "$_cat"; then
 			echo "FAIL: topic branch '$_branch' has no '$_cat' entry in checks/CATEGORIES"

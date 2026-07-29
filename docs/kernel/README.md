@@ -62,21 +62,18 @@ itself is FP3-specific and **new**.
   into `-EINVAL` — unrecoverable in practice, because nothing on the AP side can
   reset the ADSP's port state.
 
-## The QDSP6SS SLIMbus framer pair
+## The QDSP6SS SLIMbus framer pair — removed
 
-* [`6cd150e75fb7`](https://github.com/llg179/linux/commit/6cd150e75fb7f8d93cbc0f1fe6ca9cc23c33171e) — `qcom_q6v5_pas.c`: a msm8953 ADSP descriptor
-  (`qcom,msm8953-adsp-pil`) that clears QDSP6SS `0x0c20002c` bit 3 after
-  `AUTH_AND_RESET`, which the downstream PIL path does and the mainline PAS path
-  does not.
-* [`36c939972197`](https://github.com/llg179/linux/commit/36c939972197288de5b5e690fd8740d8a8b9eb90) — `qcom-ngd-ctrl.c`: clear the same bit again immediately
-  before the capability exchange, since the ADSP re-sets it during its own init.
+Two commits used to clear QDSP6SS `0x0c20002c` bit 3, one in `qcom_q6v5_pas.c`
+after `AUTH_AND_RESET` and one in `qcom-ngd-ctrl.c` before the capability
+exchange, plus the `qcom,slim-framer-quirk-reg` device tree property that armed
+the second. **All three are gone since 2026-07-29**, reverted after measurement
+showed the codec comes up, and sound crosses SLIMbus in both directions,
+without them — and that the PAS one never wrote anything in the first place
+(`0x101->0x101`).
 
-Both are **new**, and the starting point was a 2025 LKML thread on the same
-register ([lkml.iu.edu](https://lkml.iu.edu/hypermail/linux/kernel/2502.1/00985.html)).
-
-⚠️ Their necessity is **not settled**. As last measured (2026-07-26) the SLIMbus
-chain came up identically with and without the pokes, one boot each; confirming
-that over a few cold boots — and then dropping both commits — is outstanding.
+The whole story, including the log lines that read like faults and are not, is
+in [`../audio/qdsp6ss-framer-poke.md`](../audio/qdsp6ss-framer-poke.md).
 
 ## Camera: `imx363.c`
 

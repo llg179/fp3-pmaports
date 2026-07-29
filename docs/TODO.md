@@ -95,35 +95,46 @@ carries no interconnect path. Adding one would make `bw_enable()` vote during
 The audio path works without it, so this is not a blocker — it is kept in case
 ADSP boot timing ever needs revisiting.
 
-## Unsettled: are the two QDSP6SS framer pokes needed at all?
+## Settled: the two QDSP6SS framer pokes were not needed
 
-`integration/<base>` carries two commits that clear QDSP6SS `0x0c20002c` bit 3 —
-one in `qcom_q6v5_pas.c` after `AUTH_AND_RESET`, one in `qcom-ngd-ctrl.c` before
-the capability exchange (described in
-[`kernel/README.md`](kernel/README.md#the-qdsp6ss-slimbus-framer-pair)). As last
-measured (2026-07-26) the SLIMbus chain came up **identically with and without
-them** — one boot each way, which is not enough to conclude.
+Removed on 2026-07-29. `integration/<base>` used to carry two commits clearing
+QDSP6SS `0x0c20002c` bit 3 — one in `qcom_q6v5_pas.c` after `AUTH_AND_RESET`,
+one in `qcom-ngd-ctrl.c` before the capability exchange. Both are reverted,
+along with the `qcom,slim-framer-quirk-reg` device tree property that armed the
+second one (76 lines gone).
 
-**The measurement runs on `wip/7.1.3/audio-debug`.** That branch is not an
-offshoot of `wip/7.1.3/audio`: it forks `integration/7.1.3` and adds exactly
-three commits, which is the whole experiment —
+What settled it, on the same phone with the same protocol, one variable:
 
-* a revert of the `qcom-ngd-ctrl.c` poke,
-* a revert of the `qcom_q6v5_pas.c` poke,
-* `vote TURBO CX for the ADSP` (`required-opps = <&rpmpd_opp_turbo>`).
+| | audio opens | tone across SLIMbus both ways | `MC:0x21` | codec |
+|---|---|---|---|---|
+| without the pokes | 8/8 cold boots | 8/8 | 8 | 1 |
+| with the pokes | 8/8 cold boots | 8/8 | **8** | 1 |
 
-A few cold boots on that branch settle it; if the chain still comes up, both
-poke commits can be dropped from `wip/<base>/audio` and `integration/<base>`.
+Not a trace of a difference. Three things worth keeping from getting there:
 
-**The CX-corner hypothesis behind the third commit is already disproven.** Its
-message argues that the ADSP firmware derives the Q6 core divider from the CX
-performance state, and that mainline never requests one. It does:
-`qcom_pas_pds_enable()` calls `dev_pm_genpd_set_performance_state(pds[i],
-INT_MAX)` on every proxy power domain before powering it up
-(`drivers/remoteproc/qcom_q6v5_pas.c`), which was confirmed live —
-`cx_perf = 2147483647` for roughly 160 ms across the ADSP boot window. So
-`required-opps` is a no-op here and that commit should not be carried forward;
-only the two reverts are the experiment.
+* **The PAS poke never wrote anything.** Its own log line reads
+  `QDSP6SS 0xc20002c 0x101->0x101` — by the time it runs, bit 3 is already
+  clear. Only the SLIMbus one wrote (`0x10b->0x103`).
+* **`MC:0x21` is not a fault signal.** It is `SLIM_USR_MC_DEF_ACT_CHAN`,
+  "define and activate channel", from `qcom_slim_ngd_enable_stream()`. It
+  appears eight times per boot **with and without** the pokes while audio works
+  — the count tracks how many streams are started, not how many failed. Same for
+  `MC:0xd` (`ADDR_QUERY`, which is why `Failed to get logical address` is
+  followed 200 ms later by the codec answering) and `capability exchange
+  timed-out`.
+* **A boot with nobody logged in measures nothing.** The first version of this
+  test counted `MC:0x21` in the kernel log and found none in twenty-five boots,
+  because without a user session nothing starts audio and the log ends at
+  twenty seconds. The metric has to open the audio path.
+
+Reverting the PAS commit does **not** change which ADSP firmware is loaded: the
+descriptor it added differed from the msm8996 one only in the firmware name and
+the quirk register, and the FP3 device tree sets `firmware-name` on `&lpass`,
+which the driver prefers. The `required-opps` CX-turbo idea that used to share
+this experiment was already disproven separately —
+`qcom_pas_pds_enable()` votes `INT_MAX` on every proxy power domain, measured
+live as `cx_perf = 2147483647` for roughly 160 ms across the ADSP boot window,
+so it was a no-op.
 
 ## Also open, written up elsewhere
 
@@ -131,8 +142,10 @@ only the two reverts are the experiment.
   it would take to lift it — battery temperature, JEITA, a thermal cooling
   device, and letting the DT drive the register — is in
   [`device_tree/README.md`](device_tree/README.md#what-it-would-take-to-charge-at-full-current).
-* **Sensors do not work.** The SSC path and what was measured on it are in
-  [`sensors/README.md`](sensors/README.md).
+* **Sensors work**, including proximity blanking during a call and ambient
+  light. What is left there is calibration rather than bring-up: the
+  magnetometer has an unknown hard-iron offset and scale, and the mount matrix
+  is inherited from msm8996. See [`sensors/README.md`](sensors/README.md).
 * **Camera streaming is not working end to end.** The sensor probes and its
   link into CAMSS enables; what remains is on the CAMSS side, not in the
   driver — see the `submit/<base>/camera` commit message.

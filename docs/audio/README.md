@@ -228,6 +228,13 @@ silent one; each is enforced somewhere in the code above.
 | `gsettings get org.sigxcpu.feedbackd profile` | `full` — `quiet` mutes the ringtone |
 | `amixer -c 0 cget name='RX0 Mix Digital Volume'` | tracks the volume keys during an earpiece call |
 
+## History
+
+* [`qdsp6ss-framer-poke.md`](qdsp6ss-framer-poke.md) — the QDSP6SS register the
+  kernel used to write on every boot to make the SLIMbus framer answer, why it
+  looked necessary, and the measurement that showed it was not. Removed
+  2026-07-29.
+
 After editing any UCM file, restart PulseAudio (`pulseaudio -k`) — it reads the
 sequences when it loads the card, so a running instance still applies the old
 ones. And note that while the screen is locked the *greeter* runs its own

@@ -874,10 +874,12 @@ the rest of the boot; a good one logs a harmless TX underflow. A single late
 
 So it is an **intermittent SLIMbus channel-activation failure at the first audio
 use**, of the same family as the old framer saga, and unrelated to the sensors.
-Prime suspect: the two framer pokes that still run on every boot
-(`QDSP6SS 0x101->0x101`, `slim-ngd 0x10b->0x103`) after being measured as
-unnecessary. The test is a build without them and a failure-rate count over
-several cold boots.
+The framer pokes were the prime suspect and were **cleared**: measured on
+2026-07-29 with eight cold boots each way, audio opened and a tone crossed
+SLIMbus in both directions identically with and without them, so they were
+removed. See [`../../audio/qdsp6ss-framer-poke.md`](../../audio/qdsp6ss-framer-poke.md).
+That leaves the intermittent failure itself unexplained rather than pinned on
+the pokes.
 
 ### The oops, and what the safety net did and did not catch
 
@@ -997,7 +999,8 @@ two extent-tree optimisations, wrong free block and inode counts, and a stuck
    offset from the scale, and a heading check against a known direction.
 2. **The mount matrix** — check `AccelerometerTilt` against the phone's physical
    orientation and replace the inherited msm8996 matrix if it does not match.
-3. **The intermittent SLIMbus audio failure** — build without the two leftover
-   framer pokes and count the failure rate over several cold boots.
+3. **The intermittent SLIMbus audio failure** — still unexplained. The framer
+   pokes were ruled out by measurement and removed, so the next lead has to
+   come from somewhere else.
 4. **Find the real content of groups 20, 2691 and 3050**, which are zero-filled.
 5. **Package upstream's C `sns-reg` as an aport**, replacing `snsregd.py`.
