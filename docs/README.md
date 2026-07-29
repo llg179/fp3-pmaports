@@ -25,7 +25,7 @@ flash node, and pointers to the items written up on the pages below.
 |---|---|
 | [`deploy/`](deploy/README.md) | building the package and getting it onto the phone, keeping the last working kernel bootable — including the device-tree-only shortcut |
 | [`rolling-a-new-base.md`](rolling-a-new-base.md) | moving the whole port to a new `msm8953-mainline` release: the checkouts, the rebases, the one place the version is edited |
-| [`kernel/config.md`](kernel/config.md) | `config-fp3.aarch64`, and the symbol renames that silently drop a driver across a base bump |
+| [`kernel/config.md`](kernel/config.md) | what [`config-fp3.aarch64`](../linux-fp3/config-fp3.aarch64) turns on beyond the postmarketOS base, and the symbol renames that silently drop a driver across a base bump |
 
 Two more places worth knowing about: [`../tests/`](../tests/) holds
 `fp3-selftest`, the functional regression battery, and

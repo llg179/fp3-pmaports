@@ -1,7 +1,9 @@
 # The kernel config
 
-`config-fp3.aarch64` is the postmarketOS `qcom-msm8953` config carried forward
-to the current base. `prepare()` then turns on what that config misses:
+[`config-fp3.aarch64`](../../linux-fp3/config-fp3.aarch64) is the postmarketOS
+`qcom-msm8953` config carried forward to the current base;
+[`APKBUILD`](../../linux-fp3/APKBUILD)'s `prepare()` then turns on what that
+config misses:
 
 | symbol | why |
 |---|---|
