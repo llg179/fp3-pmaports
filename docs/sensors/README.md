@@ -32,8 +32,11 @@ in silence ([step 12](#step-12--what-the-sensor-itself-says-and-why-nobody-was-r
 The measurements that settled the value mapping are in
 [step 13](#step-13--proximity-works-end-to-end).
 
-Ambient light is the one part still missing: it lives in a second data type the
-Sensor Manager core never asks for.
+All four sensors were then moved by hand and checked against physical reality
+([step 14](#step-14--all-four-sensors-measured-against-physical-reality)); the
+gyroscope's scale is measured rather than assumed, the magnetometer is alive but
+uncalibrated. Ambient light is the one part still missing: it lives in a second
+data type the Sensor Manager core never asks for.
 
 ⚠️ Read [the correction](#correction-2026-07-28--every-publish-in-steps-48-was-a-bye)
 before trusting steps 4–8: the control code used to publish a QMI service was
@@ -786,6 +789,75 @@ requests for a non-zero sensor ID — `iio:device3 = qcom-smgr-mag`,
 `iio:device4 = qcom-smgr-gyro`. Their scales are assumed rather than measured;
 see the `TODO`s in the drivers.
 
+### Step 14 — all four sensors, measured against physical reality
+
+Binding a driver proves nothing about the numbers. Each sensor was moved by
+hand while [`tools/sensortest.py`](tools/sensortest.py) read it, so that "the
+driver works" means something.
+
+| sensor | at rest | moved | verdict |
+|---|---|---|---|
+| accelerometer | \|v\| = 9.70 m/s², z = −9.7 | x −0.6…+9.7, y −11.3…+3.5, z −11.8…+4.5 | **passes** — every axis reaches ±1 g, so the three really are three directions |
+| gyroscope | 0.01–0.04 rad/s bias | peaks to 25 rad/s | **passes, and the scale is now measured** |
+| magnetometer | (0.35, −1.22, 0.36) | all axes swing, \|v\| 0.6…2.8 | **alive, uncalibrated** |
+| proximity | 280…546 | 1636…2966 when covered | **passes** — 5 clean cover/uncover cycles |
+
+**The gyroscope's scale is no longer an assumption.** It was taken from the
+accelerometer's (Q16 in the sensor's SI unit) with a `TODO` next to it. Turning
+the phone through a **quarter circle on a table** integrates the Z channel to
+**86.5°** — 3.9% short of 90°, which is about what a hand-slid rotation and a
+uniform-timestep integral cost. X and Y stayed under 10° during that turn, so
+the axes are separate. The `TODO` is now a measurement.
+
+**The magnetometer responds but cannot be trusted yet.** Its magnitude should be
+constant under rotation and it is not (0.6 to 2.8), and the axes swing around
+offset centres rather than zero — a large **hard-iron** offset from the phone's
+own magnets, on top of a scale that is itself a guess. With both unknown at
+once, neither can be solved from this data; a full-sphere fit is needed. As a
+compass it needs the calibration userspace normally does.
+
+☠️ **The device index moves between boots.** The Sensor Manager registers each
+platform device as its enumeration completes, so the accelerometer has been
+`iio:device2` on one boot and `iio:device3` on the next. Anything that hardcodes
+an index is wrong by the next reboot — match on `name`, as `sensortest.py` and
+the udev rule do.
+
+### Does the sensor stack break audio? No — measured
+
+Worth writing down because it looked like it did. After the proximity work the
+phone went completely silent: `paplay`, canberra and feedbackd all reported
+success, the sink was `RUNNING`, the mixers and DAPM were right, and the PCM was
+open — but nothing came out. `dmesg` showed the WCD9335 unreachable over
+SLIMbus (`TX timed out:MC:0x21`).
+
+Comparing boots settled it. The fatal timeout appears **23 s into the boot**,
+before any probing and long before the call, and the same kernel produced both
+failing and working boots — one of the working ones with `snsregd` running and
+publishing at the same second as in the failing ones:
+
+| boot | fatal `MC:0x21` in the first 60 s | snsregd | audio |
+|---|---|---|---|
+| 20:32 | 2 | running | silent |
+| 20:57 | 2 | running | silent |
+| 20:59 (cold) | 0 | – | fine |
+| 21:01 | 0 | – | fine |
+| 21:17 | 0 | **running** | **fine** |
+
+The bring-up is character-for-character identical in a good and a bad boot for
+the first 15 s — including `capability exchange timed-out` and `Failed to get
+logical address`, which appear in **every** boot and are therefore not the
+fault. The two diverge at the first audio use: a bad boot answers with
+`TX timed out:MC:0x21` on both `slim-ngd` and `wcd9335-slim` and stays mute for
+the rest of the boot; a good one logs a harmless TX underflow. A single late
+`MC:0x21` is survivable — a working boot has one at 725 s and audio kept going.
+
+So it is an **intermittent SLIMbus channel-activation failure at the first audio
+use**, of the same family as the old framer saga, and unrelated to the sensors.
+Prime suspect: the two framer pokes that still run on every boot
+(`QDSP6SS 0x101->0x101`, `slim-ngd 0x10b->0x103`) after being measured as
+unnecessary. The test is a build without them and a failure-rate count over
+several cold boots.
+
 ### The oops, and what the safety net did and did not catch
 
 Binding a driver to the proximity device by hand hit a NULL dereference in
@@ -822,11 +894,17 @@ device, so it is not a usable "was this a watchdog reset?" indicator here.
   teaching the core to ask for more than one data type per sensor, and telling
   the samples apart by the `(data_type << 16) | (sensor_id << 8) | 1` field in
   the report metadata.
+* **The magnetometer is uncalibrated and its scale unverified** — hard-iron
+  offset and scale are both unknown, and one cannot be solved from the other
+  without a full-sphere fit.
 * **The mount matrix is probably wrong.** `smgr_accel.c` carries an msm8996
   matrix with a `TODO` next to it, and on the FP3 `iio-sensor-proxy` reports
   `AccelerometerTilt: face-down` for a phone reading `z = -9.69`. Whether that
   matches the physical orientation needs one deliberate check with the phone
   held screen-up; if it does not, the matrix needs an FP3 value.
+* **Audio fails at the first use in some boots** — an intermittent SLIMbus
+  channel activation failure, not caused by the sensor stack (measured), with
+  the leftover framer pokes as the prime suspect.
 * **Groups 20, 2691 and 3050 are zero-filled, not real.** The stack initialises,
   but whatever those groups configure is wrong. They need their real offsets in
   `sns.reg`, or their key lists.
@@ -913,6 +991,7 @@ to matter more than expected, and the first one blocked everything:
 | [`tools/readprox.py`](tools/readprox.py) | the same for the proximity/light device |
 | [`tools/smgrbuf.py`](tools/smgrbuf.py) | sends `SNS_SMGR_BUFFERING` by hand and sweeps its parameters, so a question costs a second instead of a 30-minute kernel build |
 | [`tools/smgrind.py`](tools/smgrind.py) | asks for buffering on one sensor and prints the indications the SSC sends back — answers "is this data really from that sensor" from the wire |
+| [`tools/sensortest.py`](tools/sensortest.py) | reads any of the four sensors and prints per-axis ranges, so "it binds" can be told from "it measures"; for the gyroscope it also integrates the run, which turns a known rotation into a scale check |
 | [`tools/proxcal.sh`](tools/proxcal.sh) | prints `in_proximity_raw` once a second so a hand over the earpiece shows up as two levels — the measurement that decides `PROXIMITY_NEAR_LEVEL`, and the one that cannot be made remotely |
 | [`tools/sensinfo.py`](tools/sensinfo.py) | asks the SSC what a sensor advertises (`ALL_SENSOR_INFO`, `SINGLE_SENSOR_INFO`) — data types, rates, vendor and part name. Ask this before asking for data |
 | [`tools/smgrsweep.py`](tools/smgrsweep.py) | streams one sensor with the **driver's own** request parameters, data type as an argument, and counts indications. Use this rather than inventing a report rate: it is `sample_rate * 0xf000`, and a wrong one silently means "one report every two minutes" |
