@@ -15,8 +15,8 @@ here.
 |---|---|
 | [`audio/`](audio/README.md) | how sound gets in and out: the hardware chain, the layers, the two paths (media and call), and the rules the arrangement obeys |
 | [`device_tree/`](device_tree/README.md) | which `.dts`/`.dtsi` files the board is built from, what our one commit adds and where every value came from — with the trees themselves checked in, ours and both downstream references |
-| [`kernel/`](kernel/README.md) | the thirteen C files we change: whose driver each one is, what we added on top and what genuinely did not exist before |
-| [`sensors/`](sensors/README.md) | the proximity / ambient-light / IMU bring-up, which runs through the SSC and is not solved yet |
+| [`kernel/`](kernel/README.md) | the ten C files we change: whose driver each one is, what we added on top and what genuinely did not exist before |
+| [`sensors/`](sensors/README.md) | the proximity / ambient-light / IMU bring-up, which runs through the SSC — working, with calibration left |
 
 ## What is still open
 
@@ -36,3 +36,16 @@ Two more places worth knowing about: [`../tests/`](../tests/) holds
 `fp3-selftest`, the functional regression battery, and
 [`../userspace-audio/`](../userspace-audio/) the UCM profiles, PulseAudio
 drop-ins and call-audio helpers that the audio page describes.
+
+## What is deliberately not here
+
+**Method.** How to form a hardware hypothesis, which instrument answers which
+question, the brick-safety rules, the traps that cost a build cycle — those live
+in the [FP3 skills](https://github.com/llg179/Claude-skills-Fairphone3), because
+they outlive this device. These pages answer *what is true now*; the skills
+answer *how to find out*, and their `references/archive/` keeps the dated
+investigation logs that answer *was this already tried*.
+
+The split has a test. **Would it be wrong next month?** Then it is status, and it
+belongs here. **Would it still be true on a different phone?** Then it is method,
+and it belongs in the skill.
