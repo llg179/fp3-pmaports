@@ -19,18 +19,81 @@ commits, and where the result may and may not go, is in the
 
 ## The files
 
-Thirteen files, 3068 insertions:
+Ten files, 2655 insertions:
 
 | file | Δ lines | whose code it is |
 |---|---|---|
-| `sound/soc/codecs/wcd9335.c` (+ `.h`) | +525 / +7 | the WCD9335 codec driver — **Srinivas Kandagatla** (Linaro), [`20aedafdf492`](https://github.com/torvalds/linux/commit/20aedafdf4926e7a957f8b302a18c8fb75c7e332) *"ASoC: wcd9335: add support to wcd9335 codec"*, 2019-01-28 |
-| `sound/soc/qcom/apq8016_sbc.c` | +140 | the msm8916 machine driver — **Srinivas Kandagatla**, [`bdb052e81f62`](https://github.com/torvalds/linux/commit/bdb052e81f6236b4febb50ed74f79f770fa82cc5) *"ASoC: qcom: add apq8016 sound card support"*, 2015-06-10 |
+| `sound/soc/codecs/wcd9335.c` (+ `.h`) | +514 / +7 | the WCD9335 codec driver — **Srinivas Kandagatla** (Linaro), [`20aedafdf492`](https://github.com/torvalds/linux/commit/20aedafdf4926e7a957f8b302a18c8fb75c7e332) *"ASoC: wcd9335: add support to wcd9335 codec"*, 2019-01-28 |
+| `sound/soc/qcom/apq8016_sbc.c` | +139 | the msm8916 machine driver — **Srinivas Kandagatla**, [`bdb052e81f62`](https://github.com/torvalds/linux/commit/bdb052e81f6236b4febb50ed74f79f770fa82cc5) *"ASoC: qcom: add apq8016 sound card support"*, 2015-06-10 |
 | `sound/soc/qcom/qdsp6/q6voice-dai.c` | +19 | the Q6 Voice DAI — **not in Linus' tree**: **Stephan Gerhold** (2020-04-28), extended by **Vincent Knecht** (voice port controls, 2021) and **Otto Pflüger** (VoiceMMode1, 2023); carried by msm8953-mainline |
-| `sound/soc/qcom/qdsp6/q6afe.c` | +35 | the AFE driver — **Srinivas Kandagatla**, [`7fa2d70f9766`](https://github.com/torvalds/linux/commit/7fa2d70f976657111a5ea4f3d16a738ddaa10c4f) *"ASoC: qdsp6: q6afe: Add q6afe driver"*, 2018-05-18 |
-| `drivers/slimbus/qcom-ngd-ctrl.c` | +33 | the SLIMbus NGD controller — **Srinivas Kandagatla**, [`917809e2280b`](https://github.com/torvalds/linux/commit/917809e2280bb83994be8b642373fd941d40c407), 2018-06-19 |
-| `drivers/remoteproc/qcom_q6v5_pas.c` | +41 | the Hexagon PAS driver — **Bjorn Andersson**, [`9e004f97161d`](https://github.com/torvalds/linux/commit/9e004f97161d637d2dc82299be494bcfd07043bb), 2018-09-24; today mostly Sibi Sankar, Bjorn Andersson and Luca Weiss |
+| `sound/soc/qcom/qdsp6/q6afe.c` | +30 | the AFE driver — **Srinivas Kandagatla**, [`7fa2d70f9766`](https://github.com/torvalds/linux/commit/7fa2d70f976657111a5ea4f3d16a738ddaa10c4f) *"ASoC: qdsp6: q6afe: Add q6afe driver"*, 2018-05-18 |
 | `drivers/power/supply/qcom_smbx.c` | +363 | the SMB2 charger driver — **Casey Connolly** (Linaro); the file under this name since [`5ec53bcc7fce`](https://github.com/torvalds/linux/commit/5ec53bcc7fce6801977a0c125fb726d7b0e9102c), 2025-06-19 |
+| `drivers/iio/adc/qcom-spmi-adc5.c` | +2 | the PMIC ADC5 driver — **Siddartha Mohanadoss**, [`e13d757279bb`](https://github.com/torvalds/linux/commit/e13d757279bb2c2fa32e5b578dd1cbcac4d51e21) *"iio: adc: Add QCOM SPMI PMIC5 ADC driver"*, 2018-08-02 |
 | `drivers/media/i2c/imx363.c` (+ `Kconfig`, `Makefile`) | +1568 | **new file**, but not from nothing — it keeps `Copyright (C) 2018 Intel Corporation` from the Intel IMX3xx sensor driver it is structured on |
+
+`drivers/slimbus/qcom-ngd-ctrl.c` and `drivers/remoteproc/qcom_q6v5_pas.c` used
+to be in this list. Both changes were **reverted on 2026-07-29** after
+measurement showed they did nothing; see
+[the framer pair](#the-qdsp6ss-slimbus-framer-pair--removed) below.
+
+## Provenance
+
+The same three questions the [sensor stack](../sensors/README.md#provenance) is
+sorted by: what is carried unchanged, what is somebody else's code that we
+extended, and what did not exist before.
+
+### Imported unchanged
+
+**Nothing.** Unlike the sensor stack, which carries Yassine Oudjana's SMGR
+series verbatim, every file above is an in-place change to code that was
+already in the base. The one wholly new file, `imx363.c`, is not an import
+either — see [New here](#new-here).
+
+### Imported and extended here
+
+| component | file | whose code | what we added |
+|---|---|---|---|
+| WCD9335 codec | `wcd9335.c` | Srinivas Kandagatla | init fix, TX front-end hold release, DT-driven mic bias and DMIC rate, MBHC jack detection, button debounce, capture gains |
+| MBHC jack detection | `wcd9335.c` | Kandagatla's **2018 MBHC series, which never merged** | revived onto today's driver and adapted to measured behaviour: the insert/remove direction is a software toggle here because `MECH_DETECT_TYPE` reads back unreliably |
+| msm8916 machine driver | `apq8016_sbc.c` | Kandagatla | a SLIMbus backend, following how the existing WCD9335 machine drivers wire the codec |
+| Q6 Voice DAI | `q6voice-dai.c` | Gerhold / Knecht / Pflüger (**not upstream**) | the VoiceMMode1 / CS-Voice mixer routes to `SLIMBUS_0_RX/TX`, including the mixer → port output edge |
+| Q6 AFE | `q6afe.c` | Kandagatla | `ADSP_EALREADY` on `AFE_PORT_CMD_DEVICE_START` treated as success |
+| SMB2 charger | `qcom_smbx.c` | Casey Connolly | the SMB5 variant abstraction, PMI632 support, `POWER_SUPPLY_PROP_TEMP` |
+| PMIC ADC5 | `qcom-spmi-adc5.c` | Siddartha Mohanadoss | the `BAT_THERM` channel table entry — the scaling curve it points at was already there |
+| IMX363 sensor | `imx363.c` | **Intel** (IMX3xx drivers, 2018) | the probe/power/control skeleton and v4l2-cci register style are theirs, and the copyright line stays |
+
+### New here
+
+Written for this port; author Lajosházi, László Gergely with Claude.
+
+| component | where | state |
+|---|---|---|
+| FP3 WCD9335 sound card + DMIC widgets | `apq8016_sbc.c` | working |
+| IMX363 register programming and FP3 power sequence | `imx363.c` | sensor probes; streaming blocked on the CAMSS side |
+| Battery temperature | `qcom_smbx.c`, `qcom-spmi-adc5.c`, `pmi632.dtsi` | see [Battery temperature](#battery-temperature) |
+
+### Fixes to pre-existing kernel code
+
+| file | fix |
+|---|---|
+| `wcd9335.c` | `wcd9335_codec_enable_adc()` takes the TX front-end hold and mainline never releases it, so the decimator returns exact zero. Nobody had noticed because nobody had captured audio on this codec in mainline |
+| `wcd9335.c` | the `DEC0..DEC8` capture gain registers exist and mirror the RX ones exactly; the driver simply never exposed them, so capture level could not be set at all |
+| `q6afe.c` | `ADSP_EALREADY` became `-EINVAL`, which is unrecoverable in practice — nothing on the AP side can reset the ADSP's port state. Not FP3-specific: any two front ends sharing one backend hit it |
+| `qcom-spmi-adc5.c` | `ADC5_BAT_THERM_100K_PU` was missing from the channel table, so a device tree referencing the battery thermistor was rejected at probe |
+
+### Values taken from the vendor
+
+Read out of Fairphone's published kernel source release, checked in under
+[`../device_tree/downstream/fairphone/3.A.0136/`](../device_tree/downstream/fairphone/3.A.0136/).
+
+| what | source |
+|---|---|
+| mic-bias voltage, DMIC clock rate | downstream `msm8953-audio.dtsi` |
+| the codec init sequence the fix was found against | downstream WCD9335 driver |
+| SMB5 register offsets, current step, charge-status bit positions | downstream `qpnp-smb2` / `qpnp-smb5` |
+| PMI632 interrupt numbers and ADC channel assignment | downstream `pmi632.dtsi` |
+| `BAT_THERM` channel number, 100k pull-up, ratiometric calibration | downstream `pmi632.dtsi`, `chan@4a` |
+| the OCV curve behind `capacity` | downstream `qg-batterydata-Kayo-3000mah-Nov4th2019-pmi632` |
 
 ## Audio: the WCD9335 codec
 
@@ -111,6 +174,26 @@ no coulomb-counting fuel gauge in mainline, so capacity comes from the OCV table
 in the board's `simple-battery` node. What that costs, and what raising the 1 A
 charge cap would take, is in
 [`../device_tree/README.md`](../device_tree/README.md#what-it-would-take-to-charge-at-full-current).
+
+### Battery temperature
+
+The pack thermistor sits on the same PMIC ADC as `VBAT_SNS`, so reporting a
+temperature took one more channel — but the channel was unusable: `ADC5_BAT_THERM_100K_PU`
+was missing from `qcom-spmi-adc5.c`'s channel table, so any device tree
+referencing it was rejected at probe. Three commits: the ADC channel, the
+`POWER_SUPPLY_PROP_TEMP` in `qcom_smbx.c` (optional, like `VBAT_SNS` — a board
+that does not route the thermistor keeps a battery without a temperature), and
+the PMI632 device-tree channel.
+
+**The curve is approximate, and knowingly so.** The driver scales it with the
+generic 100k pull-up thermistor table that mainline already uses for the AMUX
+and GPIO thermistor channels. Fairphone's downstream kernel carries its *own*
+table for this pack — the comment above it says as much: *"Fill the correct NTC
+table for 8901 battery"*. Comparing the two, the tables agree exactly at 25 °C
+and diverge with distance from it: about 1.5 °C high at 0 °C, 1 °C low at 40 °C,
+2.5 °C low at 60 °C. Same 100 kΩ nominal thermistor, slightly different beta.
+That is good enough to report a temperature and to notice a hot battery; it is
+not good enough to drive a JEITA charging profile, and nothing here does.
 
 ## Where each change is headed
 

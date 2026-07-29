@@ -42,6 +42,38 @@ else
 	fail=1
 fi
 
+# Battery temperature comes from the pack thermistor on the PMIC ADC, in
+# decidegrees C. A missing node means the bat_therm channel did not reach the
+# charger driver, which is a real regression, not a skip.
+temp=$(cat "$ps/pmi632-battery/temp" 2>/dev/null)
+if [ -z "$temp" ]; then
+	echo "FAIL: no battery temp - the bat_therm ADC channel is not wired up"
+	fail=1
+elif [ "$temp" -gt -100 ] && [ "$temp" -lt 600 ]; then
+	echo "PASS: battery temperature $((temp / 10))C is in range"
+
+	# A thermistor curve can be plausible and still be the wrong curve. At
+	# idle the pack sits close to the PMIC that measures it, so a large gap
+	# points at the scaling, not at the battery.
+	for z in /sys/class/thermal/thermal_zone*; do
+		[ "$(cat "$z/type" 2>/dev/null)" = "pmi632-thermal" ] || continue
+		die=$(($(cat "$z/temp" 2>/dev/null || echo 0) / 100))
+		delta=$((temp - die))
+		[ "$delta" -lt 0 ] && delta=$((-delta))
+		if [ "$delta" -lt 200 ]; then
+			echo "PASS: within $((delta / 10))C of the PMIC die"
+		else
+			echo "FAIL: battery $((temp / 10))C vs PMIC die $((die / 10))C"
+			echo "      - too far apart to be the same phone at idle"
+			fail=1
+		fi
+		break
+	done
+else
+	echo "FAIL: battery temperature reads '$temp' decidegrees"
+	fail=1
+fi
+
 if [ "$status" != "Charging" ]; then
 	echo "FAIL: battery status is '$status', not Charging"
 	echo "      (plug the cable in, or pass --no-cable if that is intentional)"
