@@ -1,8 +1,8 @@
 # FP3 charging on pmOS mainline
 
 The PMI632 charger on the Fairphone 3 under a mainline kernel: what makes it
-charge, what stops it charging too hard, and why the current it settles on is
-2 A rather than the 2.7 A the pack is rated for.
+charge, what stops it charging too hard, and how it got from 1 A to the 2 A
+this phone's pack is rated for.
 
 > **AI-generated.** The driver changes, device tree and documentation in this
 > directory were written by Claude (Opus 5) working under the direction of
@@ -73,7 +73,7 @@ published Fairphone 3 kernel source release, checked in under
 |---|---|
 | register offsets, the JEITA threshold block layout, the 25 mA compensation step, the 50 mA current step | `drivers/power/supply/qcom/smb5-reg.h`, `smb5-lib.c`, the `smb5_pmi632_params` table in `qpnp-smb5.c` |
 | charger interrupt numbers and ADC channel assignment | `arch/arm64/boot/dts/qcom/pmi632.dtsi` |
-| cell parameters, OCV curve, JEITA thresholds and per-zone currents | `qg-batterydata-Kayo-3000mah-Nov4th2019-pmi632.dtsi` |
+| cell parameters, OCV curve, JEITA thresholds and per-zone currents | `qg-batterydata-Fuji-3000mah-Jan22th2019-pmi632.dtsi` — [the pack this phone has](#which-battery-this-phone-has) |
 | the thermal mitigation current table | `qcom,thermal-mitigation` on the downstream charger node |
 
 **New here** is the variant abstraction, the device-tree interface for JEITA,
@@ -89,12 +89,12 @@ Measured on the device unless a row says otherwise.
 | capacity | from the OCV table; no coulomb counter exists for this PMIC in mainline |
 | battery temperature | yes — [how, and why the curve is approximate](../kernel/README.md#battery-temperature) |
 | hardware JEITA | **running the whole time**, but on the PMIC's generic defaults until `r20` (see below) |
-| JEITA thresholds from this pack's characterisation | **programmed and read back** on `r20`: soft `22 04 3e bc`, hard `19 87 56 75` |
+| JEITA thresholds from this pack's characterisation | **programmed and read back**: soft `22 04 44 ff`, hard `19 87 56 75` — byte-identical to what the stock stack programs |
 | JEITA soft-zone compensation | **programmed and read back**: `0x1092 = 0x28` (−1000 mA hot), `0x1093 = 0x38` (−1400 mA cold), up from `0x0a` each |
 | thermal mitigation | **live**: `cooling_device3` is `qcom-smbx-charger`, `max_state 3`, bound to `pmi632-thermal` at 70 / 80 / 90 °C |
 | fast-charge current | `FAST_CHARGE_CURRENT_CFG` **`0x14` → `0x28`**, i.e. 1 A → 2 A, read back on `r20` |
 | 2 A actually flowing | **not measured** — needs a low state of charge and a wall charger; see [Testing](#testing) |
-| high-voltage (QC) negotiation | **not done and not planned here** — see [the ceiling](#why-2-a-and-not-27) |
+| high-voltage (QC) negotiation | **not done**, and now the only thing between this and a faster charge — see [the ceilings](#why-2-a-and-what-the-ceilings-would-be-on-the-other-pack) |
 
 ## The starting premise was wrong
 
@@ -140,7 +140,7 @@ have used was compared against Fairphone's four characterised codes:
 | °C | Fairphone's code | from the mainline curve | error |
 |---|---|---|---|
 | 0 | 22133 | 22550 | **+1.54 °C** |
-| 20 | 16060 | 16169 | +0.32 °C |
+| 15 | 17663 | 17879 | +0.64 °C |
 | 45 | 8708 | 8385 | **−1.29 °C** |
 | 55 | 6535 | 6150 | **−1.97 °C** |
 
@@ -158,31 +158,113 @@ good enough to read but not to charge by — see
 [battery temperature](../kernel/README.md#battery-temperature). Nothing charges
 by that curve; the hardware compares raw codes.
 
-## Why 2 A and not 2.7
+## Which battery this phone has
 
-Not caution. Two independent ceilings, and the lower one is not the battery.
+The FP3 ships **two different 3000 mAh packs**, told apart at runtime by a
+battery-ID resistor. They are not interchangeable on paper:
+
+| pack | `batt-id` | rated fast charge | JEITA cool band starts |
+|---|---|---|---|
+| Kayo (`qg-batterydata-Kayo-3000mah-Nov4th2019-pmi632`) | 50 kΩ | **2.7 A** | 20 °C |
+| Fuji (`qg-batterydata-Fuji-3000mah-Jan22th2019-pmi632`) | 10 kΩ | **2.0 A** | 15 °C |
+
+Booting the oracle slot and asking its stock stack settles which one is fitted:
+
+```
+/sys/class/power_supply/bms/battery_type
+    Fuji_3000mAH_FG_averaged_MasterSlave_Jan22th2019
+/sys/class/power_supply/bms/resistance_id
+    9843
+```
+
+**This phone has Fuji.** That matters twice over. The 2 A below is the pack's
+*full rating*, not a reduction of it — and the JEITA cool threshold is 15 °C,
+not 20.
+
+A `simple-battery` node cannot choose between the two, so the device tree
+describes Fuji: it is the pack that can be measured here. The cost is that a
+Kayo phone charges 700 mA slower than it could. Choosing per pack would need the
+battery-ID ADC channel read at probe, which mainline does not do.
+
+## What the stock stack does, measured
+
+The oracle slot runs Fairphone's own 4.9 kernel with `qpnp-smb5`, on the same
+PMIC and the same battery. Reading the same registers there is the closest thing
+to a reference answer, and it was worth doing — it confirmed the encoding and
+caught a wrong threshold.
+
+| register | stock (UT / 4.9) | this port | comment |
+|---|---|---|---|
+| `0x1061` fast-charge current | `28` | `28` | both 2 A |
+| `0x1070` float voltage | `4f` | — | 4.39 V |
+| `0x1090` `JEITA_EN_CFG` | **`10`** | `1f` | see below |
+| `0x1092` / `0x1093` soft compensation | `0a` / `0a` | `28` / `38` | stock leaves them at default; it compensates in software |
+| `0x1094` soft thresholds | `22 04 44 ff` | `22 04 44 ff` | 45 / 15 °C — **identical** |
+| `0x1098` hard thresholds | `19 87 56 75` | `19 87 56 75` | 55 / 0 °C — **identical** |
+
+Three things come out of that.
+
+**The hard thresholds and the soft-hot threshold match byte for byte**, which is
+an independent check that the big-endian hot-then-cold layout and the raw-code
+encoding used here are right — arrived at from the downstream source, confirmed
+against the hardware it actually programs.
+
+**`JEITA_EN_CFG` is `0x10` on stock, `0x1f` here.** Downstream sets
+`qcom,sw-jeita-enable` and then calls `smblib_disable_hw_jeita()`, which clears
+the four soft-limit bits: it programs the hardware thresholds but does the
+compensation itself, in software, from the five-band `qcom,jeita-fcc-ranges`
+table. This port does the opposite — it lets the hardware do it, which costs
+resolution (one threshold per side instead of five bands) and buys not needing
+software in the loop.
+
+**Both systems settle on 2 A**, and the stock votable says why:
+
+```
+FCC: BATT_PROFILE_VOTER:  en=1 v=2000000
+FCC: JEITA_VOTER:         en=1 v=2000000
+FCC: THERMAL_DAEMON_VOTER: en=0
+FCC: effective=BATT_PROFILE_VOTER type=Min v=2000000
+```
+
+The pack's own profile is the binding vote. The number this port chose from the
+compensation-register arithmetic below turns out to be the number the vendor
+stack runs at, for a different and simpler reason.
+
+Downstream also registers the charger as a cooling device — `cooling_device9`,
+type `battery`, `max_state 6` for its six-entry mitigation table — driven by its
+thermal daemon rather than by a thermal zone.
+
+## Why 2 A, and what the ceilings would be on the other pack
+
+For the Fuji pack fitted here, 2 A is simply its rating. The arithmetic below
+still matters, because it is what a **Kayo** FP3 would run into if it asked for
+its 2.7 A — and because it is why raising `fcc_max_ua` past 2 A on SMB5 is not a
+one-line change.
+
+Two independent ceilings, and the lower one is not the battery.
 
 **The compensation register runs out.** The JEITA soft-zone reduction is a
 six-bit field of 25 mA steps — at most **1575 mA** of reduction from whatever
-fast-charge current is programmed. This pack's characterised cool-zone current
-is 600 mA:
+fast-charge current is programmed. Both packs are characterised for 600 mA in
+the cool zone:
 
-| fast-charge current | lowest reachable soft-zone current | Fairphone wants |
+| fast-charge current | lowest reachable soft-zone current | profile wants |
 |---|---|---|
-| 2700 mA | 1125 mA | 600 mA — **not expressible** |
-| 2000 mA | 425 mA | 600 mA — fine |
+| 2700 mA (Kayo's rating) | 1125 mA | 600 mA — **not expressible** |
+| 2000 mA (Fuji's rating) | 425 mA | 600 mA — fine |
 
-So at the pack's rated current the hardware **cannot implement Fairphone's own
-profile**. Anything at or below 2175 mA can.
+So on a Kayo phone the hardware **cannot implement Fairphone's own profile at
+the pack's rated current**. Anything at or below 2175 mA can — which is one
+reason the SMB5 ceiling in the driver sits at 2 A and moving it is a decision
+rather than an edit. It also explains why downstream compensates in software
+instead: it is not bound by that register at all.
 
 **The port runs out first anyway.** Without high-voltage negotiation — which
 mainline `qcom_smbx` does not do — a DCP gives 1.5 A at 5 V, which is about
 1.9 A into a 3.8 V cell at best. Above roughly 2 A the binding constraint stops
-being the charger and becomes the USB port, which is the right place for it.
-
-Downstream reaches 2.7 A by negotiating a higher `Vbus`. That is a separate
-piece of work, is not started, and is not required for the phone to charge at
-the rate its port can actually supply.
+being the charger and becomes the USB port, which is the right place for it, and
+it is why the input side is the next thing worth doing rather than the charge
+current.
 
 ## The device-tree interface
 
@@ -194,7 +276,7 @@ other board changes behaviour:
 	monitored-battery = <&fp3_battery>;
 
 	qcom,jeita-hard-thresholds = <0x5675 0x1987>;   /* cold 0 degC, hot 55 degC */
-	qcom,jeita-soft-thresholds = <0x3ebc 0x2204>;   /* cool 20 degC, warm 45 degC */
+	qcom,jeita-soft-thresholds = <0x44ff 0x2204>;   /* cool 15 degC, warm 45 degC */
 	qcom,jeita-soft-fcc-microamp = <600000 1000000>;
 
 	qcom,thermal-mitigation = <2000000 1500000 1000000 500000>;
@@ -299,7 +381,7 @@ on `r19` before the change:
 | `0x1061` fast-charge current | `14` | **`28`** | 1 A → 2 A |
 | `0x1092` JEITA hot compensation | `0a` | **`28`** | −250 mA → −1000 mA |
 | `0x1093` JEITA cold compensation | `0a` | **`38`** | −250 mA → −1400 mA |
-| `0x1094` soft thresholds | `1b ff 44 c7` | **`22 04 3e bc`** | ~50/16 °C → 45/20 °C |
+| `0x1094` soft thresholds | `1b ff 44 c7` | **`22 04 44 ff`** | ~50/16 °C → 45/15 °C |
 | `0x1098` hard thresholds | `15 aa 4a ff` | **`19 87 56 75`** | ~58/11 °C → 55/0 °C |
 
 `JEITA_EN_CFG` reads `0x1f` in both, which is the point of the section above: the
@@ -308,8 +390,14 @@ block was never off.
 ## Known gaps
 
 * **No high-voltage negotiation**, so the input side caps the whole thing near
-  1.9 A into the cell. This is the only remaining thing between the phone and
-  its rated 2.7 A, and it is a piece of work in its own right.
+  1.9 A into the cell — just under the 2 A the charger is now programmed for.
+  This is the next thing worth doing on this side, and it is a piece of work in
+  its own right.
+* **The battery ID is never read**, so the device tree has to pick one of the
+  two packs. It picks Fuji; a Kayo phone therefore charges at 2 A instead of its
+  rated 2.7 A. Reading `ADC5_BAT_ID_100K_PU` at probe and selecting between two
+  `monitored-battery` nodes would fix it, and mainline has no binding for that
+  today.
 * **The float-voltage half of JEITA is left alone.** The two `*_SL_FCV` bits are
   whatever the PMIC defaults them to, because the register that scales the
   voltage reduction is not documented for this generation in any source
