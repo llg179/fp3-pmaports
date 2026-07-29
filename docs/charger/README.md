@@ -88,10 +88,12 @@ Measured on the device unless a row says otherwise.
 | charging works | yes, since the charger node was enabled |
 | capacity | from the OCV table; no coulomb counter exists for this PMIC in mainline |
 | battery temperature | yes — [how, and why the curve is approximate](../kernel/README.md#battery-temperature) |
-| hardware JEITA | **running the whole time**, but on the PMIC's generic defaults until now (see below) |
-| JEITA thresholds from this pack's characterisation | implemented, **awaiting the first on-device read-back** |
-| thermal mitigation | implemented, **awaiting the first on-device read-back** |
-| fast-charge current | 1 A measured (`FAST_CHARGE_CURRENT_CFG = 0x14`); 2 A implemented, **not yet confirmed on the device** |
+| hardware JEITA | **running the whole time**, but on the PMIC's generic defaults until `r20` (see below) |
+| JEITA thresholds from this pack's characterisation | **programmed and read back** on `r20`: soft `22 04 3e bc`, hard `19 87 56 75` |
+| JEITA soft-zone compensation | **programmed and read back**: `0x1092 = 0x28` (−1000 mA hot), `0x1093 = 0x38` (−1400 mA cold), up from `0x0a` each |
+| thermal mitigation | **live**: `cooling_device3` is `qcom-smbx-charger`, `max_state 3`, bound to `pmi632-thermal` at 70 / 80 / 90 °C |
+| fast-charge current | `FAST_CHARGE_CURRENT_CFG` **`0x14` → `0x28`**, i.e. 1 A → 2 A, read back on `r20` |
+| 2 A actually flowing | **not measured** — needs a low state of charge and a wall charger; see [Testing](#testing) |
 | high-voltage (QC) negotiation | **not done and not planned here** — see [the ceiling](#why-2-a-and-not-27) |
 
 ## The starting premise was wrong
@@ -289,9 +291,19 @@ dd if=/sys/kernel/debug/regmap/0-02/registers bs=9 skip=$((0x1061)) count=1
 dd if=/sys/kernel/debug/regmap/0-02/registers bs=9 skip=$((0x1090)) count=12
 ```
 
-At 2 A with this pack's thresholds the expected values are `0x1061 = 0x28`,
-`0x1092 = 0x28` (a 1000 mA hot reduction), `0x1093 = 0x38` (1400 mA cold), soft
-thresholds `22 04 3e bc` and hard `19 87 56 75`.
+Measured on `linux-fp3-7.1.3-r20` (`#21-fp3`), against the same registers read
+on `r19` before the change:
+
+| register | `r19` | `r20` | |
+|---|---|---|---|
+| `0x1061` fast-charge current | `14` | **`28`** | 1 A → 2 A |
+| `0x1092` JEITA hot compensation | `0a` | **`28`** | −250 mA → −1000 mA |
+| `0x1093` JEITA cold compensation | `0a` | **`38`** | −250 mA → −1400 mA |
+| `0x1094` soft thresholds | `1b ff 44 c7` | **`22 04 3e bc`** | ~50/16 °C → 45/20 °C |
+| `0x1098` hard thresholds | `15 aa 4a ff` | **`19 87 56 75`** | ~58/11 °C → 55/0 °C |
+
+`JEITA_EN_CFG` reads `0x1f` in both, which is the point of the section above: the
+block was never off.
 
 ## Known gaps
 
