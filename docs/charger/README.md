@@ -177,7 +177,26 @@ Booting the oracle slot and asking its stock stack settles which one is fitted:
     9843
 ```
 
-**This phone has Fuji.** That matters twice over. The 2 A below is the pack's
+The two slots do not disagree about this, and could not: **mainline never reads
+the battery ID.** `qcom_smbx` has no code for it and the charger node does not
+request the channel, so the pack described in the device tree was a static
+choice, made from the downstream sources without measuring which one this phone
+has. It picked the wrong one.
+
+The ID resistor can nevertheless be read from mainline, because `pmi632.dtsi`
+already describes the channel and the ADC driver already exposes it:
+
+```
+$ cat /sys/bus/iio/devices/iio:device1/in_temp_bat_id_input
+170891
+```
+
+That is the divider voltage in µV, against the PMIC's 100 kΩ pull-up on its
+1.875 V reference, so R = 100k × V/(1.875 − V) = **10.03 kΩ**. Kayo's 50 kΩ
+would read 625 mV, not 171. Mainline and downstream agree to 2 % on an
+independent path — 10.03 kΩ against the stock stack's 9843 Ω.
+
+**This phone has Fuji**, and both sides of the device now say so. That matters twice over. The 2 A below is the pack's
 *full rating*, not a reduction of it — and the JEITA cool threshold is 15 °C,
 not 20.
 
@@ -393,11 +412,13 @@ block was never off.
   1.9 A into the cell — just under the 2 A the charger is now programmed for.
   This is the next thing worth doing on this side, and it is a piece of work in
   its own right.
-* **The battery ID is never read**, so the device tree has to pick one of the
-  two packs. It picks Fuji; a Kayo phone therefore charges at 2 A instead of its
-  rated 2.7 A. Reading `ADC5_BAT_ID_100K_PU` at probe and selecting between two
-  `monitored-battery` nodes would fix it, and mainline has no binding for that
-  today.
+* **The battery ID is never read *by the charger*,** so the device tree has to
+  pick one of the two packs. It picks Fuji; a Kayo phone therefore charges at
+  2 A instead of its rated 2.7 A, and gets the wrong OCV curve and the wrong
+  JEITA cool threshold with it. The measurement is not the hard part — the
+  channel is described and readable today, as above. What is missing is a way
+  to describe more than one `monitored-battery` and choose between them at
+  probe, which mainline has no binding for.
 * **The float-voltage half of JEITA is left alone.** The two `*_SL_FCV` bits are
   whatever the PMIC defaults them to, because the register that scales the
   voltage reduction is not documented for this generation in any source
