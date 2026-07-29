@@ -7,21 +7,33 @@ what was believed, what was measured, and what that forced us to conclude —
 including the three places where the belief was wrong. Every capture and every
 tool it refers to is checked in here, so nothing has to be taken on trust.
 
-**Status (2026-07-29): the accelerometer reads 1 g; the proximity blocker is a QMI core bug, now fixed.** After a one-line fix to a
-QRTR control constant, the registry server works, the SSC brings up the real
-hardware, and the ported IIO drivers deliver data:
+**Status (2026-07-29): done — proximity reaches phosh, and the accelerometer
+reads 1 g.** All four sensors the SSC enumerates now bind, and the chain the
+original question asked for is closed:
 
 ```
       x        y        z     |g|
-   -0.343    0.409   -9.685   9.700 m/s^2
-   -0.348    0.425   -9.695   9.710 m/s^2
+   -0.343    0.409   -9.685   9.700 m/s^2       accelerometer
+
+$ sudo monitor-sensor --proximity
+=== Has proximity sensor (near: 0)
+    Proximity value changed: 1                  hand over the earpiece
+    Proximity value changed: 0
 ```
 
-That is the first sensor reading on this port. Proximity has a driver and an IIO
-device, and its buffering request was failing inside the kernel's QMI encoder —
-a core bug that made every sensor whose id is non-zero unreachable, fixed in
-[step 11](#step-11--proximity-binds-and-then-does-not-stream). Whether proximity
-then produces sensible values is the next measurement.
+Three things had to be fixed to get there, and only the first was where anyone
+was looking: a wrong QRTR control constant meant no service was ever published
+([correction](#correction-2026-07-28--every-publish-in-steps-48-was-a-bye)); the
+kernel's QMI encoder read a length field four bytes wide regardless of its
+declared width, which made every sensor whose id is non-zero unreachable
+([step 11](#step-11--proximity-binds-and-then-does-not-stream)); and
+`iio-sensor-proxy` polls `in_proximity_raw`, so a buffer-only device was skipped
+in silence ([step 12](#step-12--what-the-sensor-itself-says-and-why-nobody-was-reading-it)).
+The measurements that settled the value mapping are in
+[step 13](#step-13--proximity-works-end-to-end).
+
+Ambient light is the one part still missing: it lives in a second data type the
+Sensor Manager core never asks for.
 
 ⚠️ Read [the correction](#correction-2026-07-28--every-publish-in-steps-48-was-a-bye)
 before trusting steps 4–8: the control code used to publish a QMI service was
@@ -697,6 +709,66 @@ Only proximity gets a raw channel. Which data type carries the light reading is
 still open, and a fake `in_illuminance_raw` would have phosh dimming the screen
 by a number of unknown provenance.
 
+### Step 13 — proximity works, end to end
+
+Measured with a hand over the earpiece, which is the one thing that could not
+be done remotely. The sensor was never broken; it is on-change, and three
+things had to be right before anything could see it.
+
+**What the values mean.** Streaming the primary data type for 60 s while a hand
+covered and uncovered the sensor, in a dark room:
+
+| | `values[0]` | `values[1]` | `values[2]` |
+|---|---|---|---|
+| nothing near | `0` | 0..507 | 0 |
+| hand over the earpiece | `65536` | 1713..2714 | 0 |
+
+So `values[0]` is the SSC's own near/far decision as Q16 (`65536` = 1.0 = near)
+and `values[1]` is a reflected-infrared count. The count *rises* when the sensor
+is covered in a dark room, which is what settles it as infrared reflection
+rather than ambient light. And the phone's factory calibration — `ps_near=1570`,
+read out of `/persist` long before any of this — falls exactly between the two
+measured ranges. Two independent sources agreeing.
+
+**Why the raw channel reports the count and not the flag.** The flag is not
+filled in on the first sample of a report. With a hand pressed on the sensor,
+a one-shot read returned `flag=0` while the count read `13815`: a poll would
+have answered "nothing near" with a hand on the phone. The count is live from
+the first sample on.
+
+**Why the report is never stopped.** Starting a report, taking a sample and
+stopping it again is the tidy way to serve a raw read, and on this SSC it dies:
+the first such read returned a sample and the next fourteen returned nothing at
+all, until a reboot. Reads now start a report if none is running and leave it
+running. An on-change sensor is quiet between changes anyway, so the stored
+sample stays valid — and that is exactly what a poll wants.
+
+**The result**, through the whole stack:
+
+```
+$ cat /sys/bus/iio/devices/iio:device5/in_proximity_raw
+0                      # nothing near
+1713                   # hand over the earpiece, 18 reads out of 18
+
+$ sudo monitor-sensor --proximity
+=== Has proximity sensor (near: 0)
+    Proximity value changed: 1     # covered
+    Proximity value changed: 0     # uncovered
+    Proximity value changed: 1
+```
+
+The near level comes from a udev rule, since this device has no DT node to hang
+`proximity-near-level` on — see [`userspace-sensors/`](../../userspace-sensors/).
+
+☠️ `ProximityNear` on the bus stays `false` until a client **claims** the sensor;
+`iio-sensor-proxy` does not poll otherwise. During a call phosh claims it. Reading
+the property without a claim looks exactly like a broken sensor.
+
+**Gyro and magnetometer bind too**, now that the QMI encoder no longer corrupts
+requests for a non-zero sensor ID — `iio:device3 = qcom-smgr-mag`,
+`iio:device4 = qcom-smgr-gyro`. Their scales are assumed rather than measured;
+see the `TODO`s in the drivers.
+
 ### The oops, and what the safety net did and did not catch
 
 Binding a driver to the proximity device by hand hit a NULL dereference in
@@ -727,17 +799,12 @@ device, so it is not a usable "was this a watchdog reset?" indicator here.
 
 ### What is still missing
 
-* **Proximity reports once and then stays quiet.** The request is accepted
-  (`ack_nak 1`) and exactly one zeroed sample arrives, where the accelerometer
-  sends 242 in 5 s. That is what an on-change sensor sitting on an unchanging
-  reading looks like, and zero is a plausible "nothing near" — so the open
-  question is no longer "why is it silent" but **"does it report when something
-  approaches"**, and that needs a hand over the earpiece while
-  `in_proximity_raw` is read.
-* **The value mapping is still a guess** — which of the report's three u32
-  values is proximity and which is light needs a sample that is not all zeros.
-  The secondary data type has produced one (`0x00020000, 6, 0`); reproducing it
-  at the driver's rate is the next step.
+* **Ambient light is still missing.** The proximity sensor advertises a second
+  data type that the core never requests, and that is where the light reading
+  has to be — the primary type's third value is always zero. Reaching it means
+  teaching the core to ask for more than one data type per sensor, and telling
+  the samples apart by the `(data_type << 16) | (sensor_id << 8) | 1` field in
+  the report metadata.
 * **The mount matrix is probably wrong.** `smgr_accel.c` carries an msm8996
   matrix with a `TODO` next to it, and on the FP3 `iio-sensor-proxy` reports
   `AccelerometerTilt: face-down` for a phone reading `z = -9.69`. Whether that

@@ -1,0 +1,12 @@
+# iio-sensor-proxy needs a near level before it will use a proximity sensor at
+# all; without one it logs "Found proximity sensor but no PROXIMITY_NEAR_LEVEL
+# udev property" and phosh never blanks the screen during a call. The usual
+# route, the device tree property proximity-near-level, is not available here:
+# this device has no DT node, the Sensor Manager creates it from what the SSC
+# enumerates over QMI.
+#
+# 1570 is the phone's own factory calibration, read out of ps_near in
+# /persist/sensors/sns.reg, and it lands between the two measured levels: the
+# reflected-infrared count reads 0..485 with nothing near and 1579..2714 with a
+# hand over the earpiece.
+SUBSYSTEM=="iio", ATTR{name}=="qcom-smgr-prox-light", ENV{PROXIMITY_NEAR_LEVEL}="1570"
