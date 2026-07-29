@@ -30,7 +30,8 @@ For the same tree as the vendor publishes it see
 
 The [Ubuntu Touch kernel tree](https://gitlab.com/ubports/porting/community-ports/android10/fairphone/android_kernel_fairphone_sdm632)
 (`lineageos_FP3_defconfig`, 4.9.218) contains **no FP3 board `.dts`** — nothing
-under `arch/arm64/boot/dts/qcom/` matches `fp3` or `fairphone`. The phone is Qualcomm's `sdm632-mtp-s3` reference board there, and
+under `arch/arm64/boot/dts/qcom/` matches `fp3` or `fairphone`. The phone is
+Qualcomm's `sdm632-mtp-s3` reference board there, and
 which blob the bootloader ends up handing the kernel (`androidboot.dtb_idx=14
 androidboot.dtbo_idx=14` on the command line) is not something the sources tell
 you. So the only complete and authoritative form of the FP3 downstream tree is
