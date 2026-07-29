@@ -15,6 +15,16 @@
 # in the room: the tone stays inside the headset.
 #
 # Needs a headset plugged in, hence the extra requirement.
+#
+# The playback gain is 84 rather than the 48 HiFi.conf uses for listening. On
+# the 0..124 scale that is 0 dB against roughly -36 dB, and it is what makes
+# the measurement work with the headset simply lying next to itself: at 48 the
+# tone does not reach the microphone unless the earpiece is held against it,
+# and the capture shows only low-frequency handling noise around 80-100 Hz. At
+# 84 the target frequency arrives at 33 dB from where the headset happens to
+# lie.
+#
+# Do not wear the headset while this runs.
 
 . "$DEVICE_DIR/lib/audio-state.sh"
 
@@ -31,8 +41,8 @@ audio_cset \
 	'RX INT2_2 MUX' RX1 \
 	'RX INT1 DEM MUX' CLSH_DSM_OUT \
 	'RX INT2 DEM MUX' CLSH_DSM_OUT \
-	'RX1 Mix Digital Volume' 48 \
-	'RX2 Mix Digital Volume' 48 \
+	'RX1 Mix Digital Volume' 84 \
+	'RX2 Mix Digital Volume' 84 \
 	'HPHL Volume' 20 \
 	'HPHR Volume' 20 \
 	'ADC MUX0' AMIC \
@@ -62,7 +72,16 @@ if [ "$rc" -eq 0 ]; then
 fi
 
 if printf '%s\n' "$out" | grep -q "PASS: Peak detected at target frequency"; then
-	peak=$(printf '%s\n' "$out" | sed -n 's/.*Detected peak at \([0-9.]*\) Hz of \([0-9.]*\) dB.*/\1 Hz, \2 dB/p' | head -1)
+	# Report the peak nearest the target, not the first one printed: alsabat
+	# lists several, and the first is usually the near-DC one, which would put
+	# a meaningless "1.46 Hz" in a passing message.
+	peak=$(printf '%s\n' "$out" | awk '
+		/Detected peak at/ {
+			f = $4; db = $7
+			d = f - 1000; if (d < 0) d = -d
+			if (best == "" || d < best) { best = d; bf = f; bdb = db }
+		}
+		END { if (bf != "") printf "%s Hz, %s dB", bf, bdb }')
 	echo "PASS: 1 kHz tone crossed SLIMbus both ways (peak $peak)"
 	echo "      alsabat rc=$rc from sidebands above the fundamental; the target"
 	echo "      frequency was detected, which is what this check asks"
