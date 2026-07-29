@@ -645,6 +645,58 @@ behind in the SSC. After a session of `smgrbuf.py`/`smgrind.py` probing, the
 *accelerometer* also started returning zeros, which looked like a new bug and was
 not — a reboot restored it. Reboot between probe sessions and real measurements.
 
+### Step 12 — what the sensor itself says, and why nobody was reading it
+
+Two things about the "one zero sample" turned out to be measurement artefacts of
+my own, and one turned out to be real.
+
+**First artefact: the report rate encoding.** The buffering request's
+`report_rate` is not in Hz — the driver computes it as
+`sample_rate * SMGR_REPORT_RATE_IN_HZ` with `SMGR_REPORT_RATE_IN_HZ = 0xf000`.
+The first sweep sent `sample_rate * 100`, which in that encoding is one report
+every two minutes, so the single indication it saw was just the initial one and
+the sweep measured nothing at all. Redone with the driver's own numbers
+(`report_rate = 3072000`, decimation 3, calibration 0xf), the accelerometer
+gives **242 indications in 5 s** and proximity still gives exactly one.
+
+So the SSC is healthy and the single sample is genuine, in the same boot,
+against the same code path.
+
+**What the sensor advertises.** `SINGLE_SENSOR_INFO` (msg `0x06`) is worth
+asking before asking for data. On this phone:
+
+| sensor | id | data types | max rate | supported rates |
+|---|---|---|---|---|
+| ICM20602 Accelerometer (InvenSense) | `0x00` | 1 | 50 | 10,15,20,25,40,50,100,125,200 |
+| GYRO | `0x0a` | — | — | — |
+| MAG | `0x14` | — | — | — |
+| EPL259x ALS/PS (Eminent) | `0x28` | **2** | 50 | 1,5,10,20,30,40,50 |
+
+The proximity sensor has **two data types where the accelerometer has one**, and
+the core only ever asks for `SNS_SMGR_DATA_TYPE_PRIMARY`. The indication's
+metadata says which one a sample came from: `val1` packs
+`(data_type << 16) | (sensor_id << 8) | 1`, so `0x00012801` is sensor `0x28`
+data type 1. Asking for data type 1 by hand did return a non-zero sample
+(`0x00020000, 6, 0`) where data type 0 returns zeros — but not reproducibly, and
+not at the driver's rate, so it is a lead and not yet a finding.
+
+**The real one: nothing in userspace was ever going to read this device.**
+`iio-sensor-proxy` has no buffered proximity driver at all — it polls
+`in_proximity_raw`. Our device is buffer-only, so the proxy skipped it silently;
+its log mentions only `iio:device2`, the accelerometer. Whatever the SSC does or
+does not send, phosh could not have blanked the screen with it.
+
+That is fixed in the driver rather than worked around: the Sensor Manager core
+now keeps the last report per sensor and can start one on demand
+(`smgr_sensor_read_sample()`), and `smgr_prox.c` exposes proximity as a raw
+channel on top of it. An on-change sensor fits this better than the buffer
+anyway — it answers immediately when a report is requested, which is exactly
+what a poll needs.
+
+Only proximity gets a raw channel. Which data type carries the light reading is
+still open, and a fake `in_illuminance_raw` would have phosh dimming the screen
+by a number of unknown provenance.
+
 ### The oops, and what the safety net did and did not catch
 
 Binding a driver to the proximity device by hand hit a NULL dereference in
@@ -675,12 +727,17 @@ device, so it is not a usable "was this a watchdog reset?" indicator here.
 
 ### What is still missing
 
-* **Proximity is armed but never reports.** The request is accepted
-  (`ack_nak 1`) and exactly one zeroed sample arrives. Most likely it is an
-  on-change sensor waiting for a threshold crossing while the driver asks for
-  fixed-rate streaming of the primary data type.
+* **Proximity reports once and then stays quiet.** The request is accepted
+  (`ack_nak 1`) and exactly one zeroed sample arrives, where the accelerometer
+  sends 242 in 5 s. That is what an on-change sensor sitting on an unchanging
+  reading looks like, and zero is a plausible "nothing near" — so the open
+  question is no longer "why is it silent" but **"does it report when something
+  approaches"**, and that needs a hand over the earpiece while
+  `in_proximity_raw` is read.
 * **The value mapping is still a guess** — which of the report's three u32
   values is proximity and which is light needs a sample that is not all zeros.
+  The secondary data type has produced one (`0x00020000, 6, 0`); reproducing it
+  at the driver's rate is the next step.
 * **The mount matrix is probably wrong.** `smgr_accel.c` carries an msm8996
   matrix with a `TODO` next to it, and on the FP3 `iio-sensor-proxy` reports
   `AccelerometerTilt: face-down` for a phone reading `z = -9.69`. Whether that
@@ -730,6 +787,32 @@ iio:device1 = 200f000.spmi:pmic@0:adc@3100
 A missing `in_proximity_nearlevel` is a classic silent failure: the sensor reads
 fine, `ProximityNear` never flips, the screen never blanks.
 
+**Update, measured against the running proxy.** Two things about this turned out
+to matter more than expected, and the first one blocked everything:
+
+1. `iio-sensor-proxy` has **no buffered proximity driver**. Its proximity
+   support is `iio-poll-proximity`, which polls `in_proximity_raw`; a
+   buffer-only device is skipped without a word about it. Its log named only
+   `iio:device2`, the accelerometer, and never mentioned `iio:device3`. This is
+   why the driver now exposes a raw proximity channel — see step 12.
+2. The near level can come from the sysfs `in_proximity_nearlevel` **or** from a
+   udev property `PROXIMITY_NEAR_LEVEL`; the proxy logs *"Found proximity sensor
+   but no PROXIMITY_NEAR_LEVEL udev property"* when neither is there. The DT
+   route does not apply here — this device has no DT node, the Sensor Manager
+   creates it — so a udev rule is the way in:
+
+   ```
+   SUBSYSTEM=="iio", ATTR{name}=="qcom-smgr-prox-light", \
+       ENV{PROXIMITY_NEAR_LEVEL}="<measured>"
+   ```
+
+   The value is deliberately not shipped yet. Far currently reads `0`, but
+   whether near reads *higher* (a raw count) or the reading is a distance where
+   near is *lower* has not been observed — the one sample that was not all
+   zeros, `0x00020000`, could be read either way. Guessing it wrong inverts the
+   blanking: the screen would go dark whenever nothing is near, during a call.
+   [`tools/proxcal.sh`](tools/proxcal.sh) makes the measurement a one-liner.
+
 ## Tools
 
 | file | what it does |
@@ -746,6 +829,9 @@ fine, `ProximityNear` never flips, the screen never blanks.
 | [`tools/readprox.py`](tools/readprox.py) | the same for the proximity/light device |
 | [`tools/smgrbuf.py`](tools/smgrbuf.py) | sends `SNS_SMGR_BUFFERING` by hand and sweeps its parameters, so a question costs a second instead of a 30-minute kernel build |
 | [`tools/smgrind.py`](tools/smgrind.py) | asks for buffering on one sensor and prints the indications the SSC sends back — answers "is this data really from that sensor" from the wire |
+| [`tools/proxcal.sh`](tools/proxcal.sh) | prints `in_proximity_raw` once a second so a hand over the earpiece shows up as two levels — the measurement that decides `PROXIMITY_NEAR_LEVEL`, and the one that cannot be made remotely |
+| [`tools/sensinfo.py`](tools/sensinfo.py) | asks the SSC what a sensor advertises (`ALL_SENSOR_INFO`, `SINGLE_SENSOR_INFO`) — data types, rates, vendor and part name. Ask this before asking for data |
+| [`tools/smgrsweep.py`](tools/smgrsweep.py) | streams one sensor with the **driver's own** request parameters, data type as an argument, and counts indications. Use this rather than inventing a report rate: it is `sample_rate * 0xf000`, and a wrong one silently means "one report every two minutes" |
 
 ### Traps worth knowing before touching any of this
 
