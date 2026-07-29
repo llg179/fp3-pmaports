@@ -760,6 +760,23 @@ $ sudo monitor-sensor --proximity
 The near level comes from a udev rule, since this device has no DT node to hang
 `proximity-near-level` on — see [`userspace-sensors/`](../../userspace-sensors/).
 
+**The blanking lags by about a second, and that is upstream's poll period, not
+ours.** Tracing the driver's read function shows `iio-sensor-proxy` reading the
+sensor every **701 ms**:
+
+```
+611.739754  smgr_sensor_read_sample <-smgr_prox_read_raw
+612.440757  smgr_sensor_read_sample <-smgr_prox_read_raw
+613.141620  smgr_sensor_read_sample <-smgr_prox_read_raw
+```
+
+The kernel side is immediate — during the call, sampling at 0.5 s followed the
+hand movements exactly. The interval is compiled into `iio-sensor-proxy`, so
+shortening it means carrying a patched system package, and making the sensor
+event-driven means an IIO event driver *and* a new proximity backend in
+iio-sensor-proxy. **Decided (2026-07-29): leave it.** Every other pmOS phone
+has the same latency; a local fork of a system package is not worth 500 ms.
+
 ☠️ `ProximityNear` on the bus stays `false` until a client **claims** the sensor;
 `iio-sensor-proxy` does not poll otherwise. During a call phosh claims it. Reading
 the property without a claim looks exactly like a broken sensor.
