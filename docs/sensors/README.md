@@ -201,13 +201,17 @@ No:
 | accelerometer, gyroscope, magnetometer | **yes** (auto-rotation follows) |
 | pressure | yes (the FP3 has no barometer, so moot) |
 | ambient light | **yes**, since this port — the second data type of the proximity device |
-| temperature | **there is none.** The SSC advertises four sensors and no thermometer; the gyroscope and magnetometer each declare a single data type, so none is hidden. The SoC and PMIC temperatures come from `tsens` and already work |
+| temperature | **there is none here.** The SSC advertises four sensors and no thermometer; the gyroscope and magnetometer each declare a single data type, so none is hidden. The SoC and PMIC temperatures come from `tsens`, and the battery's from the PMIC ADC — [battery temperature](../kernel/README.md#battery-temperature) — so nothing is actually missing, it just is not the SSC's |
 
 Everything above is conditional on the group map being correct for this device.
 
-What is still missing on the temperature side is the **battery** temperature:
-`pmi632-battery` exposes no `temp` property. That is the charger driver's, not
-the sensor stack's.
+Nothing is missing on the temperature side any more. The **battery**
+temperature — the one gap this page used to record — was never the sensor
+stack's to fill: the pack thermistor hangs off the PMIC ADC, so it belongs to
+the charger driver. It works since 2026-07-29, and how, plus why its curve is
+accurate enough to read but not to charge by, is under
+[**battery temperature**](../kernel/README.md#battery-temperature) in the kernel
+page.
 
 ## The userspace side
 
