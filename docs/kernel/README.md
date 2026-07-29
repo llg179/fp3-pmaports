@@ -53,14 +53,14 @@ either — see [New here](#new-here).
 
 | component | file | whose code | what we added |
 |---|---|---|---|
-| WCD9335 codec | `wcd9335.c` | Srinivas Kandagatla | init fix, TX front-end hold release, DT-driven mic bias and DMIC rate, MBHC jack detection, button debounce, capture gains |
-| MBHC jack detection | `wcd9335.c` | Kandagatla's **2018 MBHC series, which never merged** | revived onto today's driver and adapted to measured behaviour: the insert/remove direction is a software toggle here because `MECH_DETECT_TYPE` reads back unreliably |
-| msm8916 machine driver | `apq8016_sbc.c` | Kandagatla | a SLIMbus backend, following how the existing WCD9335 machine drivers wire the codec |
-| Q6 Voice DAI | `q6voice-dai.c` | Gerhold / Knecht / Pflüger (**not upstream**) | the VoiceMMode1 / CS-Voice mixer routes to `SLIMBUS_0_RX/TX`, including the mixer → port output edge |
-| Q6 AFE | `q6afe.c` | Kandagatla | `ADSP_EALREADY` on `AFE_PORT_CMD_DEVICE_START` treated as success |
-| SMB2 charger | `qcom_smbx.c` | Casey Connolly | the SMB5 variant abstraction, PMI632 support, `POWER_SUPPLY_PROP_TEMP` |
-| PMIC ADC5 | `qcom-spmi-adc5.c` | Siddartha Mohanadoss | the `BAT_THERM` channel table entry — the scaling curve it points at was already there |
-| IMX363 sensor | `imx363.c` | **Intel** (IMX3xx drivers, 2018) | the probe/power/control skeleton and v4l2-cci register style are theirs, and the copyright line stays |
+| WCD9335 codec | `wcd9335.c` | Srinivas Kandagatla, [`20aedafdf492`](https://github.com/torvalds/linux/commit/20aedafdf4926e7a957f8b302a18c8fb75c7e332) | init fix, TX front-end hold release, DT-driven mic bias and DMIC rate, MBHC jack detection, button debounce, capture gains |
+| MBHC jack detection | `wcd9335.c` | Kandagatla's **[2018 MBHC series](https://lkml.iu.edu/hypermail/linux/kernel/1809.3/03254.html), which never merged** | revived onto today's driver and adapted to measured behaviour: the insert/remove direction is a software toggle here because `MECH_DETECT_TYPE` reads back unreliably |
+| msm8916 machine driver | `apq8016_sbc.c` | Kandagatla, [`bdb052e81f62`](https://github.com/torvalds/linux/commit/bdb052e81f6236b4febb50ed74f79f770fa82cc5) | a SLIMbus backend, following how the existing WCD9335 machine drivers wire the codec |
+| Q6 Voice DAI | `q6voice-dai.c` | Gerhold / Knecht / Pflüger — **not upstream**, carried by [msm8953-mainline](https://github.com/msm8953-mainline/linux/blob/v7.1.3-r0/sound/soc/qcom/qdsp6/q6voice-dai.c) | the VoiceMMode1 / CS-Voice mixer routes to `SLIMBUS_0_RX/TX`, including the mixer → port output edge |
+| Q6 AFE | `q6afe.c` | Kandagatla, [`7fa2d70f9766`](https://github.com/torvalds/linux/commit/7fa2d70f976657111a5ea4f3d16a738ddaa10c4f) | `ADSP_EALREADY` on `AFE_PORT_CMD_DEVICE_START` treated as success |
+| SMB2 charger | `qcom_smbx.c` | Casey Connolly, [`5ec53bcc7fce`](https://github.com/torvalds/linux/commit/5ec53bcc7fce6801977a0c125fb726d7b0e9102c) | the SMB5 variant abstraction, PMI632 support, `POWER_SUPPLY_PROP_TEMP` |
+| PMIC ADC5 | `qcom-spmi-adc5.c` | Siddartha Mohanadoss, [`e13d757279bb`](https://github.com/torvalds/linux/commit/e13d757279bb2c2fa32e5b578dd1cbcac4d51e21) | the `BAT_THERM` channel table entry — the scaling curve it points at was already there |
+| IMX363 sensor | `imx363.c` | **Intel** — [`imx319.c`](https://github.com/torvalds/linux/blob/master/drivers/media/i2c/imx319.c) / [`imx355.c`](https://github.com/torvalds/linux/blob/master/drivers/media/i2c/imx355.c), 2018 | the probe/power/control skeleton and v4l2-cci register style are theirs, and the copyright line stays |
 
 ### New here
 
@@ -83,17 +83,22 @@ Written for this port; author Lajosházi, László Gergely with Claude.
 
 ### Values taken from the vendor
 
-Read out of Fairphone's published kernel source release, checked in under
-[`../device_tree/downstream/fairphone/3.A.0136/`](../device_tree/downstream/fairphone/3.A.0136/).
+Read out of Fairphone's published kernel source release. Its **device trees are
+checked in here**, under
+[`../device_tree/downstream/fairphone/3.A.0136/`](../device_tree/downstream/fairphone/3.A.0136/),
+so those links stay valid whatever happens upstream. The **driver sources are
+not** — for those the links point at
+[UBports' publication of the same tree](https://gitlab.com/ubports/porting/community-ports/android10/fairphone/android_kernel_fairphone_sdm632),
+which is the same 4.9 kernel with the Halium patches on top.
 
 | what | source |
 |---|---|
-| mic-bias voltage, DMIC clock rate | downstream `msm8953-audio.dtsi` |
-| the codec init sequence the fix was found against | downstream WCD9335 driver |
-| SMB5 register offsets, current step, charge-status bit positions | downstream `qpnp-smb2` / `qpnp-smb5` |
-| PMI632 interrupt numbers and ADC channel assignment | downstream `pmi632.dtsi` |
-| `BAT_THERM` channel number, 100k pull-up, ratiometric calibration | downstream `pmi632.dtsi`, `chan@4a` |
-| the OCV curve behind `capacity` | downstream `qg-batterydata-Kayo-3000mah-Nov4th2019-pmi632` |
+| mic-bias voltage, DMIC clock rate | downstream [`msm8953-audio.dtsi`](../device_tree/downstream/fairphone/3.A.0136/arch/arm64/boot/dts/qcom/msm8953-audio.dtsi) |
+| the codec init sequence the fix was found against | downstream [`techpack/audio/asoc/codecs/wcd9335.c`](https://gitlab.com/ubports/porting/community-ports/android10/fairphone/android_kernel_fairphone_sdm632/-/blob/halium-10.0/techpack/audio/asoc/codecs/wcd9335.c) |
+| SMB5 register offsets, current step, charge-status bit positions | downstream [`qpnp-smb2.c`](https://gitlab.com/ubports/porting/community-ports/android10/fairphone/android_kernel_fairphone_sdm632/-/blob/halium-10.0/drivers/power/supply/qcom/qpnp-smb2.c) / [`qpnp-smb5.c`](https://gitlab.com/ubports/porting/community-ports/android10/fairphone/android_kernel_fairphone_sdm632/-/blob/halium-10.0/drivers/power/supply/qcom/qpnp-smb5.c), [`smb5-reg.h`](https://gitlab.com/ubports/porting/community-ports/android10/fairphone/android_kernel_fairphone_sdm632/-/blob/halium-10.0/drivers/power/supply/qcom/smb5-reg.h) |
+| PMI632 interrupt numbers and ADC channel assignment | downstream [`pmi632.dtsi`](../device_tree/downstream/fairphone/3.A.0136/arch/arm64/boot/dts/qcom/pmi632.dtsi) |
+| `BAT_THERM` channel number, 100k pull-up, ratiometric calibration | downstream [`pmi632.dtsi`](../device_tree/downstream/fairphone/3.A.0136/arch/arm64/boot/dts/qcom/pmi632.dtsi), `chan@4a` |
+| the OCV curve behind `capacity` | downstream [`qg-batterydata-Kayo-3000mah-Nov4th2019-pmi632.dtsi`](../device_tree/downstream/fairphone/3.A.0136/arch/arm64/boot/dts/qcom/qg-batterydata-Kayo-3000mah-Nov4th2019-pmi632.dtsi) |
 
 ## Audio: the WCD9335 codec
 
