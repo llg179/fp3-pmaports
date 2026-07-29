@@ -13,8 +13,8 @@ to the current base. `prepare()` then turns on what that config misses:
 | `CONFIG_DRM_PANEL_HIMAX_HX83112B` | the display panel |
 | `CONFIG_CHARGER_QCOM_SMB2` | the PMI632 charger |
 | `CONFIG_IIO_QCOM_SMGR` | the Sensor Manager core — every FP3 sensor is behind it |
-| `CONFIG_IIO_QCOM_SMGR_ACCEL`, `_GYRO`, `_MAG`, `_PROX` | the four sensors the SSC enumerates |
-| `CONFIG_WATCHDOG`, `_CORE`, `CONFIG_QCOM_WDT` | the SoC watchdog, with `HANDLE_BOOT_ENABLED` and `OPEN_TIMEOUT=300` |
+| `CONFIG_IIO_QCOM_SMGR_ACCEL`, `CONFIG_IIO_QCOM_SMGR_GYRO`, `CONFIG_IIO_QCOM_SMGR_MAG`, `CONFIG_IIO_QCOM_SMGR_PROX` | the four sensors the SSC enumerates |
+| `CONFIG_WATCHDOG`, `CONFIG_WATCHDOG_CORE`, `CONFIG_QCOM_WDT`, `CONFIG_WATCHDOG_HANDLE_BOOT_ENABLED`, `CONFIG_WATCHDOG_OPEN_TIMEOUT=300` | the SoC watchdog and the boot-hang safety net |
 
 ## The panel symbol is a trap worth knowing about
 
