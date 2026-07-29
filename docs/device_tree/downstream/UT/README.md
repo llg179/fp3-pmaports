@@ -2,13 +2,13 @@
 
 > **AI-generated.** Written by Claude (Opus 5) under the direction of
 > Lajosházi, László Gergely, who reviewed it. **Only this page is
-> generated.** The trees it describes are UBports' and the device's own,
+> generated.** The trees it describes are [UBports'](https://gitlab.com/ubports/porting/community-ports/android10/fairphone/android_kernel_fairphone_sdm632) and the device's own,
 > unmodified.
 
 | | |
 |---|---|
 | `fp3-ubuntu-touch-live.dts` | the tree **as it runs** — complete and fully resolved, dumped off the live device |
-| [`kernel-dt/`](kernel-dt/) | the **sources** it was built from: the UBports FP3 kernel's device tree |
+| [`kernel-dt/`](kernel-dt/) | the **sources** it was built from: the [UBports FP3 kernel](https://gitlab.com/ubports/porting/community-ports/android10/fairphone/android_kernel_fairphone_sdm632)'s device tree |
 
 The two agree exactly: compiling `sdm632-mtp-s3.dts` from `kernel-dt/` gives the
 live tree node for node, with only the nine properties the bootloader fills in
@@ -28,9 +28,9 @@ For the same tree as the vendor publishes it see
 
 ## Why keep the dump at all
 
-The Ubuntu Touch kernel tree (`lineageos_FP3_defconfig`, 4.9.218) contains **no
-FP3 board `.dts`** — nothing under `arch/arm64/boot/dts/qcom/` matches `fp3` or
-`fairphone`. The phone is Qualcomm's `sdm632-mtp-s3` reference board there, and
+The [Ubuntu Touch kernel tree](https://gitlab.com/ubports/porting/community-ports/android10/fairphone/android_kernel_fairphone_sdm632)
+(`lineageos_FP3_defconfig`, 4.9.218) contains **no FP3 board `.dts`** — nothing
+under `arch/arm64/boot/dts/qcom/` matches `fp3` or `fairphone`. The phone is Qualcomm's `sdm632-mtp-s3` reference board there, and
 which blob the bootloader ends up handing the kernel (`androidboot.dtb_idx=14
 androidboot.dtbo_idx=14` on the command line) is not something the sources tell
 you. So the only complete and authoritative form of the FP3 downstream tree is

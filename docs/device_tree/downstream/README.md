@@ -13,7 +13,7 @@ FP3 being the third model in their FP1…FP5 line.
 | | |
 |---|---|
 | [`UT/`](UT/) | as it **runs** — dumped off the phone booted into Ubuntu Touch |
-| [`UT/kernel-dt/`](UT/kernel-dt/) | the **sources** that dump was built from — the UBports FP3 kernel's device tree |
+| [`UT/kernel-dt/`](UT/kernel-dt/) | the **sources** that dump was built from — the [UBports FP3 kernel](https://gitlab.com/ubports/porting/community-ports/android10/fairphone/android_kernel_fairphone_sdm632)'s device tree |
 | [`fairphone/3.A.0136/`](fairphone/3.A.0136/) | as the vendor **publishes** it — Fairphone's GPL sources for Fairphone OS 3.A.0136 |
 
 Both are only reference material: they are where the *values* in the nodes we
@@ -60,8 +60,8 @@ cannot be used to pick one. (Going back to Android 9 does change the picture,
 for the worse — a `tas2557` amplifier, no `sar_sensor`, different ADSP nodes.)
 
 Second, the tree the phone runs is not a Fairphone release at all: it is the
-**DTB built into the Ubuntu Touch kernel**, which matches perfectly. Its sources
-show the two edits exactly:
+**DTB built into the [Ubuntu Touch kernel](https://gitlab.com/ubports/porting/community-ports/android10/fairphone/android_kernel_fairphone_sdm632)**,
+which matches perfectly. Its sources show the two edits exactly:
 
 ```
 arch/arm64/boot/dts/qcom/msm8953.dtsi

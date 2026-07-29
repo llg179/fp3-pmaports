@@ -1,11 +1,11 @@
 # Ubuntu Touch kernel device tree (sources)
 
-The device-tree sources of the kernel the phone actually boots under Ubuntu
-Touch — the counterpart of the live dump one level up.
+The device-tree sources of the [kernel the phone actually boots under Ubuntu
+Touch](https://gitlab.com/ubports/porting/community-ports/android10/fairphone/android_kernel_fairphone_sdm632) — the counterpart of the live dump one level up.
 
 > **AI-generated.** Written by Claude (Opus 5) under the direction of
 > Lajosházi, László Gergely, who reviewed it. **Only this page is
-> generated.** The device tree beside it is UBports' published source,
+> generated.** The device tree beside it is [UBports'](https://gitlab.com/ubports/porting/community-ports/android10/fairphone/android_kernel_fairphone_sdm632) published source,
 > unmodified.
 
 **This is the tree that matches the device.** Compiling `sdm632-mtp-s3.dts` from

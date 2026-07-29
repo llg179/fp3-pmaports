@@ -8,7 +8,7 @@ trust.
 > **AI-generated.** Written by Claude (Opus 5) under the direction of
 > Lajosházi, László Gergely, who reviewed it. The device trees checked
 > in under `downstream/` are **not** ours and not generated — they are the
-> vendor's and UBports' published sources, unmodified.
+> vendor's and [UBports'](https://gitlab.com/ubports/porting/community-ports/android10/fairphone/android_kernel_fairphone_sdm632) published sources, unmodified.
 
 | directory | contents | what it is | its README |
 |---|---|---|---|
