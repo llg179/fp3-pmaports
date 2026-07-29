@@ -103,25 +103,20 @@ on one boot and `iio:device3` on the next. Match on `name`, never on the index.
 
 ## Building and installing
 
-The procedure is the same as for any FP3 kernel change and lives in one place:
-**[`../deploy/README.md`](../deploy/README.md)**. What is specific to the
-sensors is only this.
+Both are documented centrally, and neither is sensor-specific:
 
-Kernel config:
+* **kernel config** — the `CONFIG_IIO_QCOM_SMGR*` symbols, with what they depend
+  on and why they are useless without the userspace half:
+  [`../kernel/config.md`](../kernel/config.md#the-sensor-symbols-come-as-a-set)
+* **building and deploying** the kernel package:
+  [`../deploy/README.md`](../deploy/README.md)
+* **userspace** — the registry server, its data and the udev rule, all required:
+  [`../../userspace-sensors/`](../../userspace-sensors/)
 
-```
-CONFIG_IIO_QCOM_SMGR=m
-CONFIG_IIO_QCOM_SMGR_ACCEL=m
-CONFIG_IIO_QCOM_SMGR_PROX=m
-CONFIG_IIO_QCOM_SMGR_GYRO=m
-CONFIG_IIO_QCOM_SMGR_MAG=m
-```
-
-Userspace — the registry server, its data and the udev rule, all of them
-required: **[`../../userspace-sensors/`](../../userspace-sensors/)**. Without
-the registry server the SSC never starts its sensors and no IIO device appears;
-without the udev rule the proximity device exists and `iio-sensor-proxy` ignores
-it in silence.
+Without the registry server the SSC never starts its sensors and no IIO device
+appears; without the udev rule the proximity device exists and
+`iio-sensor-proxy` ignores it in silence. A kernel that has the symbols but
+neither of those looks exactly like a kernel that was built without them.
 
 ## Testing
 

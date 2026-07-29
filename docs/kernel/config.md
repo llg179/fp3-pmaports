@@ -12,6 +12,9 @@ to the current base. `prepare()` then turns on what that config misses:
 | `CONFIG_VIDEO_IMX363` | rear camera sensor |
 | `CONFIG_DRM_PANEL_HIMAX_HX83112B` | the display panel |
 | `CONFIG_CHARGER_QCOM_SMB2` | the PMI632 charger |
+| `CONFIG_IIO_QCOM_SMGR` | the Sensor Manager core — every FP3 sensor is behind it |
+| `CONFIG_IIO_QCOM_SMGR_ACCEL`, `_GYRO`, `_MAG`, `_PROX` | the four sensors the SSC enumerates |
+| `CONFIG_WATCHDOG`, `_CORE`, `CONFIG_QCOM_WDT` | the SoC watchdog, with `HANDLE_BOOT_ENABLED` and `OPEN_TIMEOUT=300` |
 
 ## The panel symbol is a trap worth knowing about
 
@@ -29,3 +32,25 @@ with no `/dev/dri` at all. A kernel bump can lose a feature without a single
 build warning; **on every base bump, re-check that the symbols above still
 exist** — this is exactly the kind of breakage step 5 of the rolling procedure
 is there to catch.
+
+## The sensor symbols come as a set
+
+All five `IIO_QCOM_SMGR*` symbols are modules, and the four sensor drivers
+depend on the core. Turning on a sensor without `CONFIG_IIO_QCOM_SMGR` silently
+builds nothing, the same failure mode as the panel symbol above.
+
+They are also useless on their own: the SSC does not start its sensors until
+userspace serves it the registry, so a kernel with these enabled and no
+`snsregd` running produces no IIO device at all and looks exactly like a kernel
+without them. Both halves are described in
+[`../sensors/README.md`](../sensors/README.md).
+
+## The watchdog symbols are the boot-hang safety net
+
+`CONFIG_QCOM_WDT` plus `CONFIG_WATCHDOG_HANDLE_BOOT_ENABLED` and
+`CONFIG_WATCHDOG_OPEN_TIMEOUT=300` are what recovers the phone from a kernel
+that hangs before systemd. They need a device-tree property to be of any use
+here — the driver only arms a watchdog the bootloader already started, and the
+FP3's bootloader does not, which left no watchdog at all across exactly the
+window an early hang falls into. See the safety-net section in
+[`../sensors/README.md`](../sensors/README.md#the-boot-hang-safety-net).
