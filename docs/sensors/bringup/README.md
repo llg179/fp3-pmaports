@@ -877,7 +877,7 @@ use**, of the same family as the old framer saga, and unrelated to the sensors.
 The framer pokes were the prime suspect and were **cleared**: measured on
 2026-07-29 with eight cold boots each way, audio opened and a tone crossed
 SLIMbus in both directions identically with and without them, so they were
-removed. See [`../../audio/qdsp6ss-framer-poke.md`](../../audio/qdsp6ss-framer-poke.md).
+removed. See [`../../audio/bringup/qdsp6ss-framer-poke.md`](../../audio/bringup/qdsp6ss-framer-poke.md).
 That leaves the intermittent failure itself unexplained rather than pinned on
 the pokes.
 

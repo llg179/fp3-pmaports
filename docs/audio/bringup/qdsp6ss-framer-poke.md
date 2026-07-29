@@ -73,7 +73,7 @@ registered the card.
 **Sound crosses the bus in both directions.** A 1 kHz tone played on the
 headphones — which go out over SLIMbus through the WCD9335 — was heard by ear
 and captured on the headset microphone, which comes back over SLIMbus, at
-999.76 Hz and 33 dB. This is what [`23-audio-slimbus`](../../tests/checks/23-audio-slimbus-test.sh)
+999.76 Hz and 33 dB. This is what [`23-audio-slimbus`](../../../tests/checks/23-audio-slimbus-test.sh)
 now checks on every run; the older acoustic checks play through the speaker,
 which hangs off QUIN_MI2S and the AW8898 amplifier and never touches SLIMbus.
 

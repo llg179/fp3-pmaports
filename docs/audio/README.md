@@ -228,12 +228,18 @@ silent one; each is enforced somewhere in the code above.
 | `gsettings get org.sigxcpu.feedbackd profile` | `full` — `quiet` mutes the ringtone |
 | `amixer -c 0 cget name='RX0 Mix Digital Volume'` | tracks the volume keys during an earpiece call |
 
-## History
+## How it was arrived at
 
-* [`qdsp6ss-framer-poke.md`](qdsp6ss-framer-poke.md) — the QDSP6SS register the
-  kernel used to write on every boot to make the SLIMbus framer answer, why it
-  looked necessary, and the measurement that showed it was not. Removed
-  2026-07-29.
+This page describes the working arrangement. How that arrangement was found —
+what was believed at each step, what was measured, and the several confident
+conclusions that had to be retracted — is a separate document:
+
+* [`bringup/README.md`](bringup/README.md) — the narrative, with the
+  instruments and the two-sided register dumps that produced it
+* [`bringup/qdsp6ss-framer-poke.md`](bringup/qdsp6ss-framer-poke.md) — the
+  QDSP6SS register the kernel wrote on every boot to make the SLIMbus framer
+  answer, why it looked necessary, and the measurement that retired it
+  (removed 2026-07-29)
 
 After editing any UCM file, restart PulseAudio (`pulseaudio -k`) — it reads the
 sequences when it loads the card, so a running instance still applies the old

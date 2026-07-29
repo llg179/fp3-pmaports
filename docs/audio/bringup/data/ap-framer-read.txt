@@ -1,0 +1,16 @@
+# folyt.139 — framer MMIO read from AP side (pmOS/dead, NGD force-resumed via runtime-PM)
+# AP base 0xc140000 (= ADSP-view 0xee140000; LPASS_AP 0x0c000000 aliases LPASS_ADSP 0xee000000)
+# /proc/iomem: 0c140000-0c16bfff c140000.slim-ngd (176KB, covers +0x600)
+# ngd.1 runtime_status: suspended -> forced 'active' via echo on > .../qcom,slim-ngd.1/power/control
+uniform-junk? no (real reads)
+  AP 0x0c140000 (+0x000) = 0x01050000   == cave FRS2 (version)
+  AP 0x0c140004 (+0x004) = 0x00000001
+  AP 0x0c140014 (+0x014) = 0x00000000
+  AP 0x0c140600 (+0x600) = 0x00000001   == cave dead (framer enable)
+  AP 0x0c140604 (+0x604) = 0x00000000 FS=0 SFS=0 MS=0   == cave dead (not framing)
+  AP 0x0c140610 (+0x610) = 0x00000007   == cave dead
+  AP 0x0c140200 (+0x200) = 0x0000000b   (force-resume perturbed: FRS6-dead was 0, working=0xb)
+  AP 0x0c140400 (+0x400) = 0x000d0c83   (force-resume perturbed: FRS6-dead was 0, working=0xd0c83)
+  AP 0x0c140020 (+0x020) = 0x00000002   == cave
+# CONCLUSION: framer registers fully AP-readable at 0xc140000; FRS1/6 MMIO cave was unnecessary.
+# device state after restore: running (healthy)

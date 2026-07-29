@@ -73,7 +73,7 @@ without them — and that the PAS one never wrote anything in the first place
 (`0x101->0x101`).
 
 The whole story, including the log lines that read like faults and are not, is
-in [`../audio/qdsp6ss-framer-poke.md`](../audio/qdsp6ss-framer-poke.md).
+in [`../audio/bringup/qdsp6ss-framer-poke.md`](../audio/bringup/qdsp6ss-framer-poke.md).
 
 ## Camera: `imx363.c`
 
