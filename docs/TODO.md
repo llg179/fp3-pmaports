@@ -142,9 +142,10 @@ so it was a no-op.
 
 ## Also open, written up elsewhere
 
-* **Charging is capped at 1 A** where Fairphone's own profile says 2.7 A. What
-  it would take to lift it — battery temperature, JEITA, a thermal cooling
-  device, and letting the DT drive the register — is in
+* **Charging is capped at 1 A** where Fairphone's own profile says 2.7 A. The
+  first of the four prerequisites, **battery temperature, is done** since
+  2026-07-29; JEITA, a thermal cooling device and letting the DT drive the
+  register are not. What each would take is in
   [`device_tree/README.md`](device_tree/README.md#what-it-would-take-to-charge-at-full-current).
 * **Sensors work**, including proximity blanking during a call and ambient
   light. What is left there is calibration rather than bring-up: the

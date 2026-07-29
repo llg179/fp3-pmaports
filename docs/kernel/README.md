@@ -200,6 +200,30 @@ and diverge with distance from it: about 1.5 °C high at 0 °C, 1 °C low at 40 
 That is good enough to report a temperature and to notice a hot battery; it is
 not good enough to drive a JEITA charging profile, and nothing here does.
 
+**Measured on the phone**, `linux-fp3-7.1.3-r19` (`#20-fp3`). At idle the pack
+reads 28.5 °C against a 37 °C PMIC die and 41 °C CPUs — the right order for a
+lump of lithium inside a warm phone. That it is a live thermistor and not a
+plausible constant was checked by driving all eight cores flat out and then
+letting it cool:
+
+| | battery | CPU0 |
+|---|---|---|
+| idle | 28.6 °C | 41 °C |
+| 90 s of load | 30.2 °C | 74 °C |
+| 4½ min of load | 34.4 °C | 80 °C |
+| 6 min after load stopped | 31.6 °C | 37 °C |
+
+The pack rises and falls monotonically, an order of magnitude more slowly than
+the silicon, and lags it in both directions. `POWER_SUPPLY_PROP_TEMP` also gets
+the battery a `pmi632-battery` thermal zone from the power supply core, so
+userspace sees it the same way it sees `tsens`.
+
+The regression check is [`51-battery-temp`](../../tests/checks/51-battery-temp-test.sh),
+kept **separate from `50-charger`** on purpose: that one declares
+`Requires: cable` and is skipped whole without one, while the thermistor is read
+through the ADC whether anything is charging or not. Folding it in there would
+have hidden the property in exactly the runs that do not plug the phone in.
+
 ## Where each change is headed
 
 Per the [branch model](../../README.md#the-branch-model), each of these lives on
