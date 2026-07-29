@@ -78,7 +78,7 @@ Gergely with Claude.
 | `drivers/soc/qcom/qmi_encdec.c` | `qmi_encode()` read a `QMI_DATA_LEN` field four bytes wide whatever its declared width, so a `u8` length pulled in the bytes after it. Every sensor whose ID is non-zero was unreachable; the accelerometer worked only because its ID is 0 |
 | `drivers/iio/accel/smgr_accel.c` pattern | `remove()` reads `platform_get_drvdata()`, which probe never set — copied into `smgr_prox.c` and fixed there; upstream has the same latent NULL dereference |
 | `drivers/iio/common/qcom_smgr/smgr.c` | the loop that defaults each data type's sample rate to its maximum indexed `data_types[0]` every time instead of the loop variable, so a second data type would have been requested at a rate of zero |
-| `drivers/watchdog/qcom-wdt.c`, `sdm632-fairphone-fp3.dts` | `qcom,start-at-probe`: the driver only armed a watchdog the bootloader had already started, and the FP3's has not, leaving no watchdog at all between kernel start and systemd |
+| `drivers/watchdog/qcom-wdt.c`, `sdm632-fairphone-fp3.dts` | `qcom,start-at-probe`: the driver only armed a watchdog the bootloader had already started, and the FP3's has not, leaving no watchdog at all between kernel start and systemd. It came out of this bring-up but is its own category — written up in [`../debug/README.md`](../debug/README.md) |
 
 ### Data taken from the device or from upstream
 

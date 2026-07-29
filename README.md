@@ -57,7 +57,7 @@ from, where there is going to be one. There are six:
 | `camera` | the Sony IMX363 rear sensor | yes |
 | `charger` | the PMI632 charger via `qcom_smbx`, including the battery thermistor | yes |
 | `sensor` | proximity, ambient light and the IMU, over the SSC's QMI Sensor Manager | not yet |
-| `debug` | the bring-up safety net: the SoC watchdog started at probe, so a hung boot resets instead of waiting for hands | never — it is deliberately not upstream material |
+| `debug` | the bring-up safety net: the SoC watchdog started at probe, so a hung boot resets instead of waiting for hands ([`docs/debug/`](docs/debug/README.md)) | never — it is deliberately not upstream material |
 
 Reading it: "what runs on the phone" is always `integration/<pkgver>`; "what
 goes to the kernel" is always `submit/<pkgver>/<category>`; the base version is

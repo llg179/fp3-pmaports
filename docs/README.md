@@ -17,6 +17,7 @@ here.
 | [`device_tree/`](device_tree/README.md) | which `.dts`/`.dtsi` files the board is built from, what our one commit adds and where every value came from — with the trees themselves checked in, ours and both downstream references |
 | [`kernel/`](kernel/README.md) | the ten C files we change: whose driver each one is, what we added on top and what genuinely did not exist before |
 | [`sensors/`](sensors/README.md) | the proximity / ambient-light / IMU bring-up, which runs through the SSC — working, with calibration left |
+| [`debug/`](debug/README.md) | the bring-up safety net: the watchdog started at probe, why there is no ramoops, and where the debugging *method* lives |
 
 ## What is still open
 
