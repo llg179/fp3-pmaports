@@ -7,7 +7,7 @@ what was believed, what was measured, and what that forced us to conclude —
 including the three places where the belief was wrong. Every capture and every
 tool it refers to is checked in here, so nothing has to be taken on trust.
 
-**Status (2026-07-29): the accelerometer reads 1 g; proximity does not stream yet.** After a one-line fix to a
+**Status (2026-07-29): the accelerometer reads 1 g; the proximity blocker is a QMI core bug, now fixed.** After a one-line fix to a
 QRTR control constant, the registry server works, the SSC brings up the real
 hardware, and the ported IIO drivers deliver data:
 
@@ -18,12 +18,10 @@ hardware, and the ported IIO drivers deliver data:
 ```
 
 That is the first sensor reading on this port. Proximity has a driver and an IIO
-device, but its buffering request fails inside the kernel's QMI encoder — see
-[step 10](#step-10--the-first-reading) and
-[step 11](#step-11--proximity-binds-and-then-does-not-stream).
-
-⚠️ **The phone currently needs a power cycle** — a driver oops wedged a kernel
-thread while systemd kept the watchdog fed, so nothing reset it.
+device, and its buffering request was failing inside the kernel's QMI encoder —
+a core bug that made every sensor whose id is non-zero unreachable, fixed in
+[step 11](#step-11--proximity-binds-and-then-does-not-stream). Whether proximity
+then produces sensible values is the next measurement.
 
 ⚠️ Read [the correction](#correction-2026-07-28--every-publish-in-steps-48-was-a-bye)
 before trusting steps 4–8: the control code used to publish a QMI service was
@@ -570,12 +568,45 @@ Two controls pin it down, and both say the SSC is innocent:
   failing request — and gets `ack_nak 0`.
 
 So the same struct, same rates, same QMI handle, encodes for one sensor and not
-the other. That is not yet explained. The next step is one instrumented build:
-the encoder's `Invalid data length` branch only fires for a `VAR_LEN_ARRAY` whose
-`data_len_value` is zero or exceeds `elem_len`, so printing `data_type`,
-`tlv_type`, `elem_len` and `data_len_value` at that branch names the element
-immediately. That kernel is built and waiting; it could not be flashed because
-the phone needs a power cycle first (see below).
+the other. One instrumented build settled it — printing the encoder's state at
+the failing branch:
+
+```
+qmi_encode: Invalid data length: enc_level=1 data_type=9 tlv_type=0x4
+            array_type=2 elem_len=2 elem_size=8 offset=10 data_len_value=2621441
+```
+
+`2621441` is `0x00280001`, and `0x28` is the proximity sensor's id. The array
+length had eaten the sensor id.
+
+**The bug is in the QMI core, not in the sensor driver.** `qmi_encode()` handles
+a `QMI_DATA_LEN` element with
+
+```c
+memcpy(&data_len_value, buf_src, sizeof(u32));
+```
+
+— four bytes, whatever the field's declared width. The buffering request declares
+
+```c
+u8  item_len;
+struct { u8 sensor_id; u8 data_type; u16 ...; } items[];
+```
+
+so the three bytes after `item_len` are one byte of padding and then the first
+item's `sensor_id`. **For the accelerometer that id is 0, so the request encodes
+correctly by luck.** For proximity it is `0x28`; the length becomes `0x00280001`,
+fails the bounds check, and the request never leaves the AP. The gyroscope (id 10)
+and magnetometer (id 20) would have failed the same way.
+
+The fix reads the field at its declared width — the decode path already did, and
+the bytes put on the wire are unchanged because `data_len_sz` is derived from
+`elem_size` either way.
+
+> **Lesson.** Everything pointed at "what is different about the proximity
+> sensor", and the answer was that nothing is: the accelerometer is the special
+> case, and it works only because its id happens to be zero. When one case works
+> and one fails, it is worth asking which of the two is the accident.
 
 > **Lesson.** The loudest error was not the error. `0x501` had a plausible story
 > attached to it — "proximity is an on-change sensor, buffering is for streaming
@@ -583,7 +614,7 @@ the phone needs a power cycle first (see below).
 > `-22` two lines above it was the real failure, and one userspace probe was
 > enough to show the SSC accepts what the driver is trying to send.
 
-### The oops that the safety net did not catch
+### The oops, and what the safety net did and did not catch
 
 Binding a driver to the proximity device by hand hit a NULL dereference in
 `smgr_prox_remove()`: it reads `platform_get_drvdata(pdev)`, which probe never
@@ -592,17 +623,24 @@ because nothing unbinds these devices in normal use. Fixed by setting the
 drvdata in probe.
 
 The oops itself was survivable; what followed was not. It left a kernel thread
-wedged, so every later `sysfs` write to that driver blocked, the phone stopped
-answering over USB, and **the watchdog never fired** — because systemd was still
-running and still petting it. That is a real hole in the net described above:
+wedged, so every later `sysfs` write to that driver blocked and the phone stopped
+answering over USB. It did **not** need a power cycle in the end: the `systemctl
+reboot` issued into the wedge reached "Shutting down", hung there, and the
+**shutdown watchdog** (`RebootWatchdogSec=30`) reset the SoC. The phone came back
+on its own about twenty minutes later.
 
-> `panic=10` covers panics and the watchdog covers a *whole-system* stall. Neither
-> covers a partial wedge where userspace keeps running well enough to pet
-> `/dev/watchdog` while the part you care about is dead.
+So the net held — through the shutdown path. The gap it does have is narrower
+than it first looked, but real:
 
-A `WatchdogSec`-style liveness check on something that actually matters — the
-network coming up, say — would close it. Until then, a driver oops on this device
-still costs a power cycle.
+> While the system is *running*, a partial wedge is not caught: systemd stays
+> healthy enough to keep petting `/dev/watchdog`, so the runtime watchdog never
+> bites. What saves you is attempting a reboot, because a hung shutdown *is*
+> covered.
+
+A liveness check on something that actually matters — the network coming up, say
+— would close the running-system half. Note also that
+`/sys/class/watchdog/watchdog0/bootstatus` reads `0` after such a reset on this
+device, so it is not a usable "was this a watchdog reset?" indicator here.
 
 ### What is still missing
 
@@ -823,11 +861,8 @@ not checked in for size; it lives in the working directory
 
 ## Next steps
 
-0. **Power-cycle the phone** (see the warning at the top), then flash the
-   instrumented kernel that is already built and waiting.
-1. **Name the element `qmi_encode` rejects**, per
-   [step 11](#step-11--proximity-binds-and-then-does-not-stream). Then measure
-   proximity — a finger over the sensor decides the value mapping.
+1. **Measure proximity** with the QMI encoder fix in — a finger over the sensor
+   decides both that it streams and which of the report's values is which.
 2. **Proximity through `iio-sensor-proxy` → in-call blanking**, which is the
    original goal and the only step left after 1.
 3. **Find the real content of groups 20, 2691 and 3050** — their offsets in
