@@ -1,9 +1,9 @@
 # The QDSP6SS framer poke: what it was, and why it is gone
 
-For most of this port's life the kernel wrote to a QDSP6SS register on every
-boot, in two places, to make the WCD9335 audio codec answer at all. That code
-was removed on 2026-07-29 after it was measured to do nothing. This page is the
-record: what the poke was, why it looked necessary, and what settled it.
+The kernel wrote to a QDSP6SS register on every boot, in two places, to make the
+WCD9335 audio codec answer at all. The code was added on 2026-07-25 and removed
+on 2026-07-29, after it was measured to do nothing. This page is the record:
+what the poke was, why it looked necessary, and what settled it.
 
 > **AI-generated.** Written by Claude (Opus 5) under the direction of
 > Lajosházi, László Gergely, who ran the phone and made the physical
@@ -64,7 +64,7 @@ qcom,slim-ngd-ctrl: slim-framer quirk: 0x10b->0x103
 
 By the time it runs, bit 3 is already clear — the value goes in and comes out
 unchanged. Only the SLIMbus one ever wrote. So half of the fix had been a no-op
-from the start, on every boot, for months.
+from the start, on every boot, for the four days it existed.
 
 **The codec comes up without either.** Ten warm reboots and five cold boots on
 a poke-free kernel: every one reached `WCD9335 CODEC version is v2.0` and

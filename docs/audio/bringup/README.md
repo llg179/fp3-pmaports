@@ -246,22 +246,27 @@ cat "/sys/kernel/debug/asoc/Fairphone 3/VoiceMMode1/state"
 
 Both directions **and** the backend must read `State: start`.
 
-## Step 6 — the framer pokes, kept for five months for no reason
+## Step 6 — the framer pokes, kept for four days for no reason
 
-The last thing to go was the workaround that had been there longest. Its full
+The last thing to go was a workaround that had been in for four days. Its full
 account is in [`qdsp6ss-framer-poke.md`](qdsp6ss-framer-poke.md); the short
 version belongs here because it is the same lesson as everything above.
 
 Two commits wrote QDSP6SS `0x0c20002c` bit 3 on every boot to make the SLIMbus
-framer answer. They were added when audio was silent and a 2025 LKML thread
-pointed at that exact register. Audio worked afterwards. They were kept — not
-because either was shown to be the reason, but because they were present when it
-started working.
+framer answer. They were written on 2026-07-25, when audio was silent and a 2025
+LKML thread pointed at that exact register. Audio worked afterwards. They were
+kept — not because either was shown to be the reason, but because they were
+present when it started working.
 
-Measured in July 2026: the PAS-side one **never wrote anything** (`0x101 →
-0x101`; by the time it runs the bit is already clear), and with both removed the
-codec comes up and a 1 kHz tone crosses SLIMbus in both directions across eight
-cold boots, identically to eight cold boots with them. Both are gone.
+Reverted on 2026-07-29, four days later: the PAS-side one **never wrote
+anything** (`0x101 → 0x101`; by the time it runs the bit is already clear), and
+with both removed the codec comes up and a 1 kHz tone crosses SLIMbus in both
+directions across eight cold boots, identically to eight cold boots with them.
+
+Four days is short, and that is the point rather than an excuse. The reasoning
+that kept them — *it works now, and this was the last thing changed* — does not
+get better with time; a workaround that survives its first week survives its
+first year the same way.
 
 ## Traps worth carrying forward
 
