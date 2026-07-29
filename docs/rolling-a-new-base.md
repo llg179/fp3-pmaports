@@ -39,7 +39,8 @@ of the branches and the package `pkgver` change.
 
 ## Setting the checkouts up (once per machine)
 
-Three trees are involved: the kernel fork, this repo, and a postmarketOS build
+Three trees are involved: the [kernel fork](https://github.com/llg179/linux),
+this repo, and a postmarketOS build
 environment. The kernel fork keeps upstream and our work on **separate
 remotes** — `origin` is `msm8953-mainline` and is never pushed to, `fork` is
 ours and is the only push target.

@@ -17,7 +17,8 @@ on by hand, or how the thing was actually built.
 
 ## The goal, and why the names have no version in them
 
-`llg179/linux` is a **rolling forward-port** of Fairphone 3 support onto the
+[`llg179/linux`](https://github.com/llg179/linux) is a **rolling forward-port**
+of Fairphone 3 support onto the
 latest [`msm8953-mainline`](https://github.com/msm8953-mainline/linux) release
 (`X.Y.Z/main`), kept moving from one kernel base to the next until the work
 lands upstream on the LKML.

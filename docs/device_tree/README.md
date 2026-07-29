@@ -43,7 +43,7 @@ can be read without a kernel checkout.
 
 Provenance, as of this snapshot:
 
-* base: `v7.1.3-r0` (tag in `llg179/linux`, the msm8953-mainline 7.1.3 release)
+* base: `v7.1.3-r0` (tag in [`llg179/linux`](https://github.com/llg179/linux), the msm8953-mainline 7.1.3 release)
 * ours: `integration/7.1.3` — the change itself is commit [`ca2896133002`](https://github.com/llg179/linux/commit/ca2896133002d44daee935ac45a749dab641ef45),
   *"FP3: integrated device tree (audio + charger + camera) for 7.1.3 testing"*
 
@@ -133,7 +133,7 @@ cannot assume they are there.
 
 ### Refreshing this snapshot after a base bump
 
-From a `llg179/linux` checkout, with `<base>` the new kernel base:
+From a [`llg179/linux`](https://github.com/llg179/linux) checkout, with `<base>` the new kernel base:
 
 ```sh
 for f in sdm632-fairphone-fp3.dts pmi632.dtsi; do
