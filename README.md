@@ -55,7 +55,7 @@ from, where there is going to be one. There are six:
 | `audio` | WCD9335 over SLIMbus: playback, the four digital mics, headset (MBHC) jack detection | yes |
 | `voice` | call audio, by routing the voice mixers over SLIMbus | yes |
 | `camera` | the Sony IMX363 rear sensor | yes |
-| `charger` | the PMI632 charger via `qcom_smbx`, including the battery thermistor | yes |
+| `charger` | the PMI632 charger via `qcom_smbx`: the battery thermistor, hardware JEITA, thermal mitigation and a device-tree-driven charge current ([`docs/charger/`](docs/charger/README.md)) | yes |
 | `sensor` | proximity, ambient light and the IMU, over the SSC's QMI Sensor Manager | not yet |
 | `debug` | the bring-up safety net: the SoC watchdog started at probe, so a hung boot resets instead of waiting for hands ([`docs/debug/`](docs/debug/README.md)) | never — it is deliberately not upstream material |
 
@@ -175,6 +175,9 @@ arrangement obeys — playback, the microphones, headset detection and call audi
   bring-up: how the SSC hides them behind a QMI service, what was measured, the
   upstream Sensor Manager work this builds on and what we add — **working**, with
   the magnetometer's calibration still open
+* [`docs/charger/`](docs/charger/) — charging: the JEITA and thermal guards that
+  had to exist before the current could be raised, why the thresholds are raw
+  ADC codes rather than degrees, and why the ceiling is the USB port
 
 ## Device tree
 

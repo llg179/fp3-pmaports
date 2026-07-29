@@ -19,7 +19,7 @@ commits, and where the result may and may not go, is in the
 
 ## The files
 
-Ten files, 2655 insertions — audio, camera and charger. The `sensor` and `debug`
+Ten files, 2980 insertions — audio, camera and charger. The `sensor` and `debug`
 categories are not in this table: the SMGR/QRTR sensor stack and the watchdog
 change are written up in [`../sensors/README.md`](../sensors/README.md#provenance),
 where the measurements that produced them are.
@@ -30,7 +30,7 @@ where the measurements that produced them are.
 | `sound/soc/qcom/apq8016_sbc.c` | +139 | the msm8916 machine driver — **Srinivas Kandagatla**, [`bdb052e81f62`](https://github.com/torvalds/linux/commit/bdb052e81f6236b4febb50ed74f79f770fa82cc5) *"ASoC: qcom: add apq8016 sound card support"*, 2015-06-10 |
 | `sound/soc/qcom/qdsp6/q6voice-dai.c` | +19 | the Q6 Voice DAI — **not in Linus' tree**: **Stephan Gerhold** (2020-04-28), extended by **Vincent Knecht** (voice port controls, 2021) and **Otto Pflüger** (VoiceMMode1, 2023); carried by msm8953-mainline |
 | `sound/soc/qcom/qdsp6/q6afe.c` | +30 | the AFE driver — **Srinivas Kandagatla**, [`7fa2d70f9766`](https://github.com/torvalds/linux/commit/7fa2d70f976657111a5ea4f3d16a738ddaa10c4f) *"ASoC: qdsp6: q6afe: Add q6afe driver"*, 2018-05-18 |
-| `drivers/power/supply/qcom_smbx.c` | +363 | the SMB2 charger driver — **Casey Connolly** (Linaro); the file under this name since [`5ec53bcc7fce`](https://github.com/torvalds/linux/commit/5ec53bcc7fce6801977a0c125fb726d7b0e9102c), 2025-06-19 |
+| `drivers/power/supply/qcom_smbx.c` | +688 / −34 | the SMB2 charger driver — **Casey Connolly** (Linaro); the file under this name since [`5ec53bcc7fce`](https://github.com/torvalds/linux/commit/5ec53bcc7fce6801977a0c125fb726d7b0e9102c), 2025-06-19 |
 | `drivers/iio/adc/qcom-spmi-adc5.c` | +2 | the PMIC ADC5 driver — **Siddartha Mohanadoss**, [`e13d757279bb`](https://github.com/torvalds/linux/commit/e13d757279bb2c2fa32e5b578dd1cbcac4d51e21) *"iio: adc: Add QCOM SPMI PMIC5 ADC driver"*, 2018-08-02 |
 | `drivers/media/i2c/imx363.c` (+ `Kconfig`, `Makefile`) | +1568 | **new file**, but not from nothing — it keeps `Copyright (C) 2018 Intel Corporation` from the Intel IMX3xx sensor driver it is structured on |
 
@@ -179,9 +179,21 @@ same release checked in under
 [`../device_tree/downstream/fairphone/3.A.0136/`](../device_tree/downstream/fairphone/3.A.0136/).
 **New** is the variant abstraction and the PMI632 support itself; PMI632 also has
 no coulomb-counting fuel gauge in mainline, so capacity comes from the OCV table
-in the board's `simple-battery` node. What that costs, and what raising the 1 A
-charge cap would take, is in
-[`../device_tree/README.md`](../device_tree/README.md#what-it-would-take-to-charge-at-full-current).
+in the board's `simple-battery` node.
+
+Three further commits turn the charge current from a constant into something the
+board describes, and add the two guards that made raising it defensible:
+
+| commit | what it adds |
+|---|---|
+| [`51803fe941cb`](https://github.com/llg179/linux/commit/51803fe941cb825a5fe8d26e3d2a8a7374296758) | the hardware JEITA comparator thresholds and the per-soft-zone charge currents, from the device tree. The block was already *running* on the PMIC's generic defaults; this replaces them with the pack's characterised values, carried as raw ADC codes |
+| [`5a736a69f51e`](https://github.com/llg179/linux/commit/5a736a69f51e3a473776cc9c1c5c8f4b51b9a2f5) | the fast-charge current as a `thermal_cooling_device`, so a thermal zone can throttle charging the way it throttles a CPU |
+| [`20c8679e024c`](https://github.com/llg179/linux/commit/20c8679e024c384b38f66e9d07a612be9b911883) | `constant-charge-current-max-microamp` actually reaching the hardware, bounded by a new per-generation ceiling so the deliberate ~1 A cap survives where nobody has measured otherwise |
+
+Why the result is 2 A and not the pack's rated 2.7 A, what the JEITA
+compensation register can and cannot express, and the register-level
+before/after are all on the charger page:
+[**`../charger/README.md`**](../charger/README.md).
 
 ### Battery temperature
 

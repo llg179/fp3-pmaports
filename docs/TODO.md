@@ -142,11 +142,14 @@ so it was a no-op.
 
 ## Also open, written up elsewhere
 
-* **Charging is capped at 1 A** where Fairphone's own profile says 2.7 A. The
-  first of the four prerequisites, **battery temperature, is done** since
-  2026-07-29; JEITA, a thermal cooling device and letting the DT drive the
-  register are not. What each would take is in
-  [`device_tree/README.md`](device_tree/README.md#what-it-would-take-to-charge-at-full-current).
+* **Charging asks for 2 A**, where it used to be capped at 1 A. Battery
+  temperature, hardware JEITA, thermal mitigation and a device-tree-driven
+  charge current are all in; what is left is the **input side** — without
+  high-voltage negotiation the USB port supplies about 1.9 A into the cell, so
+  the pack's rated 2.7 A is unreachable and that is now the only thing between
+  the two numbers. Also open: the float-voltage half of JEITA, step charging,
+  and confirming the thermal trip temperatures against a phone that has
+  actually been charged hard. See [`charger/README.md`](charger/README.md).
 * **Sensors work**, including proximity blanking during a call and ambient
   light. What is left there is calibration rather than bring-up: the
   magnetometer has an unknown hard-iron offset and scale, and the mount matrix

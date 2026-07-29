@@ -44,27 +44,30 @@ can be read without a kernel checkout.
 Provenance, as of this snapshot:
 
 * base: `v7.1.3-r0` (tag in [`llg179/linux`](https://github.com/llg179/linux), the msm8953-mainline 7.1.3 release)
-* ours: `integration/7.1.3` — four commits touch the device tree, the bulk of it
-  [`ca2896133002`](https://github.com/llg179/linux/commit/ca2896133002d44daee935ac45a749dab641ef45)
+* ours: `integration/7.1.3` — five commits touch the device tree, the bulk of it
+  [`6749bae07da1`](https://github.com/llg179/linux/commit/6749bae07da17a2a9fffceaa4f78ec0d6c6353e8)
   *"FP3: integrated device tree (audio + charger + camera) for 7.1.3 testing"*
   (+375/−4); then
   [`b7a6d32e`](https://github.com/llg179/linux/commit/b7a6d32eb9b954ce45d5630ba653b85d081b4ea8)
   adds the watchdog node (+41),
-  [`3b3043fe`](https://github.com/llg179/linux/commit/3b3043feab7c) removes the
-  three framer-poke lines again, and
+  [`3b3043fe`](https://github.com/llg179/linux/commit/3b3043feab7c6f322c8543aab05f97fe8052dac0)
+  removes the three framer-poke lines again,
   [`1f5b95d9`](https://github.com/llg179/linux/commit/1f5b95d9d62adb7b31644903d14bc3b8aa8c0f8c)
-  adds the battery thermistor channel (+12/−2)
+  adds the battery thermistor channel (+12/−2), and
+  [`0eba8b8a`](https://github.com/llg179/linux/commit/0eba8b8a2f1f220fb6277724a7c553391020b979)
+  raises the charge current to 2 A with the JEITA and thermal guards that go
+  with it (+74/−6)
 
 Both copies are byte-identical to the corresponding git blobs, so
 `diff -u before_update/<file> after_update/<file>` reproduces our delta:
-**+423 / −4 lines** across the two files.
+**+491 / −4 lines** across the two files.
 
 ### The files
 
 | file | delta | what we add |
 |---|---|---|
-| `sdm632-fairphone-fp3.dts` | 537 → 925 lines | the board changes: WCD9335 SLIMbus audio (`slimbam`, `slim_msm`, `tasha_ifd`, `wcd9335`, `divclk1_cdc`, `wcd_vout_1p8`, three pin-mux nodes, the `slim-playback` / `slim-capture` DAI links), the IMX363 rear camera (`camera@1a` plus the `&camss` port graph), the charger side (`&pmi632_charger`, `fp3_battery`), and the `&watchdog` node with `qcom,start-at-probe` |
-| `pmi632.dtsi` | 209 → 240 lines | the PMI632 charger node itself, the counterpart of the board-level `&pmi632_charger`, plus `channel@4a` — the battery thermistor the charger reads a temperature from |
+| `sdm632-fairphone-fp3.dts` | 537 → 991 lines | the board changes: WCD9335 SLIMbus audio (`slimbam`, `slim_msm`, `tasha_ifd`, `wcd9335`, `divclk1_cdc`, `wcd_vout_1p8`, three pin-mux nodes, the `slim-playback` / `slim-capture` DAI links), the IMX363 rear camera (`camera@1a` plus the `&camss` port graph), the charger side (`&pmi632_charger` with its JEITA and thermal-mitigation properties, `fp3_battery`, and a `cooling-maps` addition to the `pmi632-thermal` zone), and the `&watchdog` node with `qcom,start-at-probe` |
+| `pmi632.dtsi` | 209 → 242 lines | the PMI632 charger node itself, the counterpart of the board-level `&pmi632_charger`, plus `channel@4a` — the battery thermistor the charger reads a temperature from — and `#cooling-cells` on the charger node |
 
 The other three files in the `#include` chain — `sdm632.dtsi`, `msm8953.dtsi`,
 `pm8953.dtsi` — are **not** here because we do not touch them; the pin muxes our
@@ -83,57 +86,33 @@ block:
 |---|---|---|---|
 | **audio** — WCD9335 over SLIMbus | Fairphone's published 4.9 sources ([`downstream/fairphone/3.A.0136/`](downstream/fairphone/3.A.0136/)): `msm8953.dtsi` (SLIMbus BAM `c104000`, NGD `c140000`), `msm8953-audio.dtsi` (the `slim217,1a0` device address, mic-bias voltages, DMIC clock), `msm8953-pinctrl.dtsi` (`cdc_reset`, `wcd_intr`, MCLK muxes) — Qualcomm BSP code as shipped by Fairphone | the existing **mainline** WCD9335 boards (DragonBoard 820c / MSM8996): codec binding and driver by **Srinivas Kandagatla** (`ASoC: wcd9335`, 2019) on his SLIMbus NGD controller (2018); binding conversion **Yassine Oudjana** (2022), node moved to the boards by **Krzysztof Kozlowski** (2023). We follow that shape, *not* downstream's `qcom,tasha-slim-pgd` | **the combination**: mainline had WCD9335 only on MSM8996, never on MSM8953. The NGD/BAM nodes at msm8953 addresses, `divclk1_cdc`, `wcd_vout_1p8`, the three pin-mux nodes, the MBHC button thresholds and the `slim-playback`/`slim-capture` DAI links are written here for the first time |
 | **camera** — Sony IMX363 | Fairphone's `msm8953-camera-sensor-mtp.dtsi`: regulators, CCI wiring, power sequence. The I²C address `0x1a` is **not** from there — the FP3 straps SLASEL high, confirmed by probing the bus | the mainline **camss** graph binding (`port@0` / `csiphy0_ep`); it sits on **Luca Weiss'** groundwork in the board file — [`9e834e768d0b`](https://github.com/torvalds/linux/commit/9e834e768d0b2e9007cd6a5c778d2d8e3674e78f) camera fixed regulators and [`cfc22c2121cb`](https://github.com/torvalds/linux/commit/cfc22c2121cbf8bb75cb9a9993f13c17587ed55e) CCI + EEPROM, both in Linus' tree | the `camera@1a` node and the `&camss` port graph for this board — and the driver under it, whose register programming was reverse-engineered on the FP3 (same sensor family as the Pixel 3a) |
-| **charger** — PMI632 | the charger node's interrupt numbers and ADC channel assignment from Qualcomm's downstream `pmi632.dtsi` in the same release; the battery's cell parameters and OCV curve from Fairphone's own fuel-gauge profile `qg-batterydata-Kayo-3000mah-Nov4th2019-pmi632` — 3000 mAh, 4.39 V float, the 25 °C column of its `pc-temp-v1` table converted from 100 µV units | mainline `simple-battery` plus the `qcom_smbx` SMB5 binding | the SMB5 charger node in mainline's `pmi632.dtsi` (added disabled, as a PMIC-level description should be) and the board-level `&pmi632_charger` + `fp3_battery` that enable it. **Deliberate deviation:** charge current held at 1 A instead of downstream's 2.0–2.7 A until the thermal/JEITA side is exercised |
+| **charger** — PMI632 | the charger node's interrupt numbers and ADC channel assignment from Qualcomm's downstream `pmi632.dtsi` in the same release; the battery's cell parameters and OCV curve from Fairphone's own fuel-gauge profile `qg-batterydata-Kayo-3000mah-Nov4th2019-pmi632` — 3000 mAh, 4.39 V float, the 25 °C column of its `pc-temp-v1` table converted from 100 µV units | mainline `simple-battery` plus the `qcom_smbx` SMB5 binding | the SMB5 charger node in mainline's `pmi632.dtsi` (added disabled, as a PMIC-level description should be) and the board-level `&pmi632_charger` + `fp3_battery` that enable it. The charge current, the JEITA thresholds and the mitigation table are covered on the [charger page](../charger/README.md) |
 | **sound card** | — | — | nothing: we *extend* `&sound_card` rather than rewrite it. The card itself is **Vldly's** [`5f0487e5a374`](https://github.com/llg179/linux/commit/5f0487e5a3748855721652afced36b2d1fe2bb25) (2022, msm8953-mainline only, not in Linus' tree) and the AW8898/MI2S speaker path on it is **Luca Weiss'** [`4fd8c23afa2e`](https://github.com/llg179/linux/commit/4fd8c23afa2e1d907fd981c29dd35278c53c9ea5) + [`4335b0ae1eb6`](https://github.com/llg179/linux/commit/4335b0ae1eb6e9da37e2078f5affebb937b8e18d) |
 
-### What it would take to charge at full current
+### What the charger side describes
 
-The phone charges at **1 A** where Fairphone's own profile for this cell says
-`qcom,fastchg-current-ma = <2700>`. That is not one conservative number in one
-place — it is two independent caps plus three missing safety mechanisms.
+The board's `&pmi632_charger` and `fp3_battery` nodes carry more than an enable:
+the battery's cell parameters and OCV curve, the JEITA comparator thresholds as
+raw ADC codes, the per-soft-zone charge currents, and the thermal mitigation
+table — plus a `cooling-maps` addition to the PMIC's own temperature zone.
 
-**Where the 1 A actually comes from.** Not from our device tree. The
-`qcom_smbx` driver writes the fast-charge current register at probe, from a
-fixed table entry that exists for both charger variants:
+All of those values, where each came from and why the charge current settles at
+2 A rather than the pack's rated 2.7 A, are on the charger page:
+[**`../charger/README.md`**](../charger/README.md). The short version is that
+two ceilings sit below the battery's rating — the JEITA compensation register
+runs out of range above about 2.175 A, and without high-voltage negotiation the
+USB port supplies about 1.9 A into the cell anyway.
 
-```c
-/*
- * This overrides all of the current limit options exposed to userspace
- * and prevents the device from pulling more than ~1A. This is done
- * to minimise potential fire hazard risks.
- */
-{ .addr = FAST_CHARGE_CURRENT_CFG, … .val = 1000000 / CURRENT_SCALE_FACTOR },
-```
-
-Our `constant-charge-current-max-microamp = <1000000>` is, today,
-**documentation only**: `power_supply_get_battery_info()` is called, but the
-only field the driver applies to the hardware is `voltage_max_design_uv`, which
-becomes the float voltage. Raising the DT number alone changes nothing.
-
-**What has to be built, in order:**
-
-| # | what | why it blocks the current |
-|---|---|---|
-| 1 | ~~**Battery temperature.**~~ **Done, 2026-07-29.** `BAT_THERM` is in the charger node's `io-channels` and the battery reports `POWER_SUPPLY_PROP_TEMP`; the power supply core turns that into a `pmi632-battery` thermal zone for free. See [`../kernel/README.md`](../kernel/README.md#battery-temperature) — including why the curve is good enough to read but not to charge by | this was the blocker for everything below; it no longer is |
-| 2 | **JEITA.** Program `JEITA_EN_CFG` (hard limit + the hot/cold float-voltage and charge-current slots). The driver already defines those bits and reads the JEITA *status* register for `POWER_SUPPLY_PROP_HEALTH` — nothing writes the *enable* | at 1 A a mis-charge at temperature is survivable; at 2.7 A it is what the safety margin was for. Downstream sets `qcom,sw-jeita-enable` |
-| 3 | **Thermal mitigation.** Register the charger as a cooling device (`#cooling-cells = <2>`) and bind it to a thermal zone, mirroring downstream's `qcom,thermal-mitigation = <2000000 1500000 1000000 500000 …>` — plus its `qcom,hw-die-temp-mitigation` and `qcom,hw-connector-mitigation` | mainline has no path at all from "the phone is hot" to "charge slower" |
-| 4 | **Let the DT set the current.** Program `FAST_CHARGE_CURRENT_CFG` from `constant-charge-current-max-microamp` instead of the constant, then raise the battery node to `2700000` | this is the actual change — but it is an edit to an upstream driver whose cap is deliberate (see the comment above), so it belongs *after* 1–3, and should be discussed with its author, **Casey Connolly** (Linaro) |
-| 5 | **The input side.** A DCP gives 1.5 A at 5 V, so ≈1.9 A into a 3.8 V cell at best, even with the battery-side cap gone. Downstream reaches 2.7 A by negotiating a higher `Vbus` (QC); mainline `qcom_smbx` negotiates nothing | above ~1.5 A the ceiling stops being the charger and starts being the port |
-
-Optional but worth copying once the above works: downstream's
-`qcom,step-charging-enable` (taper near full) and `qcom,auto-recharge-vbat-mv =
-<4300>`.
-
-**How to verify.** Raise in steps — 1.0 → 1.5 → 2.0 → 2.7 A — and at each step
-charge from a low state of charge on both a high-current wall charger and a
-plain SDP port, watching a USB power meter against what the driver reports, and
-the die/connector temperatures. `fp3-selftest` covers that the charger works at
-all, not that it is safe at current.
+**How to verify a change here.** Raise the current in steps — 1.0 → 1.5 → 2.0 A
+— and at each step charge from a low state of charge on both a high-current wall
+charger and a plain SDP port, watching a USB power meter against what the driver
+reports, and the die and connector temperatures. `fp3-selftest` covers that the
+charger works at all, not that it is safe at current.
 
 Two things worth keeping straight when reading the above. First, the board file
 we edit is **Luca Weiss'** work — he has carried the FP3 in mainline since
-2022-02-20; our commit is one entry in a 21-commit history (see
-[Genealogy](#genealogy-of-the-board-file-21-commits-oldest-first)). Second,
+2022-02-20; our commits are entries in a 23-commit history (see
+[Genealogy](#genealogy-of-the-board-file-23-commits-oldest-first)). Second,
 several nodes we build on top of exist **only in msm8953-mainline**, not in
 Linus' tree — the sound card above, [`e54a56452736`](https://github.com/llg179/linux/commit/e54a564527364e0f40cd71753dd68fe5baa3829d) hardware codec (**Sireesh
 Kodali**), [`ccf0e0d540ba`](https://github.com/llg179/linux/commit/ccf0e0d540baf309e3dd6a4ff4f661773b871196) camss (**Vldly**) — which is why an upstream series
