@@ -170,6 +170,27 @@ GitHub 404 at `./pmb checksum` that reads like the push failed. Take it from
 `git rev-parse <branch>` or, better, from `git ls-remote fork <branch>`, which
 also proves the push landed.
 
+**"Package is up to date" can mean a stale package outranks your bump.** `--lax`
+compares against the highest version in the local work repo, and a leftover
+`--src` build carries a `_pYYYYMMDDHHMMSS` suffix that sorts **above** a plain
+`pkgrel` bump — with `linux-fp3-7.1.3_p20260729013201-r12` sitting in the repo,
+`7.1.3-r21` was skipped as up to date, twice, with no hint why. Deleting the
+`.apk` is only half the fix: `APKINDEX.tar.gz` still advertises it. Move the
+stale apk aside, then
+
+```sh
+./pmb index
+```
+
+and build again. What matters is not the `pkgrel` number but that the highest
+version *in the index* is below yours — which is what to check when a build
+refuses to run:
+
+```sh
+sudo tar xzOf work/packages/edge/aarch64/APKINDEX.tar.gz APKINDEX |
+    awk '/^P:linux-fp3$/{p=1} p&&/^V:/{print; p=0}' | sort -V | tail -3
+```
+
 **Do not run `./pmb checksum` (or a second build) while a build is running.**
 They share `/home/pmos/build` in the chroot, so the running build loses its
 source tree mid-compile and dies with

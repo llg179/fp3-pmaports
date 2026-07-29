@@ -118,8 +118,10 @@ phone all along** — just against the PMIC's power-on defaults, which are gener
 values for no particular pack. The work is not to switch protection on. It is to
 replace those thresholds with the ones Fairphone characterised for this cell.
 
-☠️ Reading these is cheap and needs no kernel build. The regmap debugfs file is
-fixed-width, 9 bytes per line, so it seeks:
+☠️ Reading these is cheap and needs no kernel build — and it is worth doing
+*before* writing the code, not after. Thirty seconds of `dd` overturned the
+premise this work started from. The regmap debugfs file is fixed-width, 9 bytes
+per line, so it seeks:
 
 ```sh
 dd if=/sys/kernel/debug/regmap/0-02/registers bs=9 skip=$((0x1090)) count=12
