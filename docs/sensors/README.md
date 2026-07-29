@@ -69,7 +69,7 @@ Gergely with Claude.
 | Magnetometer driver | `drivers/iio/magnetometer/smgr_mag.c` | responds; scale and hard-iron offset both unknown |
 | Registry server | [`../../userspace-sensors/snsregd.py`](../../userspace-sensors/snsregd.py) | Python stand-in for upstream's C `sns-reg`; should become an aport |
 | Near-level udev rule | [`../../userspace-sensors/`](../../userspace-sensors/) | required before `iio-sensor-proxy` will use the sensor |
-| Measurement tools | [`bringup/tools/`](bringup/tools/) | see [Tools](#tools) |
+| Measurement tools | [`bringup/tools/`](bringup/tools/) | see [what ships, and what was only used to find it](#what-ships-and-what-was-only-used-to-find-it) |
 
 ### Fixes to pre-existing kernel code
 

@@ -164,7 +164,7 @@ On phosh that needs four layers — an IIO proximity device, a `nearlevel`
 threshold, `iio-sensor-proxy`, and phosh's in-call proximity claim. Layers 2–4
 are **already installed and working** on this device (phosh 0.55,
 `iio-sensor-proxy` 3.9, `calls` 50.0, `callaudiod`); see
-[The userspace side](#the-userspace-side).
+[The userspace side](../README.md#the-userspace-side).
 
 Layer 1 is the problem, and it is not a matter of writing an I²C driver. On the
 FP3 every sensor hangs off the **SSC** — a protected domain inside the ADSP with
