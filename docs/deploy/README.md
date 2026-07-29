@@ -14,8 +14,14 @@ cp fp3-pmaports/linux-fp3/{APKBUILD,config-fp3.aarch64} \
    pmaports/device/testing/linux-fp3/
 
 ./pmb checksum linux-fp3            # only needed if you changed _commit
-./pmb build --arch aarch64 linux-fp3
+./pmb build --arch aarch64 --force --lax linux-fp3
 ```
+
+`--force` and `--lax` are **`build` flags, not global ones** — `./pmb --lax build`
+is rejected with `unrecognized arguments`. Without `--force`, a rebuild at the
+same `pkgver` is skipped with *"Package is up to date"* even though `_commit`
+changed; without `--lax` the buildroots are zapped first, which throws the
+ccache away and turns a four-minute rebuild into thirty.
 
 The source tarball is ~250 MB straight from GitHub, so the first fetch takes a
 minute or two. A warm ccache rebuild is around four minutes; a new `_commit`

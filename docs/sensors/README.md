@@ -55,6 +55,7 @@ mainline; posted to the LKML as v2 in July 2025.
 |---|---|---|
 | Sensor Manager core | last-sample cache and `smgr_sensor_read_sample()` | the core delivered data only through an IIO buffer; `iio-sensor-proxy` has no buffered proximity driver and polls `in_proximity_raw` |
 | Sensor Manager core | reports are started on first read and left running | starting and stopping a report per read kills this SSC — the first read returns a sample and the next fourteen time out |
+| Sensor Manager core | every advertised data type is requested, and samples are routed by the report metadata | the core asked only for `SNS_SMGR_DATA_TYPE_PRIMARY`, which hides the second half of a combined part — here the ambient light sensor sharing a package with the proximity one |
 
 ### New here
 
@@ -76,6 +77,7 @@ Gergely with Claude.
 |---|---|
 | `drivers/soc/qcom/qmi_encdec.c` | `qmi_encode()` read a `QMI_DATA_LEN` field four bytes wide whatever its declared width, so a `u8` length pulled in the bytes after it. Every sensor whose ID is non-zero was unreachable; the accelerometer worked only because its ID is 0 |
 | `drivers/iio/accel/smgr_accel.c` pattern | `remove()` reads `platform_get_drvdata()`, which probe never set — copied into `smgr_prox.c` and fixed there; upstream has the same latent NULL dereference |
+| `drivers/iio/common/qcom_smgr/smgr.c` | the loop that defaults each data type's sample rate to its maximum indexed `data_types[0]` every time instead of the loop variable, so a second data type would have been requested at a rate of zero |
 | `drivers/watchdog/qcom-wdt.c`, `sdm632-fairphone-fp3.dts` | `qcom,start-at-probe`: the driver only armed a watchdog the bootloader had already started, and the FP3's has not, leaving no watchdog at all between kernel start and systemd |
 
 ### Data taken from the device or from upstream
@@ -95,11 +97,52 @@ Gergely with Claude.
 | gyroscope | `qcom-smgr-gyro` | yes | scale verified: a quarter turn integrates to 86.5° |
 | magnetometer | `qcom-smgr-mag` | partly | follows rotation, but hard-iron offset and scale are both unknown |
 | proximity | `qcom-smgr-prox-light` | yes | blanks the screen during a call through phosh |
-| ambient light | — | no | lives in a second data type the core never requests |
+| ambient light | `qcom-smgr-prox-light` | yes | same device, second data type; `in_illuminance_input` in lux |
 
 ☠️ The IIO device index moves between boots — the Sensor Manager registers each
 device as its enumeration completes, so the accelerometer has been `iio:device2`
 on one boot and `iio:device3` on the next. Match on `name`, never on the index.
+
+## The proximity sensor is also the light sensor
+
+`SINGLE_SENSOR_INFO` names sensor `0x28` **"EPL259x ALS/PS"** — one part behind
+one window next to the earpiece, ALS and PS sharing it. It is the only sensor on
+this device that declares **two** data types; the accelerometer, gyroscope and
+magnetometer declare one each.
+
+| data type | reading | channel |
+|---|---|---|
+| 0, primary | proximity | `in_proximity0_*` (buffer), `in_proximity_raw` |
+| 1, secondary | ambient light | `in_illuminance_input`, in lux |
+
+Samples are told apart by the report metadata, not by the order they arrive in:
+
+```
+metadata.val1 = (data_type << 16) | (sensor_id << 8) | 1
+    0x00002801  proximity      0x00012801  ambient light
+```
+
+Only the primary data type is pushed into the IIO buffer, because a buffer's
+scan layout is fixed per device and a light sample pushed into it would arrive
+as a proximity one. The light channel is therefore read-only through sysfs,
+which is what `iio-sensor-proxy` wants anyway.
+
+### What the numbers mean
+
+Measured with a hand over the sensor and then a torch shone into it, 60 samples
+across four orders of magnitude:
+
+| | |
+|---|---|
+| `values[0]` | illuminance in **lux**, Q16 fixed point — always a whole number of lux, so the low 16 bits are zero |
+| `values[1]` | the raw ADC count behind it, at a steady **2.598 counts per lux** |
+| covered | exactly **0**, not a low noise floor |
+| dim room | 7 .. 24 lux |
+| torch | rises to **25230 lux**, where the count reaches 65535 and **stops** — it saturates rather than rolling over |
+
+Because the reading arrives in lux the channel is `IIO_CHAN_INFO_PROCESSED` and
+carries no scale. The saturation ceiling means direct sunlight cannot be told
+apart from a strong torch.
 
 ## Building and installing
 
@@ -125,6 +168,7 @@ sudo python3 ../../userspace-sensors/sensortest.py accel 15     # tilt through a
 sudo python3 ../../userspace-sensors/sensortest.py gyro 15      # still, then a known rotation
 sudo python3 ../../userspace-sensors/sensortest.py mag 15       # turn on a table
 sudo python3 ../../userspace-sensors/sensortest.py prox 12      # cover and uncover
+sudo python3 ../../userspace-sensors/sensortest.py light 20     # cover, then a torch
 sudo monitor-sensor --proximity               # the phosh-facing path
 ```
 
@@ -133,12 +177,6 @@ known size into a scale check: a quarter circle has to come out near 90°.
 
 ## Known gaps
 
-* **Ambient light is still missing.** The proximity sensor advertises a second
-  data type that the core never requests, and that is where the light reading
-  has to be — the primary type's third value is always zero. Reaching it means
-  teaching the core to ask for more than one data type per sensor, and telling
-  the samples apart by the `(data_type << 16) | (sensor_id << 8) | 1` field in
-  the report metadata.
 * **The magnetometer is uncalibrated and its scale unverified** — hard-iron
   offset and scale are both unknown, and one cannot be solved from the other
   without a full-sphere fit.
@@ -165,11 +203,14 @@ No:
 | proximity | **yes** — the goal here (in-call blanking) |
 | accelerometer, gyroscope, magnetometer | **yes** (auto-rotation follows) |
 | pressure | yes (the FP3 has no barometer, so moot) |
-| ambient light | **not yet** — upstream calls it "close to being implemented" |
-| temperature | not yet |
+| ambient light | **yes**, since this port — the second data type of the proximity device |
+| temperature | **there is none.** The SSC advertises four sensors and no thermometer; the gyroscope and magnetometer each declare a single data type, so none is hidden. The SoC and PMIC temperatures come from `tsens` and already work |
 
-Automatic brightness therefore stays out of reach for now. Everything above is
-also conditional on the group map being correct for this device.
+Everything above is conditional on the group map being correct for this device.
+
+What is still missing on the temperature side is the **battery** temperature:
+`pmi632-battery` exposes no `temp` property. That is the charger driver's, not
+the sensor stack's.
 
 ## The userspace side
 
@@ -226,7 +267,7 @@ service tables they produced:
 
 | | |
 |---|---|
-| [`bringup/tools/`](bringup/tools/) | 12 probes and parsers |
+| [`bringup/tools/`](bringup/tools/) | 14 probes and parsers |
 | [`bringup/data/sns.reg`](bringup/data/sns.reg) | the factory binary registry this port decodes |
 | [`bringup/data/`](bringup/data/) | service tables from both slots |
 | [`bringup/captures/`](bringup/captures/) | the raw ADSP diag streams behind every number in the write-up |

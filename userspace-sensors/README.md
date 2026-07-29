@@ -18,7 +18,7 @@ proximity sensor in silence.
 | `registry.conf` | 1437 key/value pairs decoded from this phone's own factory `sns.reg` |
 | `groups.txt` | 68 groups / 1516 keys, from upstream `sns-reg`'s `map.c` |
 | `90-fp3-proximity.rules` | `PROXIMITY_NEAR_LEVEL=1570` for `iio-sensor-proxy` |
-| `sensortest.py` | reads any of the four sensors and reports whether the numbers are physically plausible |
+| `sensortest.py` | reads any of the sensors (`accel`, `gyro`, `mag`, `prox`, `light`) and reports whether the numbers are physically plausible |
 | `proxcal.sh` | prints `in_proximity_raw` once a second, for calibrating the near level on another unit |
 
 ## Install
@@ -36,13 +36,14 @@ sudo systemctl restart iio-sensor-proxy
 ```
 
 Needs `linux-fp3` r15 or newer — earlier packages had no `in_proximity_raw`, so
-`iio-sensor-proxy` skipped the device.
+`iio-sensor-proxy` skipped the device. `in_illuminance_input` needs r16.
 
 ## Verify
 
 ```
 ls /sys/bus/iio/devices/*/name | xargs cat        # four qcom-smgr-* devices
 sudo python3 sensortest.py prox 12                # cover the earpiece
+sudo python3 sensortest.py light 20               # cover, then a torch
 udevadm info /sys/bus/iio/devices/iio:device*/ | grep NEAR
 busctl --system get-property net.hadess.SensorProxy \
     /net/hadess/SensorProxy net.hadess.SensorProxy HasProximity

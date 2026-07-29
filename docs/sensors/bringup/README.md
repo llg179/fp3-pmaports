@@ -37,6 +37,8 @@ Nothing here is needed to run the sensors. Everything that is, lives in
 | [`../../../userspace-sensors/sensortest.py`](../../../userspace-sensors/sensortest.py) | reads any of the four sensors and prints per-axis ranges, so "it binds" can be told from "it measures"; for the gyroscope it also integrates the run, which turns a known rotation into a scale check |
 | [`../../../userspace-sensors/proxcal.sh`](../../../userspace-sensors/proxcal.sh) | prints `in_proximity_raw` once a second so a hand over the earpiece shows up as two levels — the measurement that decides `PROXIMITY_NEAR_LEVEL`, and the one that cannot be made remotely |
 | [`tools/sensinfo.py`](tools/sensinfo.py) | asks the SSC what a sensor advertises (`ALL_SENSOR_INFO`, `SINGLE_SENSOR_INFO`) — data types, rates, vendor and part name. Ask this before asking for data |
+| [`tools/smgrals.py`](tools/smgrals.py) | asks for one data type at a time and then both at once, printing which one each indication came from — how the light half was found |
+| [`tools/alslog.py`](tools/alslog.py) | logs the light half against a physical light change, printing the lux and the raw count side by side so their ratio can be checked |
 | [`tools/smgrsweep.py`](tools/smgrsweep.py) | streams one sensor with the **driver's own** request parameters, data type as an argument, and counts indications. Use this rather than inventing a report rate: it is `sample_rate * 0xf000`, and a wrong one silently means "one report every two minutes" |
 
 ## Raw data
@@ -905,6 +907,73 @@ A liveness check on something that actually matters — the network coming up, s
 `/sys/class/watchdog/watchdog0/bootstatus` reads `0` after such a reset on this
 device, so it is not a usable "was this a watchdog reset?" indicator here.
 
+### Step 15 — the light sensor was never missing, only unasked
+
+The proximity sensor had one loose end: `SINGLE_SENSOR_INFO` reported **two**
+data types for it where every other sensor reported one, and the core only ever
+asked for the primary. The obvious guess was that the second held the ambient
+light reading, but a guess is not a measurement, and a made-up illuminance would
+have phosh dimming the screen by it.
+
+**Ask the device what the part is.** The name in `SINGLE_SENSOR_INFO` settles it
+without any decoding at all:
+
+```
+0x28  "EPL259x ALS/PS"   (Eminent)   2 data types
+0x00  "ICM20602 Accelerometer" (InvenSense)   1
+0x0a  "ICM20602 Gyroscope"     (InvenSense)   1
+0x14  "AK09918 Magnetometer"   (AKM)          1
+```
+
+ALS/PS — ambient light *and* proximity, one part. And since the gyroscope and
+the magnetometer each declare a single data type, there is nowhere for a
+temperature sensor to be hiding either: the SSC simply has none.
+
+**Then ask the wire, not the driver.** [`tools/smgrals.py`](tools/smgrals.py)
+requests data type 0 alone, data type 1 alone, and then both in one report,
+printing the source of every indication as decoded from the metadata:
+
+```
+data type 0 alone:  1 indication   val1 0x00002801   values=(0, 546, 0)
+data type 1 alone:  2 indications  val1 0x00012801   values=(720896, 30, 0)
+both:               1 + 7          both val1 values present, correctly split
+```
+
+So the light half had been alive the whole time, and the only reason it was
+silent is that nobody asked for it. Note what data type 0 alone returns: one
+indication in eight seconds, because proximity is on-change and nothing moved.
+Data type 1 chatters, because light does not hold still.
+
+**What the values mean is a physical measurement, not a guess.** Cover the
+sensor, then shine a torch into it, and log both values:
+
+| phase | lux | raw count | ratio |
+|---|---|---|---|
+| dim room | 7 .. 24 | 19 .. 64 | 2.6 .. 2.9 |
+| covered | **0** | 0 | — |
+| torch, rising | 137 → 2184 | 357 → 5675 | 2.598 |
+| torch, peak | **25230** | **65535** | 2.598 |
+| decay | 2452 → 10 | 6369 → 27 | 2.60 |
+
+`values[0]` is illuminance in lux as Q16 fixed point — always a whole number of
+lux, so the low 16 bits are always zero — and `values[1]` is the raw ADC count
+behind it. The ratio holds at **2.597–2.598** across four orders of magnitude;
+the wider spread at the dim end is the rounding to whole lux, not a real
+variation. The count stops at 65535 and the lux at 25230: it saturates rather
+than wrapping, so direct sunlight is indistinguishable from a strong torch.
+
+**Two bugs fell out of the core change.** Requesting every advertised data type
+instead of a hardcoded primary meant looking at the loop that sets each data
+type's rate — and it indexed `data_types[0]` every time instead of the loop
+variable, so a second data type would have been asked for at a rate of zero. And
+each data type needed its own stored sample and its own completion, or a light
+report would wake a reader waiting for proximity and hand it the wrong numbers.
+
+Only the primary data type goes into the IIO buffer. A buffer's scan layout is
+fixed per device, so a light sample pushed into it would arrive labelled as a
+proximity one — the light channel is sysfs-only, which is what
+`iio-sensor-proxy` reads anyway.
+
 ## Recovering the rootfs from the other slot
 
 The pmOS root lives inside `system_b` in its own DOS table, so it is reachable
@@ -924,13 +993,11 @@ two extent-tree optimisations, wrong free block and inode counts, and a stuck
 
 ## Next steps
 
-1. **Ambient light** — teach the Sensor Manager core to request more than one
-   data type per sensor, and split the reports by the data type in the metadata.
-2. **Calibrate the magnetometer** — a full-sphere fit to separate the hard-iron
+1. **Calibrate the magnetometer** — a full-sphere fit to separate the hard-iron
    offset from the scale, and a heading check against a known direction.
-3. **The mount matrix** — check `AccelerometerTilt` against the phone's physical
+2. **The mount matrix** — check `AccelerometerTilt` against the phone's physical
    orientation and replace the inherited msm8996 matrix if it does not match.
-4. **The intermittent SLIMbus audio failure** — build without the two leftover
+3. **The intermittent SLIMbus audio failure** — build without the two leftover
    framer pokes and count the failure rate over several cold boots.
-5. **Find the real content of groups 20, 2691 and 3050**, which are zero-filled.
-6. **Package upstream's C `sns-reg` as an aport**, replacing `snsregd.py`.
+4. **Find the real content of groups 20, 2691 and 3050**, which are zero-filled.
+5. **Package upstream's C `sns-reg` as an aport**, replacing `snsregd.py`.

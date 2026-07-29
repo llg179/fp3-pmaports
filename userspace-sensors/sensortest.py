@@ -8,7 +8,7 @@
 # as its QMI enumeration completes, so iio:deviceN moves between boots -- the
 # accelerometer has been device2 and device3 on consecutive boots here.
 #
-# Usage:  sensortest.py accel|gyro|mag|prox [seconds]
+# Usage:  sensortest.py accel|gyro|mag|prox|light [seconds]
 #
 # The three IMU devices are buffer-only (no *_raw), so they are read through
 # /dev/iio:deviceN. A record is 3 x s32 followed by an s64 timestamp at offset
@@ -21,6 +21,7 @@ NAMES = {
     'gyro': ('qcom-smgr-gyro', 'in_anglvel_scale', 'rad/s'),
     'mag': ('qcom-smgr-mag', 'in_magn_scale', 'Gauss?'),
     'prox': ('qcom-smgr-prox-light', None, 'counts'),
+    'light': ('qcom-smgr-prox-light', None, 'lux'),
 }
 
 RECORD = 24
@@ -107,6 +108,25 @@ def main():
         print('%s: not found -- is the module loaded and snsregd running?' % name)
         return 1
     print('%s = %s' % (path, name))
+
+    if what == 'light':
+        # Illuminance is a processed channel: the SSC reports whole lux, so
+        # there is no scale to apply. Cover the sensor (exactly 0) and then
+        # shine a torch into it; the reading saturates at 25230 lux, where the
+        # ADC count behind it reaches 65535.
+        end = time.monotonic() + secs
+        seen = []
+        while time.monotonic() < end:
+            v = float(open(path + '/in_illuminance_input').read())
+            if not seen or seen[-1] != v:
+                print('   %5.1fs  %10.0f lux' % (secs - (end - time.monotonic()), v),
+                      flush=True)
+            seen.append(v)
+            time.sleep(0.3)
+        print('   %d reads, range %g .. %g lux' % (len(seen), min(seen), max(seen)))
+        if max(seen) == min(seen):
+            print('   NOT VARYING -- cover the sensor and shine a light into it')
+        return 0
 
     if what == 'prox':
         end = time.monotonic() + secs
