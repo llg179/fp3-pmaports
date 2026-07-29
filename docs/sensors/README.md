@@ -614,6 +614,37 @@ the bytes put on the wire are unchanged because `data_len_sz` is derived from
 > `-22` two lines above it was the real failure, and one userspace probe was
 > enough to show the SSC accepts what the driver is trying to send.
 
+### With the fix: accepted, but one zero sample
+
+The encoder fix works — the request now reaches the SSC and is accepted:
+
+```
+smgr 5-10: Requesting buffering for sensor 0x28, report rate: 3072000, sample rate: 50
+smgr 5-10: Buffering response ack_nak 1
+```
+
+What it does *not* do yet is produce values. On a fresh boot, with only its own
+buffer enabled, the proximity device delivers **exactly one sample, all zeros**,
+and then nothing — including through 25 s of deliberately toggling the display
+backlight to make light events. Listening on the wire with `smgrind.py` shows the
+same thing from the SSC's side: one `0x22` indication carrying a zeroed sample,
+then silence.
+
+The accelerometer, measured the same way in the same boot, streams normally
+(`z = -632470` raw, i.e. -9.69 m/s²), so the path is fine and this is specific to
+this sensor.
+
+That is consistent with an on-change sensor that has been armed but never
+triggered — the EPL259x reports on threshold crossings, and the driver requests
+`SNS_SMGR_DATA_TYPE_PRIMARY` at a fixed rate, which is the streaming model.
+Whether it needs the secondary data type, a threshold set through a different
+message, or simply a hand near the earpiece, is the next thing to measure.
+
+**☠️ One measurement hazard found here:** hand-built QMI requests leave state
+behind in the SSC. After a session of `smgrbuf.py`/`smgrind.py` probing, the
+*accelerometer* also started returning zeros, which looked like a new bug and was
+not — a reboot restored it. Reboot between probe sessions and real measurements.
+
 ### The oops, and what the safety net did and did not catch
 
 Binding a driver to the proximity device by hand hit a NULL dereference in
@@ -644,13 +675,12 @@ device, so it is not a usable "was this a watchdog reset?" indicator here.
 
 ### What is still missing
 
-* **Proximity does not stream yet** — the driver binds, the IIO device exists,
-  and the buffering request fails inside `qmi_encode` for reasons
-  [step 11](#step-11--proximity-binds-and-then-does-not-stream) narrows down but
-  does not settle. One instrumented build should name the element.
-* **Even once it streams, the value mapping is a guess** — which of the report's
-  three u32 values is proximity and which is light needs a finger over the
-  sensor.
+* **Proximity is armed but never reports.** The request is accepted
+  (`ack_nak 1`) and exactly one zeroed sample arrives. Most likely it is an
+  on-change sensor waiting for a threshold crossing while the driver asks for
+  fixed-rate streaming of the primary data type.
+* **The value mapping is still a guess** — which of the report's three u32
+  values is proximity and which is light needs a sample that is not all zeros.
 * **The mount matrix is probably wrong.** `smgr_accel.c` carries an msm8996
   matrix with a `TODO` next to it, and on the FP3 `iio-sensor-proxy` reports
   `AccelerometerTilt: face-down` for a phone reading `z = -9.69`. Whether that
@@ -715,6 +745,7 @@ fine, `ProximityNear` never flips, the screen never blanks.
 | [`tools/readaccel.py`](tools/readaccel.py) | reads the buffer-only accelerometer and prints m/s² and \|g\| — the physical sanity check that catches a wrong record size |
 | [`tools/readprox.py`](tools/readprox.py) | the same for the proximity/light device |
 | [`tools/smgrbuf.py`](tools/smgrbuf.py) | sends `SNS_SMGR_BUFFERING` by hand and sweeps its parameters, so a question costs a second instead of a 30-minute kernel build |
+| [`tools/smgrind.py`](tools/smgrind.py) | asks for buffering on one sensor and prints the indications the SSC sends back — answers "is this data really from that sensor" from the wire |
 
 ### Traps worth knowing before touching any of this
 
@@ -861,8 +892,9 @@ not checked in for size; it lives in the working directory
 
 ## Next steps
 
-1. **Measure proximity** with the QMI encoder fix in — a finger over the sensor
-   decides both that it streams and which of the report's values is which.
+1. **Make proximity report.** It is armed and accepted but only ever sends one
+   zeroed sample; try the secondary data type, and try a hand over the earpiece
+   during a read.
 2. **Proximity through `iio-sensor-proxy` → in-call blanking**, which is the
    original goal and the only step left after 1.
 3. **Find the real content of groups 20, 2691 and 3050** — their offsets in
