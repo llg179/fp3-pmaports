@@ -143,18 +143,40 @@ def pactl(*args):
 
 # What the volume slider is called while the call owns the card. Setting the
 # card profile to "off" leaves pulseaudio with no sink of its own, so
-# module-always-sink inserts its null sink - and every volume popup on the
-# phone then reads "Dummy Output", whichever output the call is really using.
-# The sink is a real one as far as pulseaudio is concerned, so renaming it is
-# enough; the percentage on it is what gets mirrored onto the codec gain.
-def pa_name_fallback_sink(output):
-    for line in pactl("list", "short", "sinks").splitlines():
-        f = line.split()
-        if len(f) > 1 and "auto_null" in f[1]:
-            subprocess.run(["pacmd", "update-sink-proplist", f[1],
-                            "device.description=" + output],
-                           capture_output=True, text=True, env=pulse_env())
-            return
+# module-always-sink inserts its own - and every volume popup on the phone then
+# reads "Dummy Output", whichever output the call is really using.
+#
+# Renaming that sink is not an option from here: only pacmd can rewrite a
+# proplist, and pacmd talks to pulseaudio's CLI socket inside the user's
+# runtime directory rather than over the protocol, so it refuses this (root)
+# daemon outright - "No PulseAudio daemon running, or not running as session
+# daemon", with PULSE_SERVER and PULSE_RUNTIME_PATH both pointing at the right
+# place. So instead of renaming always-sink's null sink, get in first with one
+# of our own, carrying the description we want. module-always-sink only steps
+# in when the card has no sink at all, so ours simply pre-empts it.
+_call_sink = []
+
+
+def pa_call_sink(output):
+    """Give the call a sink named after the output it is really using."""
+    pa_drop_call_sink()
+    r = subprocess.run(
+        ["pactl", "load-module", "module-null-sink",
+         "sink_name=fp3_call",
+         "sink_properties=device.description='%s'" % output],
+        capture_output=True, text=True, env=pulse_env())
+    if r.returncode:
+        log("call sink: load-module failed: %s" % r.stderr.strip()[:120])
+        return
+    _call_sink[:] = [r.stdout.strip()]
+    pactl("set-default-sink", "fp3_call")
+
+
+def pa_drop_call_sink():
+    if not _call_sink:
+        return
+    pactl("unload-module", _call_sink[0])
+    _call_sink[:] = []
 
 
 def pa_card():
@@ -185,6 +207,7 @@ def pa_active_profile():
 
 
 _saved_profile = []
+_pending_output = []       # where the call is about to go, for the sink name
 
 
 def pa_release_card():
@@ -212,6 +235,7 @@ def pa_release_card():
     # SLIMBUS_0_RX - which is exactly the ADSP_EALREADY wedge this avoids.
     if prof and prof != "off" and not prof.startswith("Voice Call"):
         _saved_profile[:] = [prof]
+    pa_call_sink(_pending_output[0] if _pending_output else "Call")
     pa_set_profile(card, "off")
     for _ in range(20):
         if not [l for l in pactl("list", "short", "sinks").splitlines()
@@ -255,6 +279,7 @@ def pa_restore_card():
     card = pa_card()
     if not card:
         return
+    pa_drop_call_sink()
     available = pa_hifi_profiles()
     fallback = available[0] if available else "HiFi (Speaker)"
     prof = (_saved_profile[0] if _saved_profile and _saved_profile[0] in available
@@ -740,6 +765,7 @@ class Session:
         mic = "Headset" if has_mic else "Mic"   # follows the jack, not the output
         log("routing: jack plugged=%s mic=%s forced=%s -> %s + %s"
             % (plugged, has_mic, self.forced_output or "-", self.output, mic))
+        _pending_output[:] = [self.output]
         # Order matters. Whoever starts the AFE port configures it, and a second
         # start only answers ADSP_EALREADY - so the voice path has to get there
         # first. Switching the pulseaudio profile opens its media sink on the
@@ -774,7 +800,8 @@ class Session:
             self.start(retry=True, pa_ready=True)
             return
         log("call audio up (%s + %s)" % (self.output, mic))
-        pa_name_fallback_sink(self.output)
+        if _call_sink:
+            pa_call_sink(self.output)      # a re-route renames the slider too
 
         if _buttons_ref and _buttons_ref[0].muted:
             set_mic_muted(True)          # a re-route re-enabled the muted mixer
