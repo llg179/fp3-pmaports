@@ -39,6 +39,10 @@ Building and deploying *this* package is a different question, and it is in
 
 ## What the category actually contains
 
+The board side lives in its own `sdm632-fairphone-fp3-debug.dtsi` so the layer
+can be replayed onto any branch with one conflict-free command — see
+[the branch model](../../README.md#the-branch-model).
+
 Two commits on
 [`wip/<base>/debug`](https://github.com/llg179/linux/tree/wip/7.1.3/debug): the
 watchdog started at probe, and

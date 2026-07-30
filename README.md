@@ -48,6 +48,21 @@ For a base `X.Y.Z` there are four layers, each base-relative:
 | `debug-int/X.Y.Z` | build | `integration/X.Y.Z` plus the `debug` layer; **this is what the package builds** |
 | `submit/X.Y.Z/<category>` | upstream | the **minimal** series distilled from `wip/X.Y.Z/<category>` — created only once everything works, ready to post to the LKML |
 
+Replaying the debug layer onto any other branch — an experimental offshoot is
+exactly where an early hang is likely — is one command from the target branch:
+
+```sh
+git cherry-pick $(git merge-base HEAD wip/<base>/debug)..wip/<base>/debug
+```
+
+It applies clean because the debug board nodes live in their own
+`sdm632-fairphone-fp3-debug.dtsi`, pulled in by a single `#include` among the
+other includes. Every category appends to the *end* of
+`sdm632-fairphone-fp3.dts`, so a debug block that appended there too collided
+with whichever of them was present — measured 2026-07-30, the old form conflicted
+on `audio` and on `integration` and applied clean on `camera` and `charger`,
+while the split form applies clean on all five wip branches and on integration.
+
 The last two are split for one reason each. `integration` stays free of the debug
 layer so that it remains a faithful preview of what the `submit` branches carry —
 it is the branch you compare against when you want to know whether the port and
