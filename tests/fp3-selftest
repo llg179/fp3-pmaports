@@ -228,9 +228,12 @@ check_categories() {
 		return 1
 	fi
 	# Debug branches are exempt on purpose. wip/<base>/<cat>-debug is an
-	# ephemeral offshoot of a category, and wip/<base>/debug carries
+	# ephemeral offshoot of a category, and the debug category carries
 	# instrumentation that helps the next investigation rather than a
-	# subsystem a user can exercise - the watchdog-at-probe work lives there.
+	# subsystem a user can exercise - the watchdog-at-probe work. Since
+	# 2026-07-30 that category has no wip branch at all (it lives on
+	# debug-int/<base> and in docs/debug/files/), so this exemption only
+	# still matters for the -debug suffix form.
 	# Requiring a check for them would either invent a meaningless one or keep
 	# the suite permanently red, and a guard that is always red stops being
 	# read. Everything else must still be listed.

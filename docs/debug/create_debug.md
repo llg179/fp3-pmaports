@@ -1,9 +1,10 @@
 # Building the watchdog safety net onto any branch, from scratch
 
 This page is a **procedure**, written to be executed literally — by a person or
-by an assistant — on a branch that has no debug layer and without assuming that
-`wip/<base>/debug` still exists. Everything it needs is stored next to it in
-[`files/`](files/).
+by an assistant — on a branch that has no debug layer. It assumes no branch at
+all: everything it needs is stored next to it in [`files/`](files/). Since
+`wip/<base>/debug` was retired on 2026-07-30, this page **is** the way the layer
+is applied, not the fallback.
 
 > **AI-generated.** Written by Claude (Opus 5) under the direction of
 > Lajosházi, László Gergely, who ran the experiments behind it.
@@ -16,12 +17,8 @@ and why there is deliberately no `ramoops`, is in
 
 **When to use it.** Any branch you are about to boot, especially a throwaway
 experiment: that is where an early hang is likeliest and where nobody wants to
-walk to the phone. If `wip/<base>/debug` does exist, do **not** follow this page —
-one command replays the whole layer instead:
-
-```sh
-git cherry-pick $(git merge-base HEAD wip/<base>/debug)..wip/<base>/debug
-```
+walk to the phone. In the common case it is one command — §1 below — and the rest
+of this page is what to do when that command stops working.
 
 ---
 
@@ -290,7 +287,7 @@ a row hand the boot to the other slot.
 This procedure builds the safety net and nothing else. `FP3-TODO.md` is the
 port-wide index of open items; it already exists in two places that are kept
 byte-identical — [`../FP3-TODO.md`](../FP3-TODO.md) in this repository and the
-tree root on the canonical `wip/<base>/debug` and `debug-int/<base>` — and a
+tree root on `debug-int/<base>` — and a
 third copy on a branch built from this page would be a stale snapshot the moment
 either of those moves. It is also not part of the watchdog change: nothing in the
 safety net reads it, and leaving it out keeps this commit reviewable as one
@@ -308,9 +305,10 @@ integration stays a faithful preview of what the `submit` branches carry, and
 If you built this on a one-off experimental branch, it belongs nowhere else; that
 is the normal case for this page.
 
-If you built it because `wip/<base>/debug` was lost, recreate that branch from
-what you just made, and from then on use the one-line replay at the top of this
-page instead of this procedure.
+Do **not** recreate a `wip/<base>/debug` branch out of it. That branch existed
+until 2026-07-30 and was retired precisely because this page replaced it: a
+branch would have to be rebased on every base roll and could drift from the
+stored payloads, whereas `git am` needs neither.
 
 ## Files stored next to this page
 
@@ -336,8 +334,15 @@ Both stored files are extracted from the fork rather than retyped. To refresh
 them after the layer changes:
 
 ```sh
-git show wip/<base>/debug~1:arch/arm64/boot/dts/qcom/sdm632-fairphone-fp3-debug.dtsi \
+# <wdt> = the watchdog commit on debug-int/<base> (the one that touches
+#         drivers/watchdog/qcom-wdt.c; find it with git log --oneline)
+git show <wdt>:arch/arm64/boot/dts/qcom/sdm632-fairphone-fp3-debug.dtsi \
   > docs/debug/files/sdm632-fairphone-fp3-debug.dtsi
-git format-patch -1 wip/<base>/debug~1 --stdout \
+git format-patch -1 <wdt> --stdout \
   > docs/debug/files/0001-watchdog-qcom-optionally-start-the-watchdog-at-probe.patch
 ```
+
+☠️ Refresh these in the same commit that changes the layer. They are not a
+convenience copy — with no `wip/<base>/debug` branch any more, they are half of
+where the layer is stored, and a stale patch here is a safety net that quietly
+stops applying.

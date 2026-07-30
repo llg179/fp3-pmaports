@@ -52,8 +52,11 @@ Replaying the debug layer onto any other branch — an experimental offshoot is
 exactly where an early hang is likely — is one command from the target branch:
 
 ```sh
-git cherry-pick $(git merge-base HEAD wip/<base>/debug)..wip/<base>/debug
+git am ../fp3-pmaports/docs/debug/files/0001-watchdog-qcom-optionally-start-the-watchdog-at-probe.patch
 ```
+
+The step-by-step, including what to do when that patch stops applying, is
+[`docs/debug/create_debug.md`](docs/debug/create_debug.md).
 
 It applies clean because the debug board nodes live in their own
 `sdm632-fairphone-fp3-debug.dtsi`, pulled in by a single `#include` among the
@@ -81,7 +84,7 @@ from, where there is going to be one. There are six:
 | `camera` | the Sony IMX363 rear sensor | yes |
 | `charger` | the PMI632 charger via `qcom_smbx`: the battery thermistor, hardware JEITA, thermal mitigation and a device-tree-driven charge current ([`docs/charger/`](docs/charger/README.md)) | yes |
 | `sensor` | proximity, ambient light and the IMU, over the SSC's QMI Sensor Manager | **one patch of twelve** — the imported base cannot carry a DCO and its author's own series is in flight ([why](docs/sensors/README.md#why-the-submit-series-is-one-patch)) |
-| `debug` | the bring-up safety net: the SoC watchdog started at probe, so a hung boot resets instead of waiting for hands ([`docs/debug/`](docs/debug/README.md)), and `FP3-TODO.md`, the kernel-side index of what is still open | never — it is deliberately not upstream material, and its twin goes to `debug-int/<base>` rather than to `integration/<base>` |
+| `debug` | the bring-up safety net: the SoC watchdog started at probe, so a hung boot resets instead of waiting for hands ([`docs/debug/`](docs/debug/README.md)), and `FP3-TODO.md`, the kernel-side index of what is still open | never — deliberately not upstream material. **The only category with no `wip` branch:** it lives directly on `debug-int/<base>`, and is reproducible from [`docs/debug/files/`](docs/debug/files/) without any branch at all |
 
 Reading it: "what runs on the phone" is always `debug-int/<pkgver>`; "what the
 series will look like" is always `integration/<pkgver>`; "what goes to the
@@ -127,10 +130,12 @@ curl -sI -o /dev/null -w '%{http_code}\n' \
 ```
 
 **The category rule (version-free):** a change lands on `wip/X.Y.Z/<category>`
-**and** is cherry-picked onto its integration branch — `integration/X.Y.Z` for the
-five upstream-bound categories, `debug-int/X.Y.Z` for `debug`. The two never
-diverge; each integration branch is only ever the sum of the `wip` branches that
-feed it. `submit/X.Y.Z/<category>` is regenerated from `wip` when the base is
+**and** is cherry-picked onto `integration/X.Y.Z`. The two never diverge;
+integration is only ever the sum of the `wip` branches that feed it. `debug` is
+the exception in both halves: it has no `wip` branch, so a debug change is
+committed straight onto `debug-int/X.Y.Z`, and the stored payloads under
+[`docs/debug/files/`](docs/debug/files/) are refreshed in the same breath —
+those, not a branch, are what make the layer reproducible. `submit/X.Y.Z/<category>` is regenerated from `wip` when the base is
 done; it is not edited by hand.
 
 ☠️ *"Not edited by hand"* is the part that slips. Both the charger and the audio

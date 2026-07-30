@@ -41,17 +41,25 @@ Building and deploying *this* package is a different question, and it is in
 
 The board side lives in its own `sdm632-fairphone-fp3-debug.dtsi` so the layer
 can be replayed onto any branch with one conflict-free command — see
-[the branch model](../../README.md#the-branch-model). If the debug branch is not
-available at all, [`create_debug.md`](create_debug.md) rebuilds the safety net
-from scratch, step by step, from the payloads stored in [`files/`](files/).
+[the branch model](../../README.md#the-branch-model).
 
-Two commits on
-[`wip/<base>/debug`](https://github.com/llg179/linux/tree/wip/7.1.3/debug): the
-watchdog started at probe, and
-[`FP3-TODO.md`](https://github.com/llg179/linux/blob/wip/7.1.3/debug/FP3-TODO.md),
-the kernel-side index of what is still open across the whole port. (Deliberately
-no commit hashes here — this category is rebuilt on every base roll, and a hash
-in a sentence is wrong by the next one.)
+**This category has no `wip` branch, and that is deliberate.** It used to —
+`wip/7.1.3/debug`, retired on 2026-07-30 and kept as the tag
+`archive/wip-7.1.3-debug-final` — but once the layer was reproducible from
+[`create_debug.md`](create_debug.md) and the payloads in [`files/`](files/), the
+branch was one more thing to rebase on every base roll and one more place to
+drift. Every other category needs its `wip` branch because it carries evolving
+work against a moving base; this one carries a fixed, additive change that
+`git am` replays anywhere.
+
+So the layer lives in two places, both of which are checked:
+[`debug-int/<base>`](https://github.com/llg179/linux/tree/debug-int/7.1.3) in the
+kernel fork — the watchdog started at probe, plus
+[`FP3-TODO.md`](https://github.com/llg179/linux/blob/debug-int/7.1.3/FP3-TODO.md),
+the kernel-side index of what is still open across the whole port — and
+[`files/`](files/) here, from which it can be rebuilt on a branch that has
+neither. (Deliberately no commit hashes: this layer is replayed on every base
+roll, and a hash in a sentence is wrong by the next one.)
 
 The category will **never** get a `submit` series: a watchdog started at probe is
 bring-up scaffolding, and the reason it is needed is specific to this bootloader.

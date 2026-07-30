@@ -16,7 +16,7 @@ Worked across two real bases — `7.0.9` (retired, kept as history) and `7.1.3`
 | role | `7.0.9` (previous) | `7.1.3` (current) |
 |---|---|---|
 | base (upstream fork) | `7.0.9/main` | `7.1.3/main` |
-| work + fixes | `wip/7.0.9/{audio,voice,camera,charger}` | `wip/7.1.3/{audio,voice,camera,charger,sensor,debug}` |
+| work + fixes | `wip/7.0.9/{audio,voice,camera,charger}` | `wip/7.1.3/{audio,voice,camera,charger,sensor}` |
 | device build | `integration/7.0.9` | `integration/7.1.3` |
 | LKML minimal series | — *(rolled straight into 7.1.3)* | `submit/7.1.3/{audio,voice,camera,charger,sensor}` |
 | package `pkgver` | `7.0.9` | `7.1.3` |
@@ -138,7 +138,7 @@ git push -f fork integration/7.2.0        # derived + disposable, force is fine
 #     package builds, so the watchdog safety net is on the phone from boot one -
 #     do not postpone it, an early hang on an untested base is exactly its case.
 git checkout -B debug-int/7.2.0 integration/7.2.0
-git cherry-pick <wip/7.2.0/debug range>
+git am ../fp3-pmaports/docs/debug/files/0001-watchdog-*.patch   # see docs/debug/create_debug.md
 git push -f fork debug-int/7.2.0
 
 # 3. build the package - the ONLY version edit
