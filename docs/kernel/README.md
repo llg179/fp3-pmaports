@@ -19,7 +19,7 @@ commits, and where the result may and may not go, is in the
 
 ## The files
 
-Ten files, 2980 insertions — audio, camera and charger. The `sensor` and `debug`
+Ten files, 3094 insertions — audio, camera and charger. The `sensor` and `debug`
 categories are not in this table: the SMGR/QRTR sensor stack and the watchdog
 change are written up in [`../sensors/README.md`](../sensors/README.md#provenance),
 where the measurements that produced them are.
@@ -30,7 +30,7 @@ where the measurements that produced them are.
 | `sound/soc/qcom/apq8016_sbc.c` | +139 | the msm8916 machine driver — **Srinivas Kandagatla**, [`bdb052e81f62`](https://github.com/torvalds/linux/commit/bdb052e81f6236b4febb50ed74f79f770fa82cc5) *"ASoC: qcom: add apq8016 sound card support"*, 2015-06-10 |
 | `sound/soc/qcom/qdsp6/q6voice-dai.c` | +19 | the Q6 Voice DAI — **not in Linus' tree**: **Stephan Gerhold** (2020-04-28), extended by **Vincent Knecht** (voice port controls, 2021) and **Otto Pflüger** (VoiceMMode1, 2023); carried by msm8953-mainline |
 | `sound/soc/qcom/qdsp6/q6afe.c` | +30 | the AFE driver — **Srinivas Kandagatla**, [`7fa2d70f9766`](https://github.com/torvalds/linux/commit/7fa2d70f976657111a5ea4f3d16a738ddaa10c4f) *"ASoC: qdsp6: q6afe: Add q6afe driver"*, 2018-05-18 |
-| `drivers/power/supply/qcom_smbx.c` | +688 / −34 | the SMB2 charger driver — **Casey Connolly** (Linaro); the file under this name since [`5ec53bcc7fce`](https://github.com/torvalds/linux/commit/5ec53bcc7fce6801977a0c125fb726d7b0e9102c), 2025-06-19 |
+| `drivers/power/supply/qcom_smbx.c` | +802 / −34 | the SMB2 charger driver — **Casey Connolly** (Linaro); the file under this name since [`5ec53bcc7fce`](https://github.com/torvalds/linux/commit/5ec53bcc7fce6801977a0c125fb726d7b0e9102c), 2025-06-19 |
 | `drivers/iio/adc/qcom-spmi-adc5.c` | +2 | the PMIC ADC5 driver — **Siddartha Mohanadoss**, [`e13d757279bb`](https://github.com/torvalds/linux/commit/e13d757279bb2c2fa32e5b578dd1cbcac4d51e21) *"iio: adc: Add QCOM SPMI PMIC5 ADC driver"*, 2018-08-02 |
 | `drivers/media/i2c/imx363.c` (+ `Kconfig`, `Makefile`) | +1568 | **new file**, but not from nothing — it keeps `Copyright (C) 2018 Intel Corporation` from the Intel IMX3xx sensor driver it is structured on |
 
@@ -181,14 +181,19 @@ same release checked in under
 no coulomb-counting fuel gauge in mainline, so capacity comes from the OCV table
 in the board's `simple-battery` node.
 
-Three further commits turn the charge current from a constant into something the
-board describes, and add the two guards that made raising it defensible:
+Six further commits turn the charge current from a constant into something the
+board describes, add the two guards that made raising it defensible, and then
+put each of those values at the layer that owns it:
 
 | commit | what it adds |
 |---|---|
-| [`51803fe941cb`](https://github.com/llg179/linux/commit/51803fe941cb825a5fe8d26e3d2a8a7374296758) | the hardware JEITA comparator thresholds and the per-soft-zone charge currents, from the device tree. The block was already *running* on the PMIC's generic defaults; this replaces them with the pack's characterised values, carried as raw ADC codes |
+| [`51803fe941cb`](https://github.com/llg179/linux/commit/51803fe941cb825a5fe8d26e3d2a8a7374296758) | the hardware JEITA comparator thresholds and the per-soft-zone charge currents. The block was already *running* on the PMIC's generic defaults; this replaces them with the pack's characterised values, carried as raw ADC codes |
 | [`5a736a69f51e`](https://github.com/llg179/linux/commit/5a736a69f51e3a473776cc9c1c5c8f4b51b9a2f5) | the fast-charge current as a `thermal_cooling_device`, so a thermal zone can throttle charging the way it throttles a CPU |
-| [`20c8679e024c`](https://github.com/llg179/linux/commit/20c8679e024c384b38f66e9d07a612be9b911883) | `constant-charge-current-max-microamp` actually reaching the hardware, bounded by a new per-generation ceiling so the deliberate ~1 A cap survives where nobody has measured otherwise |
+| [`20c8679e024c`](https://github.com/llg179/linux/commit/20c8679e024c384b38f66e9d07a612be9b911883) | `constant-charge-current-max-microamp` actually reaching the hardware |
+| [`5c8991aaa5b2`](https://github.com/llg179/linux/commit/5c8991aaa5b23ef39574c05021339274acbedc26) | **the ceiling on it becomes the PMIC's datasheet maximum** rather than a policy number. The previous commit had bounded the device tree with a new per-generation constant — 2 A on the PMI632, which is the rating of one Fairphone's battery, not of the chip — so every other PMI632 board would have been held to it |
+| [`60afc91548aa`](https://github.com/llg179/linux/commit/60afc91548aa7edeb7c44ce710fcd966ccf3bc44) | the JEITA description read from the **battery** node instead of the charger's. Which temperatures a cell may be charged at is a property of the cell, and with it on the charger a board could not describe two packs |
+| [`bac69263baf0`](https://github.com/llg179/linux/commit/bac69263baf0d24619d8aac20e1e3efe629cb828) | the battery ID verified before any of the battery's limits are applied, so a board that names one pack cannot silently charge the other to it |
+| [`c8974511d585`](https://github.com/llg179/linux/commit/c8974511d585fa02a496797ddbb91fc395b0b801) | thermal mitigation clamps to the programmed current instead of refusing to probe above it — otherwise the outcome of the fallback above was a phone with no charger driver |
 
 Why the result is 2 A and not the pack's rated 2.7 A, what the JEITA
 compensation register can and cannot express, and the register-level

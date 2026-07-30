@@ -142,14 +142,17 @@ so it was a no-op.
 
 ## Also open, written up elsewhere
 
-* **Charging asks for 2 A**, where it used to be capped at 1 A. Battery
-  temperature, hardware JEITA, thermal mitigation and a device-tree-driven
-  charge current are all in; what is left is the **input side** — without
-  high-voltage negotiation the USB port supplies about 1.9 A into the cell, so
-  the pack's rated 2.7 A is unreachable and that is now the only thing between
-  the two numbers. Also open: the float-voltage half of JEITA, step charging,
-  and confirming the thermal trip temperatures against a phone that has
-  actually been charged hard. See [`charger/README.md`](charger/README.md).
+* **Charging asks for 2 A**, where it used to be capped at 1 A, and the battery
+  it asks on behalf of is now verified before its limits are applied. What is
+  left, in order: the **mismatch path has never run on hardware** (a
+  device-tree-only cycle with a deliberately wrong `qcom,batt-id-ohm` would
+  measure it), **2 A has not been seen flowing** (needs a wall charger and a low
+  state of charge), and the **input side** — without high-voltage negotiation the
+  USB port supplies about 1.9 A into the cell. Still open beyond that: selection
+  between the two packs the FP3 ships, which needs a binding for more than one
+  `monitored-battery`; the float-voltage half of JEITA; step charging; and the
+  thermal trip temperatures, which are a choice rather than a measurement. See
+  [`charger/README.md`](charger/README.md).
 * **Sensors work**, including proximity blanking during a call and ambient
   light. What is left there is calibration rather than bring-up: the
   magnetometer has an unknown hard-iron offset and scale, and the mount matrix

@@ -24,6 +24,8 @@ USB  -->  PMI632 charger (CHGR @ 0x1000)  -->  battery
              |
    qcom_smbx (AP) --- SPMI --+
              |
+             +-- BAT_ID (PMIC ADC ch 0x4b)  ->  is this the described battery?
+             |
              +-- power_supply "pmi632-charger"   (USB side: online, type, I/V)
              +-- power_supply "pmi632-battery"   (capacity from an OCV table, temp)
              +-- thermal_zone "pmi632-battery"   (free, from the power supply core)
@@ -56,7 +58,8 @@ power-supply plumbing are all his.
 | `qcom_smbx.c` | `POWER_SUPPLY_PROP_TEMP` from the pack thermistor | nothing read the thermistor, so there was no temperature and no battery thermal zone |
 | `qcom_smbx.c` | the hardware JEITA thresholds and soft-zone currents, from the device tree | the driver read the JEITA *status* for `POWER_SUPPLY_PROP_HEALTH` but nothing programmed the thresholds |
 | `qcom_smbx.c` | the fast-charge current as a thermal cooling device | there was no path at all from "the phone is hot" to "charge slower" |
-| `qcom_smbx.c` | the fast-charge current from `constant-charge-current-max-microamp`, bounded per generation | the property was parsed and then ignored; only `voltage_max_design_uv` reached the hardware |
+| `qcom_smbx.c` | the fast-charge current from `constant-charge-current-max-microamp`, bounded by the PMIC's own hardware maximum | the property was parsed and then ignored; only `voltage_max_design_uv` reached the hardware |
+| `qcom_smbx.c` | verification of the battery ID before any of the battery's limits are applied | a board can name only one battery, and this one ships two — see [Which battery this phone has](#which-battery-this-phone-has) |
 | `qcom-spmi-adc5.c` | the `ADC5_BAT_THERM_100K_PU` channel | the channel was missing from the table, so a device tree referencing it was rejected at probe |
 
 Per-file detail, with commit links: [**Charger: `qcom_smbx.c`**](../kernel/README.md#charger-qcom_smbxc)
@@ -92,7 +95,9 @@ Measured on the device unless a row says otherwise.
 | JEITA thresholds from this pack's characterisation | **programmed and read back**: soft `22 04 44 ff`, hard `19 87 56 75` — byte-identical to what the stock stack programs |
 | JEITA soft-zone compensation | **programmed and read back**: `0x1092 = 0x28` (−1000 mA hot), `0x1093 = 0x38` (−1400 mA cold), up from `0x0a` each |
 | thermal mitigation | **live**: `cooling_device3` is `qcom-smbx-charger`, `max_state 3`, bound to `pmi632-thermal` at 70 / 80 / 90 °C |
-| fast-charge current | `FAST_CHARGE_CURRENT_CFG` **`0x14` → `0x28`**, i.e. 1 A → 2 A, read back on `r20` |
+| fast-charge current | `FAST_CHARGE_CURRENT_CFG` **`0x14` → `0x28`**, i.e. 1 A → 2 A |
+| the battery is identified before its limits are applied | **yes since `r22`** — the ID reads 10.0 kΩ against the 10 kΩ the battery node declares, and the raised current is itself the proof the check passed |
+| the fallback when the ID does *not* match | **implemented, not measured** — no second pack here to fit; see [Known gaps](#known-gaps) |
 | 2 A actually flowing | **not measured** — needs a low state of charge and a wall charger; see [Testing](#testing) |
 | high-voltage (QC) negotiation | **not done**, and now the only thing between this and a faster charge — see [the ceilings](#why-2-a-and-what-the-ceilings-would-be-on-the-other-pack) |
 
@@ -203,9 +208,29 @@ independent path — 10.03 kΩ against the stock stack's 9843 Ω.
 not 20.
 
 A `simple-battery` node cannot choose between the two, so the device tree
-describes Fuji: it is the pack that can be measured here. The cost is that a
-Kayo phone charges 700 mA slower than it could. Choosing per pack would need the
-battery-ID ADC channel read at probe, which mainline does not do.
+describes Fuji — the pack that can be measured here. What it can do, since
+`r22`, is **check that the described pack is the fitted one before applying any
+of its limits**:
+
+```
+                    qcom,batt-id-pullup-ohm      (charger node: board wiring)
+                             |
+BAT_ID pin --> ADC --> uV -->+--> R = pullup x uV / (1.875 V - uV)
+                                            |
+       qcom,batt-id-ohm (battery node) -->  compare, +/-15%
+                                            |
+                        match  -> apply the battery's current and JEITA
+                     mismatch  -> leave the init sequence's ~1 A, and say so
+```
+
+Note what this is not: the ID does **not** select a profile and does not derive
+a current. It is a gate on trusting the one description the device tree carries.
+Selecting between two would need a binding for more than one
+`monitored-battery`, which does not exist.
+
+The cost of the single description remains: a Kayo phone charges at 1 A rather
+than its rated 2.7 A — but it charges *safely*, at the conservative default,
+instead of at another cell's numbers.
 
 ## What the stock stack does, measured
 
@@ -289,18 +314,21 @@ current.
 
 ## The device-tree interface
 
-Three optional properties on the charger node, all no-ops when absent so no
-other board changes behaviour:
+Split by whose fact each value is, which is the reason it looks like this rather
+than all in one node.
+
+**On the battery** — everything that describes the cell:
 
 ```dts
-&pmi632_charger {
-	monitored-battery = <&fp3_battery>;
+fp3_battery: battery {
+	compatible = "simple-battery";
+	constant-charge-current-max-microamp = <2000000>;
+	constant-charge-voltage-max-microvolt = <4390000>;
 
+	qcom,batt-id-ohm = <10000>;
 	qcom,jeita-hard-thresholds = <0x5675 0x1987>;   /* cold 0 degC, hot 55 degC */
 	qcom,jeita-soft-thresholds = <0x44ff 0x2204>;   /* cool 15 degC, warm 45 degC */
 	qcom,jeita-soft-fcc-microamp = <600000 1000000>;
-
-	qcom,thermal-mitigation = <2000000 1500000 1000000 500000>;
 };
 ```
 
@@ -308,23 +336,34 @@ Each threshold pair is `<cold hot>`, as raw ADC codes; a higher code is a colder
 battery, so the driver rejects a pair whose hot value is not the smaller one.
 
 `qcom,jeita-soft-fcc-microamp` is the current to be **left** in each soft zone,
-not the register's own offset — so the device tree describes a charge current
+not the register's own offset — so the battery node describes a charge current
 and the driver works out the delta. It reads the fast-charge current back out of
 the hardware to do that, rather than trusting the device tree to match.
 
-The charge current itself comes from the battery node:
+An optional `qcom,batt-id-tolerance-percent` overrides the default 15, which is
+the window the vendor's `batt-id-range-pct` uses on this board.
+
+**On the charger** — what belongs to the board rather than to the pack:
 
 ```dts
-constant-charge-current-max-microamp = <2000000>;
+&pmi632_charger {
+	monitored-battery = <&fp3_battery>;
+	qcom,batt-id-pullup-ohm = <100000>;
+	qcom,thermal-mitigation = <2000000 1500000 1000000 500000>;
+};
 ```
 
-which the driver now applies, bounded by a **per-generation ceiling** in the
-driver (`smb_variant::fcc_max_ua`): 1 A on SMB2, 2 A on SMB5. That ceiling is
-what preserves the original intent of the hardcoded ~1 A — a device tree can ask
-for a current, but not for one the driver has not been taught is safe on that
-PMIC generation. It also means the two SMB2 boards in mainline that already ask
-for 1.8 A (`sdm845-oneplus-enchilada`, `-fajita`) keep charging at exactly 1 A,
-unchanged.
+The pull-up follows from the ADC channel chosen in `pmi632.dtsi`, but nothing in
+the IIO consumer interface exposes which channel a consumer was given, so the
+board states it. The mitigation table is a thermal-design fact, not a cell one.
+
+**In the driver** — only what the PMIC itself imposes: `smb_variant::fcc_max_ua`
+is the datasheet maximum of the fast-charge register on that generation, 3 A on
+the PMI632 and 4.5 A on the pmi8998, taken from the `smb_params.fcc.max_u`
+values Qualcomm's own drivers carry. It exists to stop a device tree asking the
+hardware for something it cannot do — not to express an opinion about how hard
+a battery should be charged, which is the board's business and was, for one
+revision, wrongly encoded here.
 
 ## Thermal mitigation
 
@@ -352,6 +391,13 @@ with room to taper first, against a die that idles at 37 °C on this board:
 The mitigation and the JEITA compensation compose without either knowing about
 the other, because the compensation is a subtraction from whatever is
 programmed: a mitigated current stays mitigated inside the soft zones too.
+
+☠️ Each state is **clamped** to the current actually programmed, not validated
+against it. That matters in exactly the case the ID check creates: if the fitted
+battery cannot be identified the charger stays on ~1 A, while the board's table
+still starts at the 2 A it was written for. An earlier revision rejected that as
+a device-tree error and failed probe — so the outcome of a safety fallback was a
+phone with no charger driver at all. Mitigation may only ever reduce.
 
 ## Building and installing
 
@@ -397,13 +443,18 @@ dd if=/sys/kernel/debug/regmap/0-02/registers bs=9 skip=$((0x1090)) count=12
 Measured on `linux-fp3-7.1.3-r20` (`#21-fp3`), against the same registers read
 on `r19` before the change:
 
-| register | `r19` | `r20` | |
-|---|---|---|---|
-| `0x1061` fast-charge current | `14` | **`28`** | 1 A → 2 A |
-| `0x1092` JEITA hot compensation | `0a` | **`28`** | −250 mA → −1000 mA |
-| `0x1093` JEITA cold compensation | `0a` | **`38`** | −250 mA → −1400 mA |
-| `0x1094` soft thresholds | `1b ff 44 c7` | **`22 04 44 ff`** | ~50/16 °C → 45/15 °C |
-| `0x1098` hard thresholds | `15 aa 4a ff` | **`19 87 56 75`** | ~58/11 °C → 55/0 °C |
+| register | `r19` | `r20` | **`r22`** | |
+|---|---|---|---|---|
+| `0x1061` fast-charge current | `14` | `28` | **`28`** | 1 A → 2 A |
+| `0x1092` JEITA hot compensation | `0a` | `28` | **`28`** | −250 mA → −1000 mA |
+| `0x1093` JEITA cold compensation | `0a` | `38` | **`38`** | −250 mA → −1400 mA |
+| `0x1094` soft thresholds | `1b ff 44 c7` | `22 04 3e bc` | **`22 04 44 ff`** | ~50/16 °C → 45/20 → **45/15**, the vendor's values |
+| `0x1098` hard thresholds | `15 aa 4a ff` | `19 87 56 75` | **`19 87 56 75`** | ~58/11 °C → 55/0 °C |
+
+On `r22` the `0x28` in the first row is doing double duty: it is the charge
+current *and* the proof that the battery-ID check passed, because a mismatch
+leaves the init sequence's `0x14` there. There is no need to enable the driver's
+debug print to know the gate opened.
 
 `JEITA_EN_CFG` reads `0x1f` in both, which is the point of the section above: the
 block was never off.
@@ -414,13 +465,25 @@ block was never off.
   1.9 A into the cell — just under the 2 A the charger is now programmed for.
   This is the next thing worth doing on this side, and it is a piece of work in
   its own right.
-* **The battery ID is never read *by the charger*,** so the device tree has to
-  pick one of the two packs. It picks Fuji; a Kayo phone therefore charges at
-  2 A instead of its rated 2.7 A, and gets the wrong OCV curve and the wrong
-  JEITA cool threshold with it. The measurement is not the hard part — the
-  channel is described and readable today, as above. What is missing is a way
-  to describe more than one `monitored-battery` and choose between them at
-  probe, which mainline has no binding for.
+* **The device tree can still describe only one of the two packs.** The ID is now
+  read and checked, so the wrong pack is no longer charged to the wrong limits —
+  it falls back to ~1 A instead. What is missing is *selection*: a binding for
+  more than one `monitored-battery`, which mainline does not have. Until then a
+  Kayo phone charges at 1 A rather than its rated 2.7 A, and still gets the
+  wrong OCV curve, because capacity is read from the battery node whether the ID
+  matched or not.
+* **The mismatch path has not been exercised on hardware.** There is no second
+  pack here to fit, and the check is written but only ever seen taking the
+  matching branch. The cheap way to measure it is a device-tree-only cycle with
+  `qcom,batt-id-ohm` deliberately set to the other pack's 50000: the log should
+  carry *"Battery ID is … ohm, but the described battery is 50000 ohm"* and
+  `0x1061` should stay at `0x14`. Two DTB deploys, no kernel build.
+* **A mismatch leaves the previous boot's JEITA thresholds in place, not the
+  PMIC's defaults.** Nothing writes those registers unless the battery verifies,
+  and a warm reboot does not reset the PMIC — so after a pack swap the comparators
+  keep the *old* pack's thresholds until a cold boot. The current is safe; the
+  temperature limits are stale. Programming a known-safe default on the mismatch
+  path would fix it, and needs a value nobody has characterised.
 * **The float-voltage half of JEITA is left alone.** The two `*_SL_FCV` bits are
   whatever the PMIC defaults them to, because the register that scales the
   voltage reduction is not documented for this generation in any source
@@ -447,6 +510,13 @@ block was never off.
   `power_supply_get_battery_info()` was called and only `voltage_max_design_uv`
   reached the hardware. If an older kernel is in the picture, raising the number
   in the device tree changes nothing at all.
+* **☠️ A precise citation is not a check.** The JEITA thresholds here were, for
+  one revision, the *other* pack's — copied out of the vendor tree and documented
+  with the exact filename, which is what made the mistake survive. The vendor
+  ships several `qg-batterydata-*` files and the board includes two of them;
+  naming the file you copied from says nothing about whether it applies. That is
+  what the ID check is for now, and why the battery node declares the resistance
+  it expects.
 * **The JEITA compensation is relative to the programmed current**, so it has to
   be computed after the fast-charge current is set — which is why both it and
   the cooling device are initialised below that point in probe, and why both

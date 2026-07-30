@@ -44,7 +44,7 @@ can be read without a kernel checkout.
 Provenance, as of this snapshot:
 
 * base: `v7.1.3-r0` (tag in [`llg179/linux`](https://github.com/llg179/linux), the msm8953-mainline 7.1.3 release)
-* ours: `integration/7.1.3` — five commits touch the device tree, the bulk of it
+* ours: `integration/7.1.3` — seven commits touch the device tree, the bulk of it
   [`6749bae07da1`](https://github.com/llg179/linux/commit/6749bae07da17a2a9fffceaa4f78ec0d6c6353e8)
   *"FP3: integrated device tree (audio + charger + camera) for 7.1.3 testing"*
   (+375/−4); then
@@ -56,18 +56,23 @@ Provenance, as of this snapshot:
   adds the battery thermistor channel (+12/−2), and
   [`0eba8b8a`](https://github.com/llg179/linux/commit/0eba8b8a2f1f220fb6277724a7c553391020b979)
   raises the charge current to 2 A with the JEITA and thermal guards that go
-  with it (+74/−6)
+  with it (+74/−6),
+  [`da1591a6`](https://github.com/llg179/linux/commit/da1591a64116b91a809cd4f9df6caca7488dbc4a)
+  corrects it to the pack this phone actually has, and
+  [`0231f6b4`](https://github.com/llg179/linux/commit/0231f6b459175b8b9370d2fb7187abb7ce822b84)
+  moves the battery's own properties onto the battery node and adds the ID
+  resistor it should present
 
 Both copies are byte-identical to the corresponding git blobs, so
 `diff -u before_update/<file> after_update/<file>` reproduces our delta:
-**+491 / −4 lines** across the two files.
+**+518 / −4 lines** across the two files.
 
 ### The files
 
 | file | delta | what we add |
 |---|---|---|
-| `sdm632-fairphone-fp3.dts` | 537 → 991 lines | the board changes: WCD9335 SLIMbus audio (`slimbam`, `slim_msm`, `tasha_ifd`, `wcd9335`, `divclk1_cdc`, `wcd_vout_1p8`, three pin-mux nodes, the `slim-playback` / `slim-capture` DAI links), the IMX363 rear camera (`camera@1a` plus the `&camss` port graph), the charger side (`&pmi632_charger` with its JEITA and thermal-mitigation properties, `fp3_battery`, and a `cooling-maps` addition to the `pmi632-thermal` zone), and the `&watchdog` node with `qcom,start-at-probe` |
-| `pmi632.dtsi` | 209 → 242 lines | the PMI632 charger node itself, the counterpart of the board-level `&pmi632_charger`, plus `channel@4a` — the battery thermistor the charger reads a temperature from — and `#cooling-cells` on the charger node |
+| `sdm632-fairphone-fp3.dts` | 537 → 1017 lines | the board changes: WCD9335 SLIMbus audio (`slimbam`, `slim_msm`, `tasha_ifd`, `wcd9335`, `divclk1_cdc`, `wcd_vout_1p8`, three pin-mux nodes, the `slim-playback` / `slim-capture` DAI links), the IMX363 rear camera (`camera@1a` plus the `&camss` port graph), the charger side (`fp3_battery` with the cell's ID resistor and JEITA description, `&pmi632_charger` with the board's pull-up and thermal-mitigation table, and a `cooling-maps` addition to the `pmi632-thermal` zone), and the `&watchdog` node with `qcom,start-at-probe` |
+| `pmi632.dtsi` | 209 → 243 lines | the PMI632 charger node itself, the counterpart of the board-level `&pmi632_charger`, plus `channel@4a` and `channel@4b` — the battery thermistor and the battery-ID resistor the charger reads — and `#cooling-cells` on the charger node |
 
 The other three files in the `#include` chain — `sdm632.dtsi`, `msm8953.dtsi`,
 `pm8953.dtsi` — are **not** here because we do not touch them; the pin muxes our
