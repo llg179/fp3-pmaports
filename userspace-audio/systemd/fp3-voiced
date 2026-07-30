@@ -141,6 +141,22 @@ def pactl(*args):
         return ""
 
 
+# What the volume slider is called while the call owns the card. Setting the
+# card profile to "off" leaves pulseaudio with no sink of its own, so
+# module-always-sink inserts its null sink - and every volume popup on the
+# phone then reads "Dummy Output", whichever output the call is really using.
+# The sink is a real one as far as pulseaudio is concerned, so renaming it is
+# enough; the percentage on it is what gets mirrored onto the codec gain.
+def pa_name_fallback_sink(output):
+    for line in pactl("list", "short", "sinks").splitlines():
+        f = line.split()
+        if len(f) > 1 and "auto_null" in f[1]:
+            subprocess.run(["pacmd", "update-sink-proplist", f[1],
+                            "device.description=" + output],
+                           capture_output=True, text=True, env=pulse_env())
+            return
+
+
 def pa_card():
     for line in pactl("list", "short", "cards").splitlines():
         f = line.split()
@@ -305,18 +321,20 @@ def snapshot(tag):
         log("%s dpcm: %s" % (tag, " | ".join(state)))
     except OSError as e:
         log("%s dpcm: unreadable (%s)" % (tag, e))
-    # amixer reads a script from stdin with -s, so the whole snapshot is one
-    # process instead of one per control.
-    script = "".join("cget name='%s'\n" % c for c in WATCH_MIXERS)
-    try:
-        out = subprocess.run(["amixer", "-c", "0", "-s"], input=script,
-                             capture_output=True, text=True).stdout
-    except OSError:
-        return
-    values = [l.split("=", 1)[1] for l in out.splitlines() if ": values" in l]
-    vals = ["%s=%s" % (c.split()[0] + "/" + c.split()[-1],
-                       values[i] if i < len(values) else "?")
-            for i, c in enumerate(WATCH_MIXERS)]
+    # One process per control. The batch form ("amixer -c0 -s" with a script on
+    # stdin) looked cheaper and was used here, but it only executes cset - a
+    # cget in a script prints nothing at all and exits 0, so every value in this
+    # line read back as "?" and the snapshot carried no information whatsoever.
+    vals = []
+    for c in WATCH_MIXERS:
+        short = c.split()[0] + "/" + c.split()[-1]
+        try:
+            out = subprocess.run(["amixer", "-c", "0", "cget", "name=" + c],
+                                 capture_output=True, text=True).stdout
+        except OSError:
+            return
+        got = [l.split("=", 1)[1] for l in out.splitlines() if ": values" in l]
+        vals.append("%s=%s" % (short, got[0] if got else "?"))
     log("%s mixers: %s" % (tag, " ".join(vals)))
 
 
@@ -530,8 +548,31 @@ class JackWatch(threading.Thread):
                                                SW_MICROPHONE_INSERT):
                     changed = True
             if changed:
+                was = (self.plugged, self.has_mic)
                 self._read_state()
+                now = (self.plugged, self.has_mic)
+                if now != was:
+                    log("jack: plugged=%s mic=%s (was plugged=%s mic=%s)"
+                        % (now[0], now[1], was[0], was[1]))
                 WAKE.set()
+
+    def resync(self):
+        """Re-read the switch straight from the driver.
+
+        The cached state is only as good as the last edge that arrived, and the
+        codec re-arms its mechanical detection on every one of them - a path
+        teardown can therefore leave the cache claiming "unplugged" with a
+        headset still in the socket. Anything that decides where a call is
+        going asks the hardware instead.
+        """
+        if self.fd is None:
+            return
+        was = (self.plugged, self.has_mic)
+        self._read_state()
+        now = (self.plugged, self.has_mic)
+        if now != was:
+            log("jack: resync corrected plugged=%s mic=%s (cache said %s/%s)"
+                % (now[0], now[1], was[0], was[1]))
 
 
 class LineWatch(threading.Thread):
@@ -693,8 +734,12 @@ class Session:
 
     def start(self, retry=False, pa_ready=False):
         # a plugged headset wins over whatever pulseaudio was routed to
-        self.output = self.forced_output or wanted_output(False, jack_plugged())
-        mic = "Headset" if jack_state()[1] else "Mic"   # follows the jack, not the output
+        _jack_watch.resync()          # ask the driver, not the cache
+        plugged, has_mic = jack_state()
+        self.output = self.forced_output or wanted_output(False, plugged)
+        mic = "Headset" if has_mic else "Mic"   # follows the jack, not the output
+        log("routing: jack plugged=%s mic=%s forced=%s -> %s + %s"
+            % (plugged, has_mic, self.forced_output or "-", self.output, mic))
         # Order matters. Whoever starts the AFE port configures it, and a second
         # start only answers ADSP_EALREADY - so the voice path has to get there
         # first. Switching the pulseaudio profile opens its media sink on the
@@ -729,6 +774,7 @@ class Session:
             self.start(retry=True, pa_ready=True)
             return
         log("call audio up (%s + %s)" % (self.output, mic))
+        pa_name_fallback_sink(self.output)
 
         if _buttons_ref and _buttons_ref[0].muted:
             set_mic_muted(True)          # a re-route re-enabled the muted mixer
@@ -817,13 +863,24 @@ def calls_active():
             if line.startswith("call.properties.state"):
                 state = line.split(":", 1)[1].strip()
                 break
-        if state != _last_state.get(idx):
+        prev = _last_state.get(idx)
+        if state != prev:
             _last_state[idx] = state
-            log("  call %s state=%s" % (idx, state or "?"))
+            log("  call %s state=%s (was %s)" % (idx, state or "?", prev or "-"))
         if state and state not in INACTIVE_STATES:
             active = True
         elif not state:
-            active = True          # cannot tell - assume it needs audio
+            # Unreadable state. Erring towards "engage" is right for a call we
+            # have never seen, but wrong for one that is going away: mmcli stops
+            # answering the instant the call object is dropped, so an incoming
+            # call that was rejected or timed out read as active for one tick,
+            # and the daemon took the card - which suspends the sink and kills
+            # the ringtone that was playing at that moment (measured 22:57:06,
+            # four "Failed to create sink input: sink is suspended" in a row).
+            # A call last seen in an inactive state is therefore left alone.
+            if prev in INACTIVE_STATES:
+                continue
+            active = True          # never seen it - assume it needs audio
     return active
 
 
