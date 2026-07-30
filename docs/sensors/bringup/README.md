@@ -316,7 +316,7 @@ series QRTR bus sensor registry server` located the code.
 |---|---|---|---|
 | **`sns-reg`** | the AP-side Sensor Registry QMI server; emulates the Android sensor daemon | <https://gitlab.com/msm8996-mainline/sns-reg> | `4d238e5f0baba3fb77456fe2bffbf8e8f18a71a0` (2025-07-06); tags `0.1` = `ad37ad305cde8b24544cb106215fec9ae4a2b135`, `0.0.1` = `739deb8799eaa3e0b7919b411fb77c505a04c781` |
 | **`sns-reg-generator`** | converts a binary `sns.reg` into the plain-text registry the server reads | same repo | same |
-| **QRTR bus + Sensor Manager IIO drivers** | QRTR becomes a bus; SMGR sensors become IIO devices (accel, gyro, magnetometer, **proximity**, pressure) | branch `msm8996-staging-smgr` of <https://gitlab.com/msm8996-mainline/linux> | `30bb1314cc798f1df15e902ae53238de2b27bc90` |
+| **QRTR bus + Sensor Manager IIO drivers** | QRTR becomes a bus; SMGR sensors become IIO devices (accel, gyro, magnetometer, **proximity**, pressure) | branch `msm8996-staging-smgr` of <https://gitlab.com/msm8996-mainline/linux> | `a8e08fc6b030` |
 | **pmaports packaging** | draft aports for the above | [pmaports MR !4118](https://gitlab.com/postmarketOS/pmaports/-/merge_requests/4118) | **draft, unmerged**; project archived |
 
 Author: Yassine Oudjana; LKML posting [PATCH v2
@@ -505,7 +505,7 @@ services and the Sensor Manager are up on every boot with no manual step.
 
 With the Sensor Manager registered, the rest was a port rather than an
 investigation. Four commits from `msm8996-mainline/linux`
-`msm8996-staging-smgr` (`30bb1314cc79`), all Yassine Oudjana's, apply to the
+`msm8996-staging-smgr` (`a8e08fc6b030`), all Yassine Oudjana's, apply to the
 7.1.3 base unchanged:
 
 | commit | what it does |

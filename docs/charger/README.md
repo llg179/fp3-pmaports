@@ -99,6 +99,8 @@ Measured on the device unless a row says otherwise.
 | the battery is identified before its limits are applied | **yes since `r22`** — the ID reads 10.0 kΩ against the 10 kΩ the battery node declares, and the raised current is itself the proof the check passed |
 | the fallback when the ID does *not* match | **implemented, not measured** — no second pack here to fit; see [Known gaps](#known-gaps) |
 | 2 A actually flowing | **not measured** — needs a low state of charge and a wall charger; see [Testing](#testing) |
+| the device-tree binding | **written and validated** since 2026-07-30; `dt_binding_check`, `yamllint` and `dtbs_check` all clean on the charger node, and the series is now `checkpatch --strict`-clean end to end |
+| the battery node's four `qcom,*` properties | **fail `dtbs_check`** and are the one thing still blocking this series — [why, and what to do](#where-these-properties-belong) |
 | high-voltage (QC) negotiation | **not done**, and now the only thing between this and a faster charge — see [the ceilings](#why-2-a-and-what-the-ceilings-would-be-on-the-other-pack) |
 
 ## The starting premise was wrong
@@ -365,6 +367,38 @@ hardware for something it cannot do — not to express an opinion about how hard
 a battery should be charged, which is the board's business and was, for one
 revision, wrongly encoded here.
 
+**The binding.** The charger half of the above is documented as of 2026-07-30, in
+the *existing* `Documentation/devicetree/bindings/power/supply/qcom,pmi8998-charger.yaml`
+rather than a second file: one driver (`qcom_smbx`) serves all three PMICs, and
+SMB2 and SMB5 differ in their register layout, not in the shape of the binding.
+`qcom,pmi632-charger` joins the `compatible` enum; the three extra io-channels
+become optional (`minItems: 2`), matching a driver that takes `vbat`,
+`bat_therm` and `bat_id` with `devm_iio_channel_get()` and carries on without any
+of them. Validated with `dt_binding_check` on both examples, `yamllint` against
+the bindings' own config, and `dtbs_check` against this board's DTB, where the
+charger node passes. It closed the last `checkpatch` complaint on the series.
+
+### Where these properties belong
+
+The split above is the one this port runs, and it is **not settled for
+upstream**. Two things argue against the battery node as written:
+
+* `battery.yaml` sets `additionalProperties: false` and contains **no**
+  vendor-prefixed property at all, so `dtbs_check` rejects all four `qcom,*`
+  names — measured, not predicted. The only JEITA precedent in tree,
+  `qcom,jeita-extended-temp-range`, lives on a **charger** node
+  (`qcom,pm8941-charger.yaml`).
+* the thresholds are **raw BAT_THERM ADC codes**, and a code depends on the
+  PMIC's ADC full scale and on the board's 100 kΩ pull-up as much as on the cell.
+  By the same layering rule that moved the current ceiling out of the driver,
+  a raw code is not a property of the battery.
+
+The likely upstream shape is therefore: thresholds on the charger node, and the
+pack identity as a **generic** `id-resistor-ohms` in `battery.yaml` — an ID
+resistor is not a Qualcomm idea. That is a driver change as well as a device-tree
+one, since the driver would read them from a different node, so it wants its own
+build-and-measure cycle rather than an edit here.
+
 ## Thermal mitigation
 
 The charger is registered as a thermal cooling device, so a thermal zone
@@ -458,6 +492,21 @@ debug print to know the gate opened.
 
 `JEITA_EN_CFG` reads `0x1f` in both, which is the point of the section above: the
 block was never off.
+
+The device tree is checkable too, and worth doing as a **differential** — the
+7.1.3 base fails `dtbs_check` 44 times on its own, so an absolute count says
+nothing:
+
+```sh
+pip install dtschema yamllint          # needs swig, libfdt-dev, python3-dev
+make ARCH=arm64 CC=gcc HOSTCC=gcc CHECK_DTBS=y \
+     qcom/sdm632-fairphone-fp3.dtb
+```
+
+Run it once with the board files from the base checked out and once with this
+branch's, and diff the two sorted error lists. Of the errors this tree adds, the
+charger owns exactly one — the battery node — since the cooling-map node names
+were fixed on 2026-07-30.
 
 ## Known gaps
 

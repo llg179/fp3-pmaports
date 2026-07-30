@@ -9,6 +9,59 @@ repeated.
 > Lajosházi, László Gergely, who decided what belongs here and what is
 > already settled. Each entry reports a measurement he made or reviewed.
 
+## Open before anything is submitted
+
+A red-team pass over the five `submit/7.1.3/*` branches on 2026-07-30 produced
+this list. Everything here is measured — `checkpatch.pl --strict`, and
+`dtbs_check` run against the base and against this tree so that only the errors
+*we add* are counted (the base fails it 44 times on its own). The per-branch
+summary is in [`kernel/README.md`](kernel/README.md#what-the-checkers-say).
+
+**The camera series is the one that must not be sent as it stands.** Its commit
+message claims the driver was derived from `imx258.c` and that the register
+tables were read back from the sensor rather than taken from vendor code. The
+file was in fact taken from `panpanpanpan/linux:imx363wip`, and its own comments
+attribute values to downstream Android logs — one of them says the author does
+not know where a link frequency came from. Sending it would credit us for a third
+party's reverse engineering. The fix is the import/extension split described in
+[`kernel/README.md`](kernel/README.md#camera-imx363c); the upstream file has not
+been retrieved yet, so the size of our delta is still unmeasured.
+
+Then, in rough order of cost:
+
+1. **The camera has no binding and no MAINTAINERS entry.** `imx258` has both
+   (`sony,imx258.yaml` and its own `SONY IMX258 SENSOR DRIVER` block); a new
+   sensor driver without a DT binding is turned away on sight. The same patch
+   should take out the leftover `printk(KERN_INFO "imx363: pixel_rate: ...")` and
+   the commented-out register writes.
+2. **The audio device tree adds six undocumented codec properties** —
+   `qcom,micbias{1..4}-microvolt`, `qcom,dmic-sample-rate`,
+   `qcom,mbhc-vthreshold` on the `slim217,1a0` node. Same class of gap the
+   charger had until its binding was written; the WCD9335 binding needs the same
+   treatment.
+3. **`divclk1` and `wcd-vout-1p8` sit under `soc@0`**, where `simple-bus`
+   requires `ranges`. Fixed clocks and regulators belong at the root of the board
+   file, which is where every other board puts them.
+4. **`wcd-intr-default-state` fails the `qcom,msm8953-pinctrl` schema.**
+5. **The battery node's four `qcom,*` properties cannot stay there.**
+   `battery.yaml` has `additionalProperties: false` and **zero** vendor-prefixed
+   properties, so there is no precedent to follow; the JEITA precedent that does
+   exist (`qcom,jeita-extended-temp-range` in `qcom,pm8941-charger.yaml`) is on
+   the *charger* node. There is also a layering argument against the current
+   placement, made in [`charger/README.md`](charger/README.md#where-these-properties-belong).
+6. **`-ohm` should be `-ohms`.** The canonical unit suffix is plural
+   (`qcom,batt-id-ohm`, `qcom,batt-id-pullup-ohm`); `-microamp` and `-percent`,
+   which this work also uses, are already right. Worth doing in the same cycle as
+   item 5, since it touches the same properties.
+7. **Every branch is based on `v7.1.3-r0`.** Sending means rebasing first: ASoC
+   onto `sound/for-next`, device trees onto mainline.
+
+Two things were checked and are **not** defects: the three `ENOTSUPP`
+comparisons in the audio machine driver (the ASoC core returns exactly that, and
+the base file plus six other qcom machine drivers compare against it), and the
+undocumented `slim217` vendor prefix (absent from `vendor-prefixes.yaml`, but
+already used by four device trees in Linus' tree).
+
 ## The notification LED blinks forever after a missed call
 
 **Symptom:** after a missed call the LED keeps blinking; dismissing the

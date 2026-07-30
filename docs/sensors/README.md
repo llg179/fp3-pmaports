@@ -75,7 +75,7 @@ Gergely with Claude.
 
 | file | fix |
 |---|---|
-| `drivers/soc/qcom/qmi_encdec.c` | `qmi_encode()` read a `QMI_DATA_LEN` field four bytes wide whatever its declared width, so a `u8` length pulled in the bytes after it. Every sensor whose ID is non-zero was unreachable; the accelerometer worked only because its ID is 0 |
+| `drivers/soc/qcom/qmi_encdec.c` | `qmi_encode()` read a `QMI_DATA_LEN` field four bytes wide whatever its declared width, so a `u8` length pulled in the bytes after it. Every sensor whose ID is non-zero was unreachable; the accelerometer worked only because its ID is 0. **Not a longstanding oversight — a regression**, see [below](#why-the-submit-series-is-one-patch) |
 | `drivers/iio/accel/smgr_accel.c` pattern | `remove()` reads `platform_get_drvdata()`, which probe never set — copied into `smgr_prox.c` and fixed there; upstream has the same latent NULL dereference |
 | `drivers/iio/common/qcom_smgr/smgr.c` | the loop that defaults each data type's sample rate to its maximum indexed `data_types[0]` every time instead of the loop variable, so a second data type would have been requested at a rate of zero |
 | `drivers/watchdog/qcom-wdt.c`, `sdm632-fairphone-fp3.dts` | `qcom,start-at-probe`: the driver only armed a watchdog the bootloader had already started, and the FP3's has not, leaving no watchdog at all between kernel start and systemd. It came out of this bring-up but is its own category — written up in [`../debug/README.md`](../debug/README.md) |
@@ -88,6 +88,52 @@ Gergely with Claude.
 | [`../../userspace-sensors/registry.conf`](../../userspace-sensors/registry.conf) | 1437 key/value pairs decoded from it |
 | [`../../userspace-sensors/groups.txt`](../../userspace-sensors/groups.txt) | group map from upstream [`sns-reg`](https://gitlab.com/msm8996-mainline/sns-reg)'s `map.c` |
 | `PROXIMITY_NEAR_LEVEL=1570` | the phone's factory `ps_near` calibration |
+
+## Why the submit series is one patch
+
+`wip/7.1.3/sensor` has twelve commits of ours on top of four of Yassine
+Oudjana's. `submit/7.1.3/sensor` has **one**. Three reasons, in order of how hard
+they are to get around:
+
+1. **The imported base cannot carry a DCO.** The two `WIP:`-prefixed commits —
+   the SMGR core and the accelerometer — have **no `Signed-off-by` at all**, not
+   even their author's. Nobody but he can supply it, and everything of ours
+   except the QMI fix lives in the files those two commits create.
+2. **His series is in flight, and ahead of what we carry.** Patchwork has it as
+   v2 of *"QRTR bus and Qualcomm Sensor Manager IIO drivers"*, posted 2025-07-10,
+   state **`changes-requested`** on the IIO list, with Jonathan Cameron asking for
+   `auxiliary_bus` and an error-handling rework. What this tree carries is the
+   2023 snapshot. Sending our own series would be a competing submission of
+   another person's driver.
+3. **Some of our work may already be his.** The v1 cover letter says
+   accelerometer, gyroscope, magnetometer, proximity **and pressure** are
+   supported, and names light and temperature as what is missing. Our gyroscope
+   and magnetometer drivers were written against the 2023 base and may duplicate
+   his; the **ambient light channel is the part he lists as absent**, so that is
+   where contributing to his thread has actual value.
+
+What is left, and is genuinely submittable today, is the one commit that lives
+outside his code: **`soc: qcom: qmi: read QMI_DATA_LEN at its declared width`**.
+
+That patch got stronger on inspection. The bad line is not old: `git blame` on
+today's `torvalds/linux` puts it at
+[`fe099c387e06`](https://github.com/torvalds/linux/commit/fe099c387e06)
+*"soc: qcom: preserve CPU endianness for QMI_DATA_LEN"* (Alexander Wilhelm,
+`Reviewed-by:` Dmitry Baryshkov), which **removed** the narrow reads a May 2025
+commit had added. Its stated premise is that *"QMI_DATA_LEN is always of type
+`u32` on the host"* — and that is what the SMGR request disproves, since it
+declares `u8 item_len`, which the encode path itself accounts for two lines
+below:
+
+```c
+	data_len_sz = temp_ei->elem_size == sizeof(u8) ?
+			sizeof(u8) : sizeof(u16);
+```
+
+So the patch is a regression fix and carries `Fixes: fe099c387e06`. The bad line
+is live in mainline today — checked directly against `master`, not inferred — and
+`get_maintainer.pl` puts the author of the regression on the Cc list. It builds
+warning-free at `W=1` and `checkpatch --strict` is clean.
 
 ## Status
 

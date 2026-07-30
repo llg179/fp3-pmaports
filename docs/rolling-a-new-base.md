@@ -18,12 +18,20 @@ Worked across two real bases — `7.0.9` (retired, kept as history) and `7.1.3`
 | base (upstream fork) | `7.0.9/main` | `7.1.3/main` |
 | work + fixes | `wip/7.0.9/{audio,voice,camera,charger}` | `wip/7.1.3/{audio,voice,camera,charger,sensor,debug}` |
 | device build | `integration/7.0.9` | `integration/7.1.3` |
-| LKML minimal series | — *(rolled straight into 7.1.3)* | `submit/7.1.3/{audio,voice,camera,charger}` |
+| LKML minimal series | — *(rolled straight into 7.1.3)* | `submit/7.1.3/{audio,voice,camera,charger,sensor}` |
 | package `pkgver` | `7.0.9` | `7.1.3` |
 
-`7.1.3` was brought up cleanly, so its `wip` and `submit` branches point at the
-same commits; on a messier bump they diverge — `wip` carries the fix history,
-`submit` the distilled series.
+`7.1.3` was brought up cleanly, so its `wip` and `submit` branches reach the same
+end state; on a messier bump they diverge — `wip` carries the fix history,
+`submit` the distilled series. `sensor` is the exception in the other direction:
+its `submit` branch is one patch out of twelve, because most of that category
+sits on an import that cannot carry a DCO
+([why](sensors/README.md#why-the-submit-series-is-one-patch)).
+
+Same end state is not the same as same commits, and it is worth checking rather
+than assuming: `git diff wip/<base>/<cat> submit/<base>/<cat>` must be empty. It
+was not, for two categories, until 2026-07-30 — see the trap under
+[the branch model](../README.md#the-branch-model).
 
 Two categories have no `submit` branch, for different reasons: `sensor` is not
 distilled yet, and `debug` never will be — the watchdog-at-probe change is a
@@ -144,8 +152,9 @@ cd linux-fp3
 #    Loop until fp3-selftest is green.
 
 # 6. everything works -> distil the minimal upstream series
-#    (only the upstream-bound categories; debug never gets one)
-for cat in audio voice camera charger; do
+#    (only the upstream-bound categories; debug never gets one, and sensor gets
+#     one patch rather than a series - sensors/README.md says why)
+for cat in audio voice camera charger sensor; do
 	git checkout -b submit/7.2.0/$cat wip/7.2.0/$cat
 	#   squash/reorder to the minimal set, checkpatch each commit, keep the
 	#   Assisted-by: trailer and NO Signed-off-by from the AI (see the
@@ -157,7 +166,7 @@ done
 for cat in audio voice camera charger sensor debug; do
 	git push fork --delete wip/7.1.3/$cat
 done
-for cat in audio voice camera charger; do
+for cat in audio voice camera charger sensor; do
 	git push fork --delete submit/7.1.3/$cat   # once its LKML business is done
 done
 git push fork --delete integration/7.1.3

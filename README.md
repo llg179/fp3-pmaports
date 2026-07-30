@@ -56,7 +56,7 @@ from, where there is going to be one. There are six:
 | `voice` | call audio, by routing the voice mixers over SLIMbus | yes |
 | `camera` | the Sony IMX363 rear sensor | yes |
 | `charger` | the PMI632 charger via `qcom_smbx`: the battery thermistor, hardware JEITA, thermal mitigation and a device-tree-driven charge current ([`docs/charger/`](docs/charger/README.md)) | yes |
-| `sensor` | proximity, ambient light and the IMU, over the SSC's QMI Sensor Manager | not yet |
+| `sensor` | proximity, ambient light and the IMU, over the SSC's QMI Sensor Manager | **one patch of twelve** — the imported base cannot carry a DCO and its author's own series is in flight ([why](docs/sensors/README.md#why-the-submit-series-is-one-patch)) |
 | `debug` | the bring-up safety net: the SoC watchdog started at probe, so a hung boot resets instead of waiting for hands ([`docs/debug/`](docs/debug/README.md)) | never — it is deliberately not upstream material |
 
 Reading it: "what runs on the phone" is always `integration/<pkgver>`; "what
@@ -65,11 +65,22 @@ the only thing that changes.
 
 A `wip/<base>/<category>-debug` branch is something else again: an ephemeral
 offshoot for one investigation, not a category, and not cherry-picked anywhere.
+It is deleted when the investigation ends — and if any of its commits are worth
+keeping reachable, tagged first, the way `archive/cx-turbo-disproven` keeps the
+disproven CX-turbo experiment after `wip/7.1.3/audio-debug` was removed on
+2026-07-30.
 
 **The category rule (version-free):** a change lands on `wip/X.Y.Z/<category>`
 **and** is cherry-picked onto `integration/X.Y.Z` — the two never diverge,
 integration is only ever the sum of the `wip` branches. `submit/X.Y.Z/<category>`
 is regenerated from `wip` when the base is done; it is not edited by hand.
+
+☠️ *"Not edited by hand"* is the part that slips. Both the charger and the audio
+series picked up `checkpatch --strict` fixes directly on their `submit` branch,
+which left `wip` behind — so regenerating, which is how a submit branch is
+*supposed* to be produced, would have silently dropped them. Both were carried
+back on 2026-07-30, and the check is one command: `git diff wip/<base>/<cat>
+submit/<base>/<cat>` must be empty.
 
 The two-base worked example, how `wip` and `submit` diverge on a messy bump, and
 why `integration` is versioned at all are in
@@ -115,17 +126,24 @@ is, what we added and what that was derived from, and what genuinely did not
 exist before — the same treatment
 [`docs/device_tree/README.md`](docs/device_tree/README.md) gives the `.dts`.
 
-In short. Audio, camera and charger are ten files of other people's drivers with
-holes filled in: the WCD9335 codec and the `apq8016_sbc` machine driver
-(Srinivas Kandagatla), the Q6 voice DAI (Stephan Gerhold, Vincent Knecht, Otto
-Pflüger — not in Linus' tree) and `q6afe` (Kandagatla), the SMB2 charger driver
-(Casey Connolly), the PMIC ADC5 driver (Siddartha Mohanadoss), plus one new
-camera driver structured on Intel's IMX3xx drivers. The sensor stack is the
-other shape: Yassine Oudjana's QRTR-bus and Sensor Manager series, **carried
-verbatim** so the authorship survives, with three new drivers and four fixes on
-top — that split is in
-[`docs/sensors/README.md`](docs/sensors/README.md#provenance). **Everything this
-port adds on top was developed with the assistance of
+In short. Audio and charger are eleven files of other people's drivers with holes
+filled in: the WCD9335 codec and the `apq8016_sbc` machine driver (Srinivas
+Kandagatla), the Q6 voice DAI (Stephan Gerhold, Vincent Knecht, Otto Pflüger —
+not in Linus' tree) and `q6afe` (Kandagatla), the SMB2 charger driver and its
+binding (Casey Connolly), and the PMIC ADC5 driver (Siddartha Mohanadoss).
+**The camera and the sensors are imports**, and that is the more delicate case:
+the IMX363 driver comes from `panpanpanpan/linux:imx363wip`, reverse-engineered
+there against a Pixel-3a-family sensor, and the sensor stack is Yassine
+Oudjana's QRTR-bus and Sensor Manager series, **carried verbatim** so the
+authorship survives. On top of the sensor import are three new drivers and four
+fixes; on top of the camera import, the FP3 power sequence and I²C bring-up and
+nothing else. Both splits are spelled out per file —
+[`docs/kernel/README.md`](docs/kernel/README.md#provenance) and
+[`docs/sensors/README.md`](docs/sensors/README.md#provenance). ☠️ This page and
+the kernel page both **described the camera driver as substantially ours until
+2026-07-30**, and the commit message on `submit/7.1.3/camera` still does; that is
+the first thing to fix before the series goes anywhere.
+**Everything this port adds on top was developed with the assistance of
 [Claude Code](https://www.anthropic.com/claude-code)**, Anthropic's generative-AI
 coding agent.
 
@@ -184,7 +202,7 @@ arrangement obeys — playback, the microphones, headset detection and call audi
 The board `.dtb` comes from five files; we touch **two**
 (`sdm632-fairphone-fp3.dts`, `pmi632.dtsi`, +423/−4 lines, most of it the
 integrated DT commit
-[`ca289613`](https://github.com/llg179/linux/commit/ca2896133002d44daee935ac45a749dab641ef45)),
+[`ca289613`](https://github.com/llg179/linux/commit/6749bae07da1)),
 and 17 of the 20 upstream commits in the board file are in Linus' tree — the
 SoC-level `msm8953.dtsi` much less so, which constrains what a
 `submit/<base>/*` series may assume.

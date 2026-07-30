@@ -67,6 +67,13 @@ the bootloader did not, and sets it on the FP3. The register address
 (`0xb017000`) and the 30 s bark come from Fairphone's own downstream device
 tree. `CONFIG_WATCHDOG_OPEN_TIMEOUT=300` then covers the whole boot.
 
+The property is undocumented, so `dtbs_check` reports it —
+`watchdog@b017000 (qcom,kpss-wdt): Unevaluated properties are not allowed
+('qcom,start-at-probe' was unexpected)`. That is expected and stays: this
+category has no `submit` branch and never will, and the one commit in it mixes
+`.dts` with `.c`, which upstream would not take either. It is the only error this
+tree adds to `dtbs_check` that nobody intends to fix.
+
 Confirmation that it took effect, at 0.18 s:
 
 ```

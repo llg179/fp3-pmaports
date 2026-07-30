@@ -15,7 +15,7 @@ here.
 |---|---|
 | [`audio/`](audio/README.md) | how sound gets in and out: the hardware chain, the layers, the two paths (media and call), and the rules the arrangement obeys |
 | [`device_tree/`](device_tree/README.md) | which `.dts`/`.dtsi` files the board is built from, what our one commit adds and where every value came from — with the trees themselves checked in, ours and both downstream references |
-| [`kernel/`](kernel/README.md) | the ten C files we change: whose driver each one is, what we added on top and what genuinely did not exist before |
+| [`kernel/`](kernel/README.md) | the eleven files we change: whose driver each one is, what we added on top and what genuinely did not exist before — plus what every checker says about the submit series |
 | [`charger/`](charger/README.md) | the PMI632 charger: what makes it charge, the JEITA and thermal guards that let it charge harder, and why the ceiling is the USB port rather than the battery |
 | [`sensors/`](sensors/README.md) | the proximity / ambient-light / IMU bring-up, which runs through the SSC — working, with calibration left |
 | [`debug/`](debug/README.md) | the bring-up safety net: the watchdog started at probe, why there is no ramoops, and where the debugging *method* lives |
