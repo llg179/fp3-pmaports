@@ -18,13 +18,30 @@ here.
 | [`kernel/`](kernel/README.md) | the eleven files we change: whose driver each one is, what we added on top and what genuinely did not exist before — plus what every checker says about the submit series |
 | [`charger/`](charger/README.md) | the PMI632 charger: what makes it charge, the JEITA and thermal guards that let it charge harder, and why the ceiling is the USB port rather than the battery |
 | [`sensors/`](sensors/README.md) | the proximity / ambient-light / IMU bring-up, which runs through the SSC — working, with calibration left |
-| [`debug/`](debug/README.md) | the bring-up safety net: the watchdog started at probe, why there is no ramoops, and where the debugging *method* lives |
+| [`debug/`](debug/README.md) | the bring-up safety net: the watchdog started at probe, why there is no ramoops, and where the debugging *method* lives — with [`debug/create_debug.md`](debug/create_debug.md), the step-by-step for building that safety net onto any branch from scratch |
 
 ## What is still open
 
-[`TODO.md`](TODO.md) — the known-broken and deliberately-unfinished list: the
-notification LED that blinks forever after a missed call, the parked camera
-flash node, and pointers to the items written up on the pages below.
+Two lists, on different axes, and it is worth knowing which one you want:
+
+* [`TODO.md`](TODO.md) — **the authoritative one**, organised by item: what was
+  measured, what is parked and why, plus the settled questions kept as a record
+  so nobody re-investigates them. Items already written up on a subsystem page
+  are linked rather than repeated.
+* [`FP3-TODO.md`](FP3-TODO.md) — the same ground organised **by branch**, and a
+  byte-identical copy of the file that ships at the root of the kernel fork on
+  `debug-int/<base>`. It exists for someone who arrives at
+  [`llg179/linux`](https://github.com/llg179/linux) and does not know this
+  repository exists, so it flattens back in what `TODO.md` links out, and adds
+  what only makes sense there: where the work may be sent at all, which series
+  applies to which maintainer tree, and the `vendor/*` / `archive/*` namespaces.
+  When the two disagree, `TODO.md` wins.
+
+Keeping the copy honest is one command:
+
+```sh
+git show fork/debug-int/7.1.3:FP3-TODO.md | diff - docs/FP3-TODO.md && echo in-sync
+```
 
 ## How to work on it
 

@@ -41,7 +41,9 @@ Building and deploying *this* package is a different question, and it is in
 
 The board side lives in its own `sdm632-fairphone-fp3-debug.dtsi` so the layer
 can be replayed onto any branch with one conflict-free command — see
-[the branch model](../../README.md#the-branch-model).
+[the branch model](../../README.md#the-branch-model). If the debug branch is not
+available at all, [`create_debug.md`](create_debug.md) rebuilds the safety net
+from scratch, step by step, from the payloads stored in [`files/`](files/).
 
 Two commits on
 [`wip/<base>/debug`](https://github.com/llg179/linux/tree/wip/7.1.3/debug): the
