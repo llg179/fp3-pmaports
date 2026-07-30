@@ -400,8 +400,9 @@ What each of the remaining errors needs is listed in
 ## Where each change is headed
 
 Per the [branch model](../../README.md#the-branch-model), each of these lives on
-a `wip/<base>/<category>` branch, is cherry-picked onto `integration/<base>`, and
-is distilled into `submit/<base>/<category>` for the LKML. The device-tree half
+a `wip/<base>/<category>` branch, is cherry-picked onto `integration/<base>` — or
+onto `debug-int/<base>`, if the category is `debug` — and is distilled into
+`submit/<base>/<category>` for the LKML. The device-tree half
 of the same work is documented in
 [`../device_tree/README.md`](../device_tree/README.md).
 

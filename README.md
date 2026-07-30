@@ -38,14 +38,23 @@ Bumping `pkgver` is the single edit that moves the whole thing to a new kernel.
 
 ## The branch model
 
-For a base `X.Y.Z` there are three layers, each base-relative:
+For a base `X.Y.Z` there are four layers, each base-relative:
 
 | branch | layer | contents |
 |---|---|---|
 | `X.Y.Z/main` | base | the upstream `msm8953-mainline` release; not ours to rename, we just follow the newest |
 | `wip/X.Y.Z/<category>` | work | the category's commits rebased onto the base, **plus the bump fixes** — messy, evolving history |
-| `integration/X.Y.Z` | build | the cherry-pick union of the `wip/X.Y.Z/*` branches; **this is what the package builds**, and it is versioned so the last working `integration/<prev>` survives while the new base is still being fixed |
+| `integration/X.Y.Z` | build | the cherry-pick union of the **upstream-bound** `wip/X.Y.Z/*` branches — audio, voice, camera, charger, sensor. Versioned so the last working `integration/<prev>` survives while the new base is still being fixed |
+| `debug-int/X.Y.Z` | build | `integration/X.Y.Z` plus the `debug` layer; **this is what the package builds** |
 | `submit/X.Y.Z/<category>` | upstream | the **minimal** series distilled from `wip/X.Y.Z/<category>` — created only once everything works, ready to post to the LKML |
+
+The last two are split for one reason each. `integration` stays free of the debug
+layer so that it remains a faithful preview of what the `submit` branches carry —
+it is the branch you compare against when you want to know whether the port and
+the proposed series still say the same thing. `debug-int` is what gets flashed,
+because the safety net has to be on the phone: without the watchdog running from
+probe, a hang before userspace opens `/dev/watchdog` leaves a device that only a
+physical button press recovers, and this one is usually not at arm's reach.
 
 A category is one subsystem's worth of work — the unit a `submit` series is cut
 from, where there is going to be one. There are six:
@@ -57,11 +66,12 @@ from, where there is going to be one. There are six:
 | `camera` | the Sony IMX363 rear sensor | yes |
 | `charger` | the PMI632 charger via `qcom_smbx`: the battery thermistor, hardware JEITA, thermal mitigation and a device-tree-driven charge current ([`docs/charger/`](docs/charger/README.md)) | yes |
 | `sensor` | proximity, ambient light and the IMU, over the SSC's QMI Sensor Manager | **one patch of twelve** — the imported base cannot carry a DCO and its author's own series is in flight ([why](docs/sensors/README.md#why-the-submit-series-is-one-patch)) |
-| `debug` | the bring-up safety net: the SoC watchdog started at probe, so a hung boot resets instead of waiting for hands ([`docs/debug/`](docs/debug/README.md)) | never — it is deliberately not upstream material |
+| `debug` | the bring-up safety net: the SoC watchdog started at probe, so a hung boot resets instead of waiting for hands ([`docs/debug/`](docs/debug/README.md)), and `FP3-TODO.md`, the kernel-side index of what is still open | never — it is deliberately not upstream material, and its twin goes to `debug-int/<base>` rather than to `integration/<base>` |
 
-Reading it: "what runs on the phone" is always `integration/<pkgver>`; "what
-goes to the kernel" is always `submit/<pkgver>/<category>`; the base version is
-the only thing that changes.
+Reading it: "what runs on the phone" is always `debug-int/<pkgver>`; "what the
+series will look like" is always `integration/<pkgver>`; "what goes to the
+kernel" is always `submit/<pkgver>/<category>`; the base version is the only
+thing that changes.
 
 A `wip/<base>/<category>-debug` branch is something else again: an ephemeral
 offshoot for one investigation, not a category, and not cherry-picked anywhere.
@@ -84,9 +94,11 @@ Two more namespaces exist on the kernel fork and neither is a base for anything:
   more.
 * **`archive/*`** tags — points in this port's own history kept reachable after a
   rewrite, either because a claim they contain was disproven or because something
-  still points at them. `archive/integration-7.1.3-pre-camera-provenance` is the
-  latter: the package pins a `_commit` that would otherwise have become
-  un-fetchable when `integration/7.1.3` was rebuilt.
+  still points at them. `archive/integration-7.1.3-pre-camera-provenance` and
+  `archive/integration-7.1.3-pre-debug-split` are the latter: each is a tip that
+  an older `_commit` is only reachable through, and without them the package's
+  pinned tarball would have become un-fetchable when `integration/7.1.3` was
+  rewritten.
 
 ☠️ **Rewriting a published branch can break the package, silently and later.**
 `linux-fp3/APKBUILD` fetches a GitHub tarball of an exact `_commit`, and GitHub
@@ -100,9 +112,11 @@ curl -sI -o /dev/null -w '%{http_code}\n' \
 ```
 
 **The category rule (version-free):** a change lands on `wip/X.Y.Z/<category>`
-**and** is cherry-picked onto `integration/X.Y.Z` — the two never diverge,
-integration is only ever the sum of the `wip` branches. `submit/X.Y.Z/<category>`
-is regenerated from `wip` when the base is done; it is not edited by hand.
+**and** is cherry-picked onto its integration branch — `integration/X.Y.Z` for the
+five upstream-bound categories, `debug-int/X.Y.Z` for `debug`. The two never
+diverge; each integration branch is only ever the sum of the `wip` branches that
+feed it. `submit/X.Y.Z/<category>` is regenerated from `wip` when the base is
+done; it is not edited by hand.
 
 ☠️ *"Not edited by hand"* is the part that slips. Both the charger and the audio
 series picked up `checkpatch --strict` fixes directly on their `submit` branch,
@@ -215,8 +229,10 @@ arrangement obeys — playback, the microphones, headset detection and call audi
 ## Related
 
 * <https://github.com/llg179/linux> — the kernel: `wip/<base>/<category>` (work
-  plus bump fixes), `integration/<base>` (what the device runs), and
-  `submit/<base>/<category>` (the minimal series for the LKML)
+  plus bump fixes), `integration/<base>` (the upstream-bound sum),
+  `debug-int/<base>` (what the device runs), and `submit/<base>/<category>` (the
+  minimal series for the LKML). `FP3-TODO.md` on `debug-int/<base>` is the
+  kernel-side index of what is still open
 * <https://github.com/llg179/Claude-skills-Fairphone3> — the method: bring-up
   notes, ground-truth techniques, the guard-railed test loop, and the
   `msm8953-mainline-pr` skill for preparing a `submit` series

@@ -39,12 +39,21 @@ Building and deploying *this* package is a different question, and it is in
 
 ## What the category actually contains
 
-One commit,
-[`b7a6d32e`](https://github.com/llg179/linux/commit/b7a6d32eb9b954ce45d5630ba653b85d081b4ea8),
-on `wip/<base>/debug` and cherry-picked into `integration/<base>` like any other
-category. It will **never** get a `submit` series: a watchdog started at probe is
-bring-up scaffolding, and the reason it is needed is specific to this
-bootloader.
+Two commits on
+[`wip/<base>/debug`](https://github.com/llg179/linux/tree/wip/7.1.3/debug): the
+watchdog started at probe, and
+[`FP3-TODO.md`](https://github.com/llg179/linux/blob/wip/7.1.3/debug/FP3-TODO.md),
+the kernel-side index of what is still open across the whole port. (Deliberately
+no commit hashes here — this category is rebuilt on every base roll, and a hash
+in a sentence is wrong by the next one.)
+
+The category will **never** get a `submit` series: a watchdog started at probe is
+bring-up scaffolding, and the reason it is needed is specific to this bootloader.
+That is also why its cherry-pick twin goes to **`debug-int/<base>`** and not to
+`integration/<base>` — integration stays a faithful preview of what the `submit`
+branches carry, while `debug-int` is what the package builds and the phone runs.
+The split was made on 2026-07-30; before it, both commits sat on integration
+(`archive/integration-7.1.3-pre-debug-split` is that tip).
 
 ### The watchdog, started at probe
 

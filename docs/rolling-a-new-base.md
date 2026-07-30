@@ -128,14 +128,22 @@ for cat in audio voice camera charger sensor debug; do
 	git push fork wip/7.2.0/$cat          # new branch, no force-push
 done
 
-# 2. build integration/7.2.0 = cherry-pick union of the wip branches
+# 2. build integration/7.2.0 = cherry-pick union of the UPSTREAM-BOUND wip
+#    branches only - debug is deliberately not in it
 git checkout -B integration/7.2.0 7.2.0/main
-git cherry-pick <wip/7.2.0/audio range> <voice> <camera> <charger> <sensor> <debug>
+git cherry-pick <wip/7.2.0/audio range> <voice> <camera> <charger> <sensor>
 git push -f fork integration/7.2.0        # derived + disposable, force is fine
 
+# 2b. build debug-int/7.2.0 = integration + the debug layer. This is what the
+#     package builds, so the watchdog safety net is on the phone from boot one -
+#     do not postpone it, an early hang on an untested base is exactly its case.
+git checkout -B debug-int/7.2.0 integration/7.2.0
+git cherry-pick <wip/7.2.0/debug range>
+git push -f fork debug-int/7.2.0
+
 # 3. build the package - the ONLY version edit
-#    linux-fp3/APKBUILD: pkgver=7.2.0, _commit=<integration/7.2.0 HEAD>
-git push fork integration/7.2.0           # push BEFORE checksum (404 trap below)
+#    linux-fp3/APKBUILD: pkgver=7.2.0, _commit=<debug-int/7.2.0 HEAD>
+git push fork debug-int/7.2.0             # push BEFORE checksum (404 trap below)
 ( cd ../fp3-pmaports                      # <- the package, not the kernel
   $EDITOR linux-fp3/APKBUILD              #    pkgver + _commit, nothing else
   cp linux-fp3/APKBUILD ../pmaports/device/testing/linux-fp3/ )
@@ -144,11 +152,12 @@ cd .. && ./pmb checksum linux-fp3         # or pmbootstrap, if it is on PATH
 cd linux-fp3
 
 # 4. deploy KEEPING the last good kernel as a fallback boot entry, then test
-#    (see docs/deploy/); the working integration/7.1.3 build stays bootable
+#    (see docs/deploy/); the working debug-int/7.1.3 build stays bootable
 ( cd ../fp3-pmaports && tests/fp3-selftest )
 
 # 5. fix the bump errors on wip/7.2.0/<category>, cherry-pick each onto
-#    integration/7.2.0 (category rule), rebuild the package, redeploy, retest.
+#    integration/7.2.0 - or onto debug-int/7.2.0 if the category is debug
+#    (category rule), rebuild the package, redeploy, retest.
 #    Loop until fp3-selftest is green.
 
 # 6. everything works -> distil the minimal upstream series

@@ -247,24 +247,30 @@ so it was a no-op.
   device tree's `link-frequencies`, and one of them is commented
   `// NOT SURE HOW TO FIND THIS VALUE` by its author.
 
-## The package lags the integration branch
+## The package moved to `debug-int/7.1.3`
 
-`linux-fp3/APKBUILD` pins `_commit=c8974511d585`. That commit was the 45th of the
-49 on the old `integration/7.1.3` — four behind the tip — and after the camera
-rewrite on 2026-07-30 it is **no longer an ancestor of `integration/7.1.3` at
-all**: it sits on the archived lineage, while the branch is now `ebb0bfdf166a`
-with 50 commits.
+`linux-fp3/APKBUILD` pinned `_commit=c8974511d585` through two rewrites and ended
+up unreachable from any branch: the camera-provenance rebuild on 2026-07-30 moved
+it onto an archived lineage, and the debug split later the same day added a second
+one. It was also, concretely, a kernel **without the watchdog** — the safety net
+commit landed after it.
 
-Nothing compiled changed. The four commits it was behind are whitespace and
-device-tree node names, and the rewrite itself only split one commit in two and
-corrected commit messages — `git diff` between the old and new tips is empty. The
-running `linux-fp3-7.1.3-r22` is still the right kernel and no rebuild was called
-for.
+So on 2026-07-30 the pin moved to `debug-int/7.1.3` and `pkgrel` went to 23. That
+is the branch the package builds from now on: `integration/<base>` plus the debug
+layer, so what runs on the phone always carries the watchdog started at probe.
+`integration/<base>` deliberately does not, because it is the branch that has to
+keep matching the `submit` series.
 
-Two things follow. The next `_commit` bump starts from `ebb0bfdf166a`. And the old
-tip is deliberately kept alive as the tag
-`archive/integration-7.1.3-pre-camera-provenance`, because GitHub serves a
-source tarball only while its commit is reachable from some ref — rewriting
-`integration` without that tag would have left the pinned package un-buildable,
-which is a failure that shows up much later than the change that caused it. The
-one-line check is in [the branch model](../README.md#the-branch-model).
+Still open: **the build and the deploy.** `./pmb checksum` has run and the pin
+resolves, but the package has not been rebuilt or installed, so the phone is still
+running `linux-fp3-7.1.3-r22` — which is to say, still without a watchdog. That is
+one build-and-flash cycle, and until it happens an early hang still needs a thumb
+on the power button.
+
+Both old tips are kept alive as tags —
+`archive/integration-7.1.3-pre-camera-provenance` and
+`archive/integration-7.1.3-pre-debug-split` — because GitHub serves a source
+tarball only while its commit is reachable from some ref. Rewriting `integration`
+without them would have left the pinned package un-buildable, a failure that
+shows up much later than the change that caused it. The one-line check is in
+[the branch model](../README.md#the-branch-model).

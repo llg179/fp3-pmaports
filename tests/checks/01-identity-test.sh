@@ -46,7 +46,7 @@ if [ -f "$commit_file" ]; then
 	fi
 else
 	say FAIL "no $commit_file - this package predates the commit stamp, so the"
-	say FAIL "  running kernel cannot be tied to an integration/<base> commit"
+	say FAIL "  running kernel cannot be tied to a debug-int/<base> commit"
 	fail=1
 fi
 

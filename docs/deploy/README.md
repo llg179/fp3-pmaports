@@ -32,7 +32,7 @@ The source tarball is ~250 MB straight from GitHub, so the first fetch takes a
 minute or two. A warm ccache rebuild is around four minutes; a new `_commit`
 means a new source directory and therefore a cold ccache, which is 20–35.
 
-⚠️ **Push `integration/<base>` before you bump `_commit`.** The package fetches
+⚠️ **Push `debug-int/<base>` before you bump `_commit`.** The package fetches
 the tarball from GitHub, so a commit that only exists locally gives a 404 during
 `./pmb checksum`. If you skip the checksum step, the build fails one step
 later with the far less helpful
