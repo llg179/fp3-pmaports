@@ -285,19 +285,16 @@ a row hand the boot to the other slot.
 
 ---
 
-## 4. Optional: carry `FP3-TODO.md` too
+## 4. Do **not** copy `FP3-TODO.md` here
 
-The debug layer normally holds a second commit, the kernel-side index of what is
-still open across the port. It is a single new file at the tree root, so it
-conflicts with nothing:
-
-```sh
-cp ../fp3-pmaports/docs/FP3-TODO.md FP3-TODO.md
-git add FP3-TODO.md && git commit
-```
-
-Skip it for a short-lived experiment; include it on anything that will be pushed,
-so a visitor to that branch can see what is unfinished.
+This procedure builds the safety net and nothing else. `FP3-TODO.md` is the
+port-wide index of open items; it already exists in two places that are kept
+byte-identical — [`../FP3-TODO.md`](../FP3-TODO.md) in this repository and the
+tree root on the canonical `wip/<base>/debug` and `debug-int/<base>` — and a
+third copy on a branch built from this page would be a stale snapshot the moment
+either of those moves. It is also not part of the watchdog change: nothing in the
+safety net reads it, and leaving it out keeps this commit reviewable as one
+thing.
 
 ---
 
