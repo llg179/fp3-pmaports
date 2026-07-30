@@ -52,14 +52,15 @@ drift. Every other category needs its `wip` branch because it carries evolving
 work against a moving base; this one carries a fixed, additive change that
 `git am` replays anywhere.
 
-So the layer lives in two places, both of which are checked:
+So the layer lives in two places, both of which are checked: **one commit** on
 [`debug-int/<base>`](https://github.com/llg179/linux/tree/debug-int/7.1.3) in the
-kernel fork — the watchdog started at probe, plus
-[`FP3-TODO.md`](https://github.com/llg179/linux/blob/debug-int/7.1.3/FP3-TODO.md),
-the kernel-side index of what is still open across the whole port — and
-[`files/`](files/) here, from which it can be rebuilt on a branch that has
-neither. (Deliberately no commit hashes: this layer is replayed on every base
-roll, and a hash in a sentence is wrong by the next one.)
+kernel fork, and [`files/`](files/) here, from which it can be rebuilt on a
+branch that has neither. (Deliberately no commit hashes: this layer is replayed
+on every base roll, and a hash in a sentence is wrong by the next one.)
+
+It is one commit and not two because `FP3-TODO.md` was dropped from the fork on
+2026-07-30 — the kernel tree carries kernel source, and the open-item lists live
+in [`../README.md`](../README.md#what-is-still-open).
 
 The category will **never** get a `submit` series: a watchdog started at probe is
 bring-up scaffolding, and the reason it is needed is specific to this bootloader.

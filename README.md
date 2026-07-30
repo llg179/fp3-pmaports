@@ -84,7 +84,7 @@ from, where there is going to be one. There are six:
 | `camera` | the Sony IMX363 rear sensor | yes |
 | `charger` | the PMI632 charger via `qcom_smbx`: the battery thermistor, hardware JEITA, thermal mitigation and a device-tree-driven charge current ([`docs/charger/`](docs/charger/README.md)) | yes |
 | `sensor` | proximity, ambient light and the IMU, over the SSC's QMI Sensor Manager | **one patch of twelve** — the imported base cannot carry a DCO and its author's own series is in flight ([why](docs/sensors/README.md#why-the-submit-series-is-one-patch)) |
-| `debug` | the bring-up safety net: the SoC watchdog started at probe, so a hung boot resets instead of waiting for hands ([`docs/debug/`](docs/debug/README.md)), and `FP3-TODO.md`, the kernel-side index of what is still open | never — deliberately not upstream material. **The only category with no `wip` branch:** it lives directly on `debug-int/<base>`, and is reproducible from [`docs/debug/files/`](docs/debug/files/) without any branch at all |
+| `debug` | the bring-up safety net and nothing else: the SoC watchdog started at probe, so a hung boot resets instead of waiting for hands ([`docs/debug/`](docs/debug/README.md)) | never — deliberately not upstream material. **The only category with no `wip` branch:** one commit on `debug-int/<base>`, reproducible from [`docs/debug/files/`](docs/debug/files/) without any branch at all |
 
 Reading it: "what runs on the phone" is always `debug-int/<pkgver>`; "what the
 series will look like" is always `integration/<pkgver>`; "what goes to the
@@ -251,8 +251,8 @@ arrangement obeys — playback, the microphones, headset detection and call audi
 * <https://github.com/llg179/linux> — the kernel: `wip/<base>/<category>` (work
   plus bump fixes), `integration/<base>` (the upstream-bound sum),
   `debug-int/<base>` (what the device runs), and `submit/<base>/<category>` (the
-  minimal series for the LKML). `FP3-TODO.md` on `debug-int/<base>` is the
-  kernel-side index of what is still open
+  minimal series for the LKML). It carries kernel source only — the open-item
+  lists live here, in [`docs/`](docs/README.md#what-is-still-open)
 * <https://github.com/llg179/Claude-skills-Fairphone3> — the method: bring-up
   notes, ground-truth techniques, the guard-railed test loop, and the
   `msm8953-mainline-pr` skill for preparing a `submit` series

@@ -74,8 +74,9 @@ git am ../fp3-pmaports/docs/debug/files/0001-watchdog-qcom-optionally-start-the-
 Executed on 2026-07-30 against `integration/7.1.3`, which carries no debug layer:
 `git am` returned 0, the commit touched exactly the three expected files
 (+54 / +1 / +18), the DTB carried all three markers, and
-`git diff HEAD debug-int/7.1.3` excluding `FP3-TODO.md` was **empty** — the route
-reproduces the shipped layer exactly. Route B below is written from the same
+`git diff HEAD debug-int/7.1.3` was **empty** apart from `FP3-TODO.md`, which the
+branch still carried then and no longer does — the route reproduces the shipped
+layer exactly. Route B below is written from the same
 change but has not been run end to end as a separate exercise.
 
 **If it fails**, undo cleanly and go to Route B:
@@ -285,13 +286,12 @@ a row hand the boot to the other slot.
 ## 4. Do **not** copy `FP3-TODO.md` here
 
 This procedure builds the safety net and nothing else. `FP3-TODO.md` is the
-port-wide index of open items; it already exists in two places that are kept
-byte-identical — [`../FP3-TODO.md`](../FP3-TODO.md) in this repository and the
-tree root on `debug-int/<base>` — and a
-third copy on a branch built from this page would be a stale snapshot the moment
-either of those moves. It is also not part of the watchdog change: nothing in the
-safety net reads it, and leaving it out keeps this commit reviewable as one
-thing.
+port-wide index of open items and it lives in this repository, at
+[`../FP3-TODO.md`](../FP3-TODO.md). It used to ship on the fork as well and was
+dropped on 2026-07-30, for the same reason it should not go on your branch
+either: the kernel tree carries kernel source, a second copy is a stale snapshot
+the moment the first one moves, and nothing in the safety net reads it. Leaving
+it out also keeps this commit reviewable as one thing.
 
 ---
 

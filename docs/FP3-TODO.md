@@ -1,18 +1,23 @@
 # Fairphone 3 (sdm632) mainline port — what is still open
 
-This file lives on `debug-int/7.1.3`, the one branch here that is **not**
-upstream-bound, which is why a project TODO can sit in the kernel tree at all: it
-must never appear in a `submit/7.1.3/*` series, and it is deliberately **not** on
-`integration/7.1.3`. Do not carry it onto any other branch.
+This is the **by-branch view** of what is still open: which branch owns which
+item, and whether it can be sent anywhere at all. The by-item view, with the
+measurements and the reasoning behind each entry, is [`TODO.md`](TODO.md), and
+that one is authoritative — this file only says *what is open, on which branch,
+and where to read about it*. When the two disagree, `TODO.md` wins.
 
-That split is the point of `debug-int/<base>`:
+Until 2026-07-30 this file also shipped at the root of the kernel fork, on
+`debug-int/<base>`. It was dropped there: the kernel tree carries kernel source,
+and one file maintained in two repositories is one too many to keep honest.
+
+The branch shape it describes:
 
 ```
 integration/<base>   audio + voice + camera + charger + sensor
                      the pure cherry-pick sum of the upstream-bound categories,
                      so it stays a faithful mirror of what submit/* will carry
       |
-      +-> debug-int/<base>   + the debug layer (the watchdog safety net, this file)
+      +-> debug-int/<base>   + the debug layer: one commit, the watchdog safety net
                              <- and this is the branch the linux-fp3 package builds
 ```
 
@@ -20,12 +25,6 @@ The package builds `debug-int/<base>` on purpose. The safety net has to be on th
 phone — without the watchdog running from probe, a hang before userspace opens
 `/dev/watchdog` leaves a device that has to be switched off by hand, and this one
 is often not within arm's reach.
-
-It is a **kernel-side index**. The reasoning, the measurements and the register
-dumps behind every item live in
-[`llg179/fp3-pmaports/docs/`](https://github.com/llg179/fp3-pmaports/tree/main/docs),
-and that is the authoritative copy — this file only says *what is open, on which
-branch, and where to read about it*. When the two disagree, the docs win.
 
 The branch layout itself (`wip/<base>/<category>` → `integration/<base>` →
 `submit/<base>/<category>`, and the rule that a change must land on both its wip
@@ -226,16 +225,17 @@ One commit. Working on the device; see item 9 for why it is not sendable.
 
 ## The `debug` layer — bring-up aids, never upstream-bound
 
-Starting the watchdog at probe, and this file. Nothing here gets a `submit/`
-series, ever, and it stays off `integration/7.1.3`.
+One commit: the watchdog started at probe. Nothing here gets a `submit/` series,
+ever, and it stays off `integration/7.1.3`.
 
 **It is the only category with no `wip` branch.** `wip/7.1.3/debug` was retired on
 2026-07-30 (kept as the tag `archive/wip-7.1.3-debug-final`) once the layer became
 reproducible without it: every other category needs a `wip` branch because it
 carries evolving work against a moving base, while this one is a fixed, additive
-change that replays anywhere. It now lives here plus in
-`fp3-pmaports/docs/debug/files/`, and those payloads are half of the storage
-rather than a copy — refresh them in the same commit that changes the layer.
+change that replays anywhere. It now lives as that one commit on
+`debug-int/<base>` plus the payloads in `fp3-pmaports/docs/debug/files/`, and
+those payloads are half of the storage rather than a copy — refresh them in the
+same commit that changes the layer.
 
 The watchdog commit is the one place in the tree where mixing `.dts` with `.c` is
 allowed, and it uses that licence: it adds an undocumented `qcom,start-at-probe`

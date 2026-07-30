@@ -28,20 +28,17 @@ Two lists, on different axes, and it is worth knowing which one you want:
   measured, what is parked and why, plus the settled questions kept as a record
   so nobody re-investigates them. Items already written up on a subsystem page
   are linked rather than repeated.
-* [`FP3-TODO.md`](FP3-TODO.md) — the same ground organised **by branch**, and a
-  byte-identical copy of the file that ships at the root of the kernel fork on
-  `debug-int/<base>`. It exists for someone who arrives at
-  [`llg179/linux`](https://github.com/llg179/linux) and does not know this
-  repository exists, so it flattens back in what `TODO.md` links out, and adds
-  what only makes sense there: where the work may be sent at all, which series
+* [`FP3-TODO.md`](FP3-TODO.md) — the same ground organised **by branch**: which
+  branch owns which open item, where the work may be sent at all, which series
   applies to which maintainer tree, and the `vendor/*` / `archive/*` namespaces.
-  When the two disagree, `TODO.md` wins.
+  It flattens back in what `TODO.md` links out, so read it when the question is
+  *"what is the state of this branch"* rather than *"what is left to do"*. When
+  the two disagree, `TODO.md` wins.
 
-Keeping the copy honest is one command:
-
-```sh
-git show fork/debug-int/7.1.3:FP3-TODO.md | diff - docs/FP3-TODO.md && echo in-sync
-```
+Both live here and nowhere else. Until 2026-07-30 `FP3-TODO.md` also shipped at
+the root of the kernel fork, as a byte-identical copy kept in sync by hand; it
+was dropped there because the kernel tree should carry kernel source, and one
+file in two repositories is one file too many to keep honest.
 
 ## How to work on it
 
