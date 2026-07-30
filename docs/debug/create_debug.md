@@ -322,8 +322,21 @@ page instead of this procedure.
 | [`files/0001-watchdog-qcom-optionally-start-the-watchdog-at-probe.patch`](files/0001-watchdog-qcom-optionally-start-the-watchdog-at-probe.patch) | the whole change as one `git am`-able patch (Route A) |
 | [`files/sdm632-fairphone-fp3-debug.dtsi`](files/sdm632-fairphone-fp3-debug.dtsi) | the board file verbatim, for Route B |
 
-Both are extracted from the fork rather than retyped. To refresh them after the
-layer changes:
+**`sdm632-fairphone-fp3.dts` is deliberately not stored here**, and that is not
+an oversight. Our change to it is a single `#include` line, which Route A carries
+inside the patch and Route B shows as a four-line diff — a full copy would add
+nothing. It would also be dangerous: that file is where *every* category appends
+its nodes (audio +255, camera +50, charger +138, debug +1), so any stored copy is
+a snapshot of one particular branch, and anyone who copied it in the way the
+`.dtsi` is copied in would silently wipe out whatever categories the target
+carries. The rule this follows: **store new files verbatim, express modifications
+as diffs.** The `.dtsi` is safe to store precisely because it exists on no other
+branch. A read-only reference copy of the board file, as it stands on
+`integration/<base>`, is kept for a different purpose in
+[`../device_tree/after_update/`](../device_tree/after_update/).
+
+Both stored files are extracted from the fork rather than retyped. To refresh
+them after the layer changes:
 
 ```sh
 git show wip/<base>/debug~1:arch/arm64/boot/dts/qcom/sdm632-fairphone-fp3-debug.dtsi \
