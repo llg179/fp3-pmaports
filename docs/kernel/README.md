@@ -33,7 +33,7 @@ that produced them are.
 | `sound/soc/qcom/qdsp6/q6afe.c` | +30 | the AFE driver — **Srinivas Kandagatla**, [`7fa2d70f9766`](https://github.com/torvalds/linux/commit/7fa2d70f976657111a5ea4f3d16a738ddaa10c4f) *"ASoC: qdsp6: q6afe: Add q6afe driver"*, 2018-05-18 |
 | `drivers/power/supply/qcom_smbx.c` | +802 / −34 | the SMB2 charger driver — **Casey Connolly** (Linaro); the file under this name since [`5ec53bcc7fce`](https://github.com/torvalds/linux/commit/5ec53bcc7fce6801977a0c125fb726d7b0e9102c), 2025-06-19 |
 | `drivers/iio/adc/qcom-spmi-adc5.c` | +2 | the PMIC ADC5 driver — **Siddartha Mohanadoss**, [`e13d757279bb`](https://github.com/torvalds/linux/commit/e13d757279bb2c2fa32e5b578dd1cbcac4d51e21) *"iio: adc: Add QCOM SPMI PMIC5 ADC driver"*, 2018-08-02 |
-| `drivers/media/i2c/imx363.c` (+ `Kconfig`, `Makefile`) | +1568 | **not ours** — taken from `panpanpanpan/linux`, branch `imx363wip`, where it was reverse-engineered for a Pixel-3a-family sensor; that file in turn keeps `Copyright (C) 2018 Intel Corporation` from the Intel IMX3xx driver it is structured on. See [Camera](#camera-imx363c) |
+| `drivers/media/i2c/imx363.c` (+ `Kconfig`, `Makefile`) | +1514 imported, **+68 / −21 ours** | **not ours** — [`5130bc702ea2`](https://gitlab.com/sdm670-mainline/linux/-/commit/5130bc702ea2efc53f6b652b4282067ee9ae7fd2) by **Joel Selvaraj**, 2024-08-15, on `sdm670-mainline/linux`, reverse-engineered there against a Pixel-3a-family sensor; that file in turn keeps `Copyright (C) 2018 Intel Corporation` from the Intel IMX3xx driver it is structured on. See [Camera](#camera-imx363c) |
 | `Documentation/devicetree/bindings/power/supply/qcom,pmi8998-charger.yaml` | +73 / −1 | the SMB2 charger binding — **Casey Connolly**, added with the driver; extended here for the PMI632 |
 
 `drivers/slimbus/qcom-ngd-ctrl.c` and `drivers/remoteproc/qcom_q6v5_pas.c` used
@@ -53,7 +53,10 @@ extended, and what did not exist before.
 modified here, so it is an import first and an extension second — the same shape
 as the sensor stack, which carries Yassine Oudjana's SMGR series. This was
 **recorded wrongly on this page until 2026-07-30**, where it said the driver was
-"entirely ours in substance"; see [Camera](#camera-imx363c).
+"entirely ours in substance"; see [Camera](#camera-imx363c). Since 2026-07-30 the
+branch says so too: the import is [its own
+commit](https://github.com/llg179/linux/commit/cda174905a83) authored by Joel
+Selvaraj, and our change sits on top of it.
 
 Every other file above is an in-place change to code that was already in the
 base.
@@ -69,7 +72,7 @@ base.
 | Q6 AFE | `q6afe.c` | Kandagatla, [`7fa2d70f9766`](https://github.com/torvalds/linux/commit/7fa2d70f976657111a5ea4f3d16a738ddaa10c4f) | `ADSP_EALREADY` on `AFE_PORT_CMD_DEVICE_START` treated as success |
 | SMB2 charger | `qcom_smbx.c` | Casey Connolly, [`5ec53bcc7fce`](https://github.com/torvalds/linux/commit/5ec53bcc7fce6801977a0c125fb726d7b0e9102c) | the SMB5 variant abstraction, PMI632 support, `POWER_SUPPLY_PROP_TEMP` |
 | PMIC ADC5 | `qcom-spmi-adc5.c` | Siddartha Mohanadoss, [`e13d757279bb`](https://github.com/torvalds/linux/commit/e13d757279bb2c2fa32e5b578dd1cbcac4d51e21) | the `BAT_THERM` channel table entry — the scaling curve it points at was already there |
-| IMX363 sensor | `imx363.c` | **`panpanpanpan/linux:imx363wip`** (an sdm670-mainline merge request), reverse-engineered there; structured in turn on an **Intel** IMX3xx driver whose copyright line stays | the FP3 bring-up only: the I²C address, a chip-id retry with a 200 ms power-up delay, `vdig` at 1.175 V, MCLK before reset, and an I²C warm-up in `power_on()`. **The register tables came with the import** |
+| IMX363 sensor | `imx363.c` | **Joel Selvaraj**, [`5130bc702ea2`](https://gitlab.com/sdm670-mainline/linux/-/commit/5130bc702ea2efc53f6b652b4282067ee9ae7fd2) on `sdm670-mainline/linux` (merge request !3), reverse-engineered there; structured in turn on an **Intel** IMX3xx driver whose copyright line stays | +68 / −21: MCLK before reset, a 200 ms boot delay, an I²C warm-up in `power_on()`, `vdig` at 1.175 V. **The register tables came with the import** |
 
 ### New here
 
@@ -134,9 +137,27 @@ itself is FP3-specific and **new**.
 ## Audio: the Q6 DSP side
 
 * [`34f6f8bf16a6`](https://github.com/llg179/linux/commit/34f6f8bf16a6) — `q6voice-dai.c`: wire the VoiceMMode1 / CS-Voice mixers to
-  `SLIMBUS_0_RX/TX`, including the mixer → port output route. **New**, and it
-  goes on top of a driver that is itself not upstream (Gerhold / Knecht /
-  Pflüger, above). Without it a call could only use the MI2S speaker path.
+  `SLIMBUS_0_RX/TX`, including the mixer → port output route. It goes on top of a
+  driver that is itself not upstream (Gerhold / Knecht / Pflüger, above). Without
+  it a call could only use the MI2S speaker path.
+
+  ☠️ **It is not new, and this page called it new until 2026-07-30.** The same
+  routing already existed, line for line — the SLIMbus voice mixers, the
+  `SLIMBUS_0_TX` capture entries and the `"SLIMBUS_0_RX" <- "SLIMBUS_0_RX Voice
+  Mixer"` output edge whose absence we recorded as our own discovery — in
+  **Joel Selvaraj's** *"q6voice-dai: implement all slimbus tx and rx"*
+  (`5a63debde2db`, 2022-10-02), carried on `sdm670-mainline/linux` branch
+  `rdacayan/for-sdm845/q6voice-series`. His version is a superset: SLIMBUS_0
+  through SLIMBUS_6, where ours does SLIMBUS_0 only. The two differ in that scope
+  and in one ASoC rename (`snd_soc_dapm_kcontrol_dapm` →
+  `_to_dapm`) — nothing else. Archived as
+  [`vendor/q6voice-sdm670`](https://github.com/llg179/linux/tree/vendor/q6voice-sdm670).
+
+  The lesson is not about credit — nobody's work was published as ours, the
+  commit was written before the prior art was found. It is that **the same search
+  that found the camera's origin would have found this one**, and it was never
+  run for `voice`. Where a subsystem is out-of-tree, look for who else carries it
+  *before* writing the patch, not after.
 * [`867e40aa8ebd`](https://github.com/llg179/linux/commit/867e40aa8ebd) + [`6f5f64855a18`](https://github.com/llg179/linux/commit/6f5f64855a18) — `q6afe.c`: treat `ADSP_EALREADY` on
   `AFE_PORT_CMD_DEVICE_START` as success. **New**, and not FP3-specific: any two
   front ends sharing one backend hit it. Here a call and a media stream both use
@@ -159,20 +180,37 @@ in [`../audio/bringup/qdsp6ss-framer-poke.md`](../audio/bringup/qdsp6ss-framer-p
 
 ## Camera: `imx363.c`
 
-**This section was wrong until 2026-07-30 and is the reason the camera series is
-not submittable.** It used to say the driver was "the only file here that is
-entirely ours in substance" and that "the register programming was
-reverse-engineered from the sensor as wired on the FP3". Neither is true, and the
-commit message on `submit/7.1.3/camera` still says the same thing.
+**This section stated the opposite of the truth until 2026-07-30.** It used to
+say the driver was "the only file here that is entirely ours in substance" and
+that "the register programming was reverse-engineered from the sensor as wired on
+the FP3". Neither is true. The driver is somebody else's work with a Fairphone 3
+power sequence bolted on, and the series is now shaped that way.
 
-What the evidence says. The file was **downloaded**, not written: this repo's own
-bring-up notes name the source as `panpanpanpan/linux`, branch `imx363wip`, an
-sdm670-mainline merge request carrying a reverse-engineered v4l2-cci driver of
-1514 lines, produced against a Pixel-3a-family sensor. Ours is 1568 lines. That
-file is itself structured on an Intel IMX3xx driver and keeps
+### Where it actually comes from
+
+Retrieved on 2026-07-30, after the earlier searches failed — `panpanpanpan/linux`
+does not exist on GitHub, which is why the "GitHub fetch of that path returns
+nothing" note used to stand in for an answer. The repository is on **GitLab**:
+
+| field | value |
+|---|---|
+| repository | <https://gitlab.com/sdm670-mainline/linux> |
+| commit | `5130bc702ea2efc53f6b652b4282067ee9ae7fd2` |
+| subject | *media: i2c: Add imx363 image sensor driver* |
+| **author** | **Joel Selvaraj `<foss@joelselvaraj.com>`, 2024-08-15** |
+| committer | Richard Acayan, 2024-08-21 |
+| merged via | [merge request !3](https://gitlab.com/sdm670-mainline/linux/-/merge_requests/3), branch `imx363wip`, author Pan Ortiz, merged 2024-08-22 as `beca831729fd` |
+| in turn | a cherry-pick of `d38f36430bd6` |
+
+So even the attribution this page carried for one day — "taken from
+`panpanpanpan`" — named the wrong person: Pan Ortiz opened the merge request and
+wrote its device tree; **the driver is Joel Selvaraj's**. The `imx363wip` branch
+has since been deleted, and the commit had to be fetched by SHA.
+
+The file is structured on the in-tree Intel IMX3xx drivers and keeps
 `Copyright (C) 2018 Intel Corporation` plus the three Intel `MODULE_AUTHOR`
-lines. And the register values are not measurements — the source says so itself,
-in 95 `//` comments including:
+lines. The register values are not measurements, and the source says so itself in
+95 `//` comments, among them:
 
 ```c
 //Magical IMX363 Regs & Values - Found in downstream.
@@ -181,29 +219,73 @@ in 95 `//` comments including:
 636000000ULL, // NOT SURE HOW TO FIND THIS VALUE
 ```
 
-The last one is a link frequency the author could not account for. Related and
-still open: the driver's two modes carry link frequencies that **disagree with
-the DT's `link-frequencies`**, which is the deepest known problem in the camera
-bring-up.
+The last is a link frequency the author could not account for. Related and still
+open: the driver's two modes carry link frequencies that **disagree with the DT's
+`link-frequencies`**, which is the deepest known problem in the camera bring-up.
 
-What actually is ours is the FP3 bring-up on top of that import:
+### The delta, measured
 
-* the I²C address — `0x1a`, not the `0x10` the imported driver assumed. The FP3
-  straps SLASEL high; confirmed by reading `0x0016` and getting `0x0363` at
-  `0x1a`;
-* a chip-id read retry plus a 200 ms power-up delay;
-* `regulator_set_voltage(vdig, 1175000)` — downstream asks for 1.175 V;
-* MCLK before reset in the power sequence;
-* an I²C link warm-up dummy read in `power_on()`, without which the first stream
-  start times out.
+The claim used to be that the size of our change was unknowable without the
+original file. With the original file in hand it is a two-command answer, and
+[`vendor/imx363-sdm670`](https://github.com/llg179/linux/tree/vendor/imx363-sdm670)
+keeps it answerable — an archival snapshot whose tree is byte-identical to the
+source commit's, so nothing depends on GitLab still being there.
 
-**Before this goes anywhere:** the import needs to be its own commit, keeping the
-original author, citing repo, branch, commit, author and date, with the five
-changes above in a follow-up — the split
-[the submission skill requires](../../README.md#ai-assisted-development). The
-exact upstream file has **not** been retrieved (the merge request is on GitLab,
-and a GitHub fetch of that path returns nothing), so **the size of our delta is
-unmeasured**; establishing it is the first step, not an estimate.
+**1514 lines in, 1568 out: 12 hunks, +68 / −21.** About half of that is comment
+typos, whitespace and two tree-wide renames. What is functionally ours is four
+things, all in the power path:
+
+* **MCLK before reset.** INCK must be running and stable before XCLR is released;
+  the import released reset first and the sensor never booted.
+* **A 200 ms boot delay.** The IMX363 only ACKs on I²C ~150 ms after power-up on
+  this board's slow GPIO-switched rails, so the import's ~10 ms wait always
+  expired.
+* **An I²C warm-up loop in `power_on()`.** The first transaction after power-up
+  times out anyway, and `power_on()` runs on every runtime-PM resume, not only at
+  probe — so the timeout is absorbed there instead of being handed to the caller.
+  Without it, streaming register writes time out and CAMSS never receives frames.
+* **`vdig` pinned to 1.175 V.** It is a shared PMIC LDO that otherwise sits at its
+  0.975 V minimum, below what the digital core needs.
+
+Plus `<asm/unaligned.h>` → `<linux/unaligned.h>`, `MODULE_LICENSE("GPL v2")` →
+`"GPL"`, and comment tidying. **The register tables, the mode definitions and the
+control ranges are untouched.**
+
+The I²C address `0x1a` — the FP3 straps SLASEL high, confirmed by reading `0x0363`
+from register `0x0016` — used to be listed here as a driver change. It is not:
+the address appears nowhere in the `.c` file, it is the `reg` property in the
+device tree.
+
+### How the series is shaped now
+
+`submit/7.1.3/camera` is three commits, and `wip/7.1.3/camera` is the same three
+(there is nothing to distil, so they are literally the same commits):
+
+| commit | author | what |
+|---|---|---|
+| [`cda174905a83`](https://github.com/llg179/linux/commit/cda174905a83) | **Joel Selvaraj** | the import, verbatim — file, `Kconfig` entry and `Makefile` line byte-identical to the source |
+| [`942e4db3f425`](https://github.com/llg179/linux/commit/942e4db3f425) | Lajosházi, László Gergely | the four power-path changes above |
+| [`0c7ea33fa5c5`](https://github.com/llg179/linux/commit/0c7ea33fa5c5) | Lajosházi, László Gergely | the device-tree node |
+
+The import commit carries the original `Signed-off-by` chain — Joel Selvaraj,
+panpanpanpan, Richard Acayan — with ours added on the end, which is what
+forwarding somebody else's patch requires. The DCO chain is therefore **intact**;
+the camera was never in the position the sensor series is in, where the imported
+base carries no sign-off at all.
+
+Splitting also localises the checkpatch damage, which is worth seeing:
+
+| commit | `checkpatch --strict` |
+|---|---|
+| import | 4 errors, 17 warnings — all inherited, none introduced here |
+| our delta | 0 errors, 1 warning (one over-long `//` comment we touch for a typo) |
+| device tree | 0 errors, 2 warnings |
+
+As one commit those numbers were indistinguishable from our own sloppiness. The
+17 warnings are the next reviewer's first question and they belong to the
+import — which is an argument for cleaning them in a *third* commit rather than
+quietly folding the cleanup into the import and destroying the byte-identity that
+makes the import checkable.
 
 ## Charger: `qcom_smbx.c`
 
@@ -299,7 +381,7 @@ because the base tree fails it 44 times on its own (`opp-avg-kBps`, `qfprom`,
 | `sensor` | **clean** (1 patch) | — |
 | `voice` | **clean** (1 patch) | — |
 | `audio` | 3 × `ENOTSUPP`, 2 × `slim217` — **both false**, see below | three: the codec node's six `qcom,*` properties; `divclk1` and `wcd-vout-1p8` needing `ranges` under `soc@0`; `wcd-intr-default-state` failing the pinctrl schema |
-| `camera` | undocumented `sony,imx363` ×2, MAINTAINERS, 2 over-long lines, a missing blank line, `printk(KERN_INFO)` ×2 | — |
+| `camera` | 4 errors / 17 warnings on the **import** commit, all inherited; **0 / 1** on our delta, 0 / 2 on the device tree | — |
 | (`debug`) | not submitted by design | `qcom,start-at-probe` — undocumented on purpose |
 
 The two dismissed audio warnings, checked rather than assumed:
@@ -327,6 +409,56 @@ As of 2026-07-30 every `submit` branch has an end state **byte-identical** to it
 `wip` branch, with one deliberate exception: `submit/7.1.3/sensor` carries **one**
 of that category's twelve commits, for the reasons in
 [`../sensors/README.md`](../sensors/README.md#why-the-submit-series-is-one-patch).
-All five branches are based on the `v7.1.3-r0` release, so sending any of them
-still means rebasing first — ASoC onto `sound/for-next`, device trees onto
-mainline.
+`camera` goes further and shares its commits with `wip` outright — after the
+import split there was nothing left to distil.
+
+### Does any of it apply to a maintainer tree?
+
+All five branches are based on `v7.1.3-r0`, which is an msm8953-mainline release
+carrying its own out-of-tree patches — not a tree any maintainer will apply
+against. So on 2026-07-30 each group was **trial-rebased onto the tree it would
+actually be sent to**, in a throwaway worktree: `broonie/for-next` `1523ce38eeb6`
+for ASoC, `sre/linux-power-supply` `for-next` `5584ad5706e5` for the charger
+driver, `torvalds/master` `11028ab62899` for everything else. **Eleven of the
+twenty-one commits apply with no conflict at all.**
+
+| group | target | result |
+|---|---|---|
+| charger driver + binding | `psy/for-next` | **6 / 6 clean** |
+| charger device trees | mainline | **2 / 2 clean** |
+| charger `qcom-spmi-adc5` | mainline | **1 / 1 clean** |
+| sensor | mainline | **1 / 1 clean** |
+| camera device tree | mainline | **1 / 1 clean** |
+| camera driver | mainline | one `Kconfig` conflict, **two lines** — the neighbouring IMX355 entry gained `select V4L2_CCI_I2C` |
+| audio driver | `broonie/for-next` | conflicts on the first patch |
+| audio device tree | mainline | conflicts |
+| voice | `broonie/for-next` | the file does not exist upstream |
+
+**The charger and the sensor series are therefore ready in the strong sense** —
+not merely "the files they touch exist upstream", but "they apply".
+
+The audio conflict is not cosmetic. `qcom,msm8953-qdsp6-sndcard`,
+`msm8953_qdsp6_add_ops` and the `use_ibit_clk` field are **not upstream**; they
+come from two out-of-tree commits in the base (`4e4cfbe89bbe` by Vldly, 2022, and
+`62f07ba624ee` by Alejandro Tafalla, 2023), and our machine-driver patch extends
+exactly those structures. The `&sound_card` label the audio DT patch attaches to
+does not exist in mainline's `msm8953.dtsi` either. Everything our code *calls* —
+`msm8916_qdsp6_startup`/`_shutdown`, the `SLIMBUS_*` DAI IDs — is upstream; it is
+the scaffolding that is missing.
+
+That scaffolding **was posted**: Adam Skladowski's *MSM8953/MSM8976 ASoC support*
+**v3**, 8 patches, 2024-07-31, still in state `new` — never applied.
+
+* series: <https://patchwork.kernel.org/project/alsa-devel/list/?series=875540>
+* cover: `<20240731-msm8953-msm8976-asoc-v3-0-163f23c3a28d@gmail.com>`
+* the parts the FP3 audio series needs: 1/8 (Quinary), 5/8 (the
+  `msm8953-qdsp6-sndcard` binding), 6/8 (msm8953 machine-driver support)
+
+Because it has a cover letter with a message-id, it is a **citable prerequisite**
+— `b4 prep --edit-deps` / a `prerequisite-patch-id:` block, which is how the
+kernel expects an unmerged dependency to be declared. The marker tag
+[`vendor/asoc-msm8953-base`](https://github.com/llg179/linux/releases/tag/vendor%2Fasoc-msm8953-base)
+names the two commits in our base that stand in for it.
+
+The voice series has no such option, and that is written up under
+[the voice path](#audio-the-q6-dsp-side).

@@ -90,7 +90,7 @@ block:
 | block | numbers taken from | shape / binding taken from | what did not exist before |
 |---|---|---|---|
 | **audio** — WCD9335 over SLIMbus | Fairphone's published 4.9 sources ([`downstream/fairphone/3.A.0136/`](downstream/fairphone/3.A.0136/)): `msm8953.dtsi` (SLIMbus BAM `c104000`, NGD `c140000`), `msm8953-audio.dtsi` (the `slim217,1a0` device address, mic-bias voltages, DMIC clock), `msm8953-pinctrl.dtsi` (`cdc_reset`, `wcd_intr`, MCLK muxes) — Qualcomm BSP code as shipped by Fairphone | the existing **mainline** WCD9335 boards (DragonBoard 820c / MSM8996): codec binding and driver by **Srinivas Kandagatla** (`ASoC: wcd9335`, 2019) on his SLIMbus NGD controller (2018); binding conversion **Yassine Oudjana** (2022), node moved to the boards by **Krzysztof Kozlowski** (2023). We follow that shape, *not* downstream's `qcom,tasha-slim-pgd` | **the combination**: mainline had WCD9335 only on MSM8996, never on MSM8953. The NGD/BAM nodes at msm8953 addresses, `divclk1_cdc`, `wcd_vout_1p8`, the three pin-mux nodes, the MBHC button thresholds and the `slim-playback`/`slim-capture` DAI links are written here for the first time |
-| **camera** — Sony IMX363 | Fairphone's `msm8953-camera-sensor-mtp.dtsi`: regulators, CCI wiring, power sequence. The I²C address `0x1a` is **not** from there — the FP3 straps SLASEL high, confirmed by probing the bus | the mainline **camss** graph binding (`port@0` / `csiphy0_ep`); it sits on **Luca Weiss'** groundwork in the board file — [`9e834e768d0b`](https://github.com/torvalds/linux/commit/9e834e768d0b2e9007cd6a5c778d2d8e3674e78f) camera fixed regulators and [`cfc22c2121cb`](https://github.com/torvalds/linux/commit/cfc22c2121cbf8bb75cb9a9993f13c17587ed55e) CCI + EEPROM, both in Linus' tree | the `camera@1a` node and the `&camss` port graph for this board — and the driver under it, which was **taken from `panpanpanpan/linux:imx363wip`**, reverse-engineered there against a Pixel-3a-family sensor — see [`../kernel/README.md`](../kernel/README.md#camera-imx363c) |
+| **camera** — Sony IMX363 | Fairphone's `msm8953-camera-sensor-mtp.dtsi`: regulators, CCI wiring, power sequence. The I²C address `0x1a` is **not** from there — the FP3 straps SLASEL high, confirmed by probing the bus | the mainline **camss** graph binding (`port@0` / `csiphy0_ep`); it sits on **Luca Weiss'** groundwork in the board file — [`9e834e768d0b`](https://github.com/torvalds/linux/commit/9e834e768d0b2e9007cd6a5c778d2d8e3674e78f) camera fixed regulators and [`cfc22c2121cb`](https://github.com/torvalds/linux/commit/cfc22c2121cbf8bb75cb9a9993f13c17587ed55e) CCI + EEPROM, both in Linus' tree | the `camera@1a` node and the `&camss` port graph for this board — and the driver under it, which was **taken from Joel Selvaraj's [`5130bc702ea2`](https://gitlab.com/sdm670-mainline/linux/-/commit/5130bc702ea2efc53f6b652b4282067ee9ae7fd2)** on `sdm670-mainline/linux`, reverse-engineered there against a Pixel-3a-family sensor — see [`../kernel/README.md`](../kernel/README.md#camera-imx363c) |
 | **charger** — PMI632 | the charger node's interrupt numbers and ADC channel assignment from Qualcomm's downstream `pmi632.dtsi` in the same release; the battery's cell parameters and OCV curve from Fairphone's own fuel-gauge profile `qg-batterydata-Kayo-3000mah-Nov4th2019-pmi632` — 3000 mAh, 4.39 V float, the 25 °C column of its `pc-temp-v1` table converted from 100 µV units | mainline `simple-battery` plus the `qcom_smbx` SMB5 binding | the SMB5 charger node in mainline's `pmi632.dtsi` (added disabled, as a PMIC-level description should be) and the board-level `&pmi632_charger` + `fp3_battery` that enable it. The charge current, the JEITA thresholds and the mitigation table are covered on the [charger page](../charger/README.md) |
 | **sound card** | — | — | nothing: we *extend* `&sound_card` rather than rewrite it. The card itself is **Vldly's** [`5f0487e5a374`](https://github.com/llg179/linux/commit/5f0487e5a3748855721652afced36b2d1fe2bb25) (2022, msm8953-mainline only, not in Linus' tree) and the AW8898/MI2S speaker path on it is **Luca Weiss'** [`4fd8c23afa2e`](https://github.com/llg179/linux/commit/4fd8c23afa2e1d907fd981c29dd35278c53c9ea5) + [`4335b0ae1eb6`](https://github.com/llg179/linux/commit/4335b0ae1eb6e9da37e2078f5affebb937b8e18d) |
 
@@ -198,7 +198,7 @@ branches, as of 2026-07-30:
 | branch | its device-tree commit(s) |
 |---|---|
 | `submit/7.1.3/audio` | [`2b5fb30cd11e`](https://github.com/llg179/linux/commit/2b5fb30cd11e) *wire up WCD9335 audio* |
-| `submit/7.1.3/camera` | [`698d2308e07c`](https://github.com/llg179/linux/commit/698d2308e07c) *add the rear IMX363 camera* |
+| `submit/7.1.3/camera` | [`0c7ea33fa5c5`](https://github.com/llg179/linux/commit/0c7ea33fa5c5) *add the rear IMX363 camera* |
 | `submit/7.1.3/charger` | [`0b4b054b6d81`](https://github.com/llg179/linux/commit/0b4b054b6d81) *pmi632: add the SMB5 charger* + [`a800c7ec823a`](https://github.com/llg179/linux/commit/a800c7ec823a) *enable charging* |
 | `submit/7.1.3/voice` | none — pure driver routing, which is correct |
 | `submit/7.1.3/sensor` | none — and only one patch in total, for [these reasons](../sensors/README.md#why-the-submit-series-is-one-patch) |
@@ -206,8 +206,14 @@ branches, as of 2026-07-30:
 ☠️ These hashes move whenever a submit branch is regenerated, which is normal —
 the branches are rebuilt from `wip`, not edited. Four links here pointed at an
 earlier generation until 2026-07-30 and two of them had become unreachable
-objects, i.e. dead links. Re-read them off the branch rather than trusting the
-table.
+objects, i.e. dead links. The camera row moved **again** later the same day, when
+the series was rebuilt around its import commit. Re-read them off the branch
+rather than trusting the table:
+
+```sh
+git log --oneline --format='%h %s' 7.1.3/main..submit/7.1.3/<category> \
+    -- 'arch/arm64/boot/dts/*'
+```
 
 ### Validating the device tree
 

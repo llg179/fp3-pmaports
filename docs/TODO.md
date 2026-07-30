@@ -17,15 +17,15 @@ this list. Everything here is measured — `checkpatch.pl --strict`, and
 *we add* are counted (the base fails it 44 times on its own). The per-branch
 summary is in [`kernel/README.md`](kernel/README.md#what-the-checkers-say).
 
-**The camera series is the one that must not be sent as it stands.** Its commit
-message claims the driver was derived from `imx258.c` and that the register
-tables were read back from the sensor rather than taken from vendor code. The
-file was in fact taken from `panpanpanpan/linux:imx363wip`, and its own comments
-attribute values to downstream Android logs — one of them says the author does
-not know where a link frequency came from. Sending it would credit us for a third
-party's reverse engineering. The fix is the import/extension split described in
-[`kernel/README.md`](kernel/README.md#camera-imx363c); the upstream file has not
-been retrieved yet, so the size of our delta is still unmeasured.
+~~**The camera series is the one that must not be sent as it stands.**~~ **Fixed
+2026-07-30.** Its commit message claimed the driver was derived from `imx258.c`
+with register tables read back from the sensor; both were false. The original was
+found on GitLab (`sdm670-mainline/linux`, **Joel Selvaraj**, `5130bc702ea2`) and
+fetched by SHA, the delta measured at **+68 / −21 on 1514 lines**, and the series
+rebuilt as import → our change → device tree, with the original `Signed-off-by`
+chain preserved. Details and the checkpatch split in
+[`kernel/README.md`](kernel/README.md#camera-imx363c). The DCO chain turned out to
+be **intact**, so the camera never had the sensor series' problem.
 
 Then, in rough order of cost:
 
@@ -33,7 +33,10 @@ Then, in rough order of cost:
    (`sony,imx258.yaml` and its own `SONY IMX258 SENSOR DRIVER` block); a new
    sensor driver without a DT binding is turned away on sight. The same patch
    should take out the leftover `printk(KERN_INFO "imx363: pixel_rate: ...")` and
-   the commented-out register writes.
+   the commented-out register writes — **as a third commit, after the import**,
+   not folded into it: the import commit is byte-identical to its source and that
+   is what makes it checkable. It also carries all 4 errors and 17 warnings
+   `checkpatch` reports for the series.
 2. **The audio device tree adds six undocumented codec properties** —
    `qcom,micbias{1..4}-microvolt`, `qcom,dmic-sample-rate`,
    `qcom,mbhc-vthreshold` on the `slim217,1a0` node. Same class of gap the
@@ -54,7 +57,34 @@ Then, in rough order of cost:
    which this work also uses, are already right. Worth doing in the same cycle as
    item 5, since it touches the same properties.
 7. **Every branch is based on `v7.1.3-r0`.** Sending means rebasing first: ASoC
-   onto `sound/for-next`, device trees onto mainline.
+   onto `sound/for-next`, device trees onto mainline. Trial-rebased on
+   2026-07-30, so this is no longer a guess: **11 of the 21 commits apply with no
+   conflict**, the charger (9) and sensor (1) series entirely. Full table in
+   [`kernel/README.md`](kernel/README.md#does-any-of-it-apply-to-a-maintainer-tree).
+8. **The camera driver conflicts on two lines of `Kconfig`** — the neighbouring
+   IMX355 entry gained `select V4L2_CCI_I2C` upstream. Trivial, but it has to be
+   resolved by hand at rebase time.
+9. **The audio series has a real prerequisite and it is stalled.**
+   `qcom,msm8953-qdsp6-sndcard`, `msm8953_qdsp6_add_ops` and `use_ibit_clk` are
+   not upstream; nor is the `&sound_card` label the audio DT patch attaches to.
+   The functionality *was* posted — Adam Skladowski, *MSM8953/MSM8976 ASoC
+   support* **v3**, 8 patches, 2024-07-31,
+   [series 875540](https://patchwork.kernel.org/project/alsa-devel/list/?series=875540),
+   still in state `new`. We need its patches 1/8, 5/8 and 6/8. Because it has a
+   cover-letter message-id it can be declared as a dependency the way the kernel
+   expects (`b4 prep --edit-deps`, or a `prerequisite-patch-id:` block) rather
+   than silently assumed. Worth asking on the list whether it is still alive
+   before building on it.
+10. **The voice patch duplicates existing prior art and cannot be sent at all.**
+    Joel Selvaraj's `5a63debde2db` (2022-10-02, `sdm670-mainline/linux`) already
+    contains the same SLIMbus voice routing, line for line, and for SLIMBUS_0
+    through SLIMBUS_6 rather than only SLIMBUS_0. Separately, `q6voice` has
+    **never been posted to the LKML** — patchwork returns nothing for "q6voice"
+    or "Q6 Voice" — so there is no message-id to depend on and the file does not
+    exist upstream to patch. Archived as
+    [`vendor/q6voice-sdm670`](https://github.com/llg179/linux/tree/vendor/q6voice-sdm670);
+    the realistic move is to offer the SLIMBUS_0 work to that series' authors
+    rather than to send anything ourselves.
 
 Two things were checked and are **not** defects: the three `ENOTSUPP`
 comparisons in the audio machine driver (the ASoC core returns exactly that, and
@@ -212,4 +242,29 @@ so it was a no-op.
   is inherited from msm8996. See [`sensors/README.md`](sensors/README.md).
 * **Camera streaming is not working end to end.** The sensor probes and its
   link into CAMSS enables; what remains is on the CAMSS side, not in the
-  driver — see the `submit/<base>/camera` commit message.
+  driver — see the `submit/<base>/camera` commit message. The one lead inside
+  the driver is that its two modes carry link frequencies that disagree with the
+  device tree's `link-frequencies`, and one of them is commented
+  `// NOT SURE HOW TO FIND THIS VALUE` by its author.
+
+## The package lags the integration branch
+
+`linux-fp3/APKBUILD` pins `_commit=c8974511d585`. That commit was the 45th of the
+49 on the old `integration/7.1.3` — four behind the tip — and after the camera
+rewrite on 2026-07-30 it is **no longer an ancestor of `integration/7.1.3` at
+all**: it sits on the archived lineage, while the branch is now `ebb0bfdf166a`
+with 50 commits.
+
+Nothing compiled changed. The four commits it was behind are whitespace and
+device-tree node names, and the rewrite itself only split one commit in two and
+corrected commit messages — `git diff` between the old and new tips is empty. The
+running `linux-fp3-7.1.3-r22` is still the right kernel and no rebuild was called
+for.
+
+Two things follow. The next `_commit` bump starts from `ebb0bfdf166a`. And the old
+tip is deliberately kept alive as the tag
+`archive/integration-7.1.3-pre-camera-provenance`, because GitHub serves a
+source tarball only while its commit is reachable from some ref — rewriting
+`integration` without that tag would have left the pinned package un-buildable,
+which is a failure that shows up much later than the change that caused it. The
+one-line check is in [the branch model](../README.md#the-branch-model).

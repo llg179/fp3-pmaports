@@ -70,6 +70,35 @@ keeping reachable, tagged first, the way `archive/cx-turbo-disproven` keeps the
 disproven CX-turbo experiment after `wip/7.1.3/audio-debug` was removed on
 2026-07-30.
 
+Two more namespaces exist on the kernel fork and neither is a base for anything:
+
+* **`vendor/*`** — archival snapshots of third-party code this port imports or
+  builds on, so that a provenance citation in a commit message still resolves
+  when the original repository is gone. `vendor/imx363-sdm670` is the IMX363
+  driver as Joel Selvaraj wrote it; `vendor/q6voice-sdm670` is the further
+  developed q6voice stack from the same tree. Each is a **parentless snapshot**
+  whose tree is byte-identical to the source commit's, because mirroring the real
+  branch would have dragged 71 541 unrelated commits into this fork. The tags
+  `vendor/asoc-msm8953-base` and `vendor/q6voice-base` do the same job for
+  dependencies that already sit inside `7.1.3/main` — they name them, nothing
+  more.
+* **`archive/*`** tags — points in this port's own history kept reachable after a
+  rewrite, either because a claim they contain was disproven or because something
+  still points at them. `archive/integration-7.1.3-pre-camera-provenance` is the
+  latter: the package pins a `_commit` that would otherwise have become
+  un-fetchable when `integration/7.1.3` was rebuilt.
+
+☠️ **Rewriting a published branch can break the package, silently and later.**
+`linux-fp3/APKBUILD` fetches a GitHub tarball of an exact `_commit`, and GitHub
+serves that only while the commit is reachable from *some* ref. Before any
+force-push that rewrites `integration/<base>`, tag the old tip — then check the
+pin still resolves:
+
+```sh
+curl -sI -o /dev/null -w '%{http_code}\n' \
+  "https://github.com/llg179/linux/archive/<_commit>.tar.gz"     # 302, not 404
+```
+
 **The category rule (version-free):** a change lands on `wip/X.Y.Z/<category>`
 **and** is cherry-picked onto `integration/X.Y.Z` — the two never diverge,
 integration is only ever the sum of the `wip` branches. `submit/X.Y.Z/<category>`
@@ -132,17 +161,23 @@ Kandagatla), the Q6 voice DAI (Stephan Gerhold, Vincent Knecht, Otto Pflüger �
 not in Linus' tree) and `q6afe` (Kandagatla), the SMB2 charger driver and its
 binding (Casey Connolly), and the PMIC ADC5 driver (Siddartha Mohanadoss).
 **The camera and the sensors are imports**, and that is the more delicate case:
-the IMX363 driver comes from `panpanpanpan/linux:imx363wip`, reverse-engineered
-there against a Pixel-3a-family sensor, and the sensor stack is Yassine
-Oudjana's QRTR-bus and Sensor Manager series, **carried verbatim** so the
-authorship survives. On top of the sensor import are three new drivers and four
-fixes; on top of the camera import, the FP3 power sequence and I²C bring-up and
-nothing else. Both splits are spelled out per file —
+the IMX363 driver is **Joel Selvaraj's**, reverse-engineered on
+`sdm670-mainline/linux` against a Pixel-3a-family sensor, and the sensor stack is
+Yassine Oudjana's QRTR-bus and Sensor Manager series — both **carried verbatim**
+so the authorship survives. On top of the sensor import are three new drivers and
+four fixes; on top of the camera import, four power-path changes (+68 / −21 on a
+1514-line file) and nothing else. Both splits are spelled out per file —
 [`docs/kernel/README.md`](docs/kernel/README.md#provenance) and
-[`docs/sensors/README.md`](docs/sensors/README.md#provenance). ☠️ This page and
-the kernel page both **described the camera driver as substantially ours until
-2026-07-30**, and the commit message on `submit/7.1.3/camera` still does; that is
-the first thing to fix before the series goes anywhere.
+[`docs/sensors/README.md`](docs/sensors/README.md#provenance).
+
+☠️ This page and the kernel page both **described the camera driver as
+substantially ours until 2026-07-30**, and so did the commit message on
+`submit/7.1.3/camera`. All three are corrected: the import is now
+[its own commit](https://github.com/llg179/linux/commit/cda174905a83) authored by
+Joel Selvaraj, carrying the original `Signed-off-by` chain, with our change on top
+of it. It is worth knowing *why* it stood so long — the wrong claim was
+self-consistent and nobody had tried to fetch the original file. The check that
+broke it is cheap and should be routine: **get the upstream file and diff it.**
 **Everything this port adds on top was developed with the assistance of
 [Claude Code](https://www.anthropic.com/claude-code)**, Anthropic's generative-AI
 coding agent.

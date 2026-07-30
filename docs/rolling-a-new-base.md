@@ -183,3 +183,16 @@ integration rides `X.Y.Z/main`; a subsystem submission targets that subsystem's
 `media` (camera), `power-supply` (charger) or the SoC tree (dts), run
 `checkpatch` / `get_maintainer` / `b4`, send, and drop the throwaway branch. The
 series version (v1, v2, …) lives in the cover letter, not in a branch name.
+
+That rebase is also worth doing **before** post time, as a throwaway trial, since
+it is the only thing that answers "does this apply?". Done on 2026-07-30 it turned
+a guess into a fact — 11 of 21 commits clean, the charger and sensor series
+entirely, and two of the three failures traced to named out-of-tree prerequisites
+rather than to rot. The results and the recipe are in
+[`kernel/README.md`](kernel/README.md#does-any-of-it-apply-to-a-maintainer-tree).
+
+☠️ **The `vendor/*` and `archive/*` namespaces are not pruned with a base.** They
+are version-free on purpose: `vendor/*` archives third-party code the port
+imports, `archive/*` keeps rewritten history reachable. The `for cat in …; do git
+push fork --delete …` loops above must never be widened to match them. See
+[the branch model](../README.md#the-branch-model).
