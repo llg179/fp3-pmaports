@@ -37,15 +37,36 @@ Then, in rough order of cost:
    not folded into it: the import commit is byte-identical to its source and that
    is what makes it checkable. It also carries all 4 errors and 17 warnings
    `checkpatch` reports for the series.
-2. **The audio device tree adds six undocumented codec properties** —
+2. ~~**The audio device tree adds six undocumented codec properties**~~ —
    `qcom,micbias{1..4}-microvolt`, `qcom,dmic-sample-rate`,
-   `qcom,mbhc-vthreshold` on the `slim217,1a0` node. Same class of gap the
-   charger had until its binding was written; the WCD9335 binding needs the same
-   treatment.
-3. **`divclk1` and `wcd-vout-1p8` sit under `soc@0`**, where `simple-bus`
-   requires `ranges`. Fixed clocks and regulators belong at the root of the board
-   file, which is where every other board puts them.
-4. **`wcd-intr-default-state` fails the `qcom,msm8953-pinctrl` schema.**
+   `qcom,mbhc-vthreshold` on the `slim217,1a0` node. **Fixed 2026-07-30.** The
+   WCD9335 binding now carries all of them, taking wording and limits from
+   bindings that already describe the same hardware: the four mic-bias voltages
+   verbatim from `qcom,wcd93xx-common.yaml`, the DMIC rate in the plain-uint32
+   form the LPASS macro bindings use. The button thresholds were **renamed** on
+   the way — `qcom,mbhc-vthreshold` in millivolts was this port's invention, and
+   the rest of the family spells it
+   `qcom,mbhc-buttons-vthreshold-microvolt` (wcd934x, wcd937x, wcd938x). The
+   driver divides by 12500 instead of `(mV * 2) / 25`, so the value programmed
+   into the BTNx field is unchanged. All six are disallowed on the SLIMbus
+   interface device, where they mean nothing.
+3. ~~**`divclk1` and `wcd-vout-1p8` sit under `soc@0`**~~, where `simple-bus`
+   requires `ranges`. **Fixed 2026-07-30**: both moved to the root of the board
+   file, and the regulator renamed to the `regulator-*` node-name form the file
+   uses throughout.
+4. ~~**`wcd-intr-default-state` fails the `qcom,msm8953-pinctrl` schema.**~~
+   **Fixed 2026-07-30** by dropping `input-enable`, which
+   `qcom,tlmm-common.yaml` disallows outright (`input-enable: false`): the TLMM
+   input buffer is always on, so on this pin controller the property only ever
+   cleared the output-enable bit, and gpio73 is put in input mode anyway when
+   the codec's intr1 interrupt is requested. `sdm845-wcd9340.dtsi` describes the
+   same codec interrupt without it.
+
+   Items 2-4 were verified together rather than assumed: `dtbs_check` with
+   `dtschema` 2026.6 reports **nothing** for the audio nodes now, on
+   `wip/7.1.3/audio`, `integration/7.1.3` and `debug-int/7.1.3` alike, and
+   sorted `dtc` decompiles of the board DTB before and after differ **only** in
+   the two node moves, the dropped property and the renamed one.
 5. **The battery node's four `qcom,*` properties cannot stay there.**
    `battery.yaml` has `additionalProperties: false` and **zero** vendor-prefixed
    properties, so there is no precedent to follow; the JEITA precedent that does

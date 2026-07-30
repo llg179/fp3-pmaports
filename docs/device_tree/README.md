@@ -203,7 +203,7 @@ branches, as of 2026-07-30:
 
 | branch | its device-tree commit(s) |
 |---|---|
-| `submit/7.1.3/audio` | [`2b5fb30cd11e`](https://github.com/llg179/linux/commit/2b5fb30cd11e) *wire up WCD9335 audio* |
+| `submit/7.1.3/audio` | [`f74f401d2cdc`](https://github.com/llg179/linux/commit/f74f401d2cdc) *wire up WCD9335 audio* |
 | `submit/7.1.3/camera` | [`0c7ea33fa5c5`](https://github.com/llg179/linux/commit/0c7ea33fa5c5) *add the rear IMX363 camera* |
 | `submit/7.1.3/charger` | [`0b4b054b6d81`](https://github.com/llg179/linux/commit/0b4b054b6d81) *pmi632: add the SMB5 charger* + [`a800c7ec823a`](https://github.com/llg179/linux/commit/a800c7ec823a) *enable charging* |
 | `submit/7.1.3/voice` | none — pure driver routing, which is correct |

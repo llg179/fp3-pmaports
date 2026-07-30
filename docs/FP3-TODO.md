@@ -94,12 +94,15 @@ Cross-cutting, mostly `dtbs_check` fallout. Detail:
    writes — but as a **third commit**, never folded into the byte-identical
    import, whose byte-identity is the thing that makes the delta checkable. That
    commit carries all 4 checkpatch errors and 17 warnings of the series.
-2. **Six undocumented codec properties** on the audio `slim217,1a0` node:
-   `qcom,micbias{1..4}-microvolt`, `qcom,dmic-sample-rate`,
-   `qcom,mbhc-vthreshold`. Same class of gap the charger already had.
-3. **`divclk1` and `wcd-vout-1p8` must move out from under `soc@0`** into the
-   board file's root — `simple-bus` wants `ranges`.
-4. **`wcd-intr-default-state` fails the `qcom,msm8953-pinctrl` schema.**
+2. ~~**Six undocumented codec properties** on the audio `slim217,1a0` node.~~
+   **Fixed 2026-07-30**: the WCD9335 binding carries them, and the button
+   thresholds were renamed to the family's
+   `qcom,mbhc-buttons-vthreshold-microvolt`.
+3. ~~**`divclk1` and `wcd-vout-1p8` must move out from under `soc@0`**~~ —
+   **fixed 2026-07-30**, both are at the board root.
+4. ~~**`wcd-intr-default-state` fails the `qcom,msm8953-pinctrl` schema.**~~
+   **Fixed 2026-07-30** by dropping `input-enable`. Details for 2-4 in
+   [`TODO.md`](TODO.md#open-before-anything-is-submitted).
 5. **The battery node's four `qcom,*` properties.** `battery.yaml` has
    `additionalProperties: false` and zero vendor properties; the one JEITA
    precedent (`qcom,jeita-extended-temp-range`) sits on the *charger* node. There

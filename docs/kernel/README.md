@@ -370,7 +370,8 @@ have hidden the property in exactly the runs that do not plug the phone in.
 
 ## What the checkers say
 
-Run on 2026-07-30, per submit branch. `checkpatch.pl --strict --git` over each
+Run on 2026-07-30, per submit branch, and re-run for `audio` after that day's
+device-tree work. `checkpatch.pl --strict --git` over each
 series, and `dtbs_check` with `dtschema` 2026.6 — the latter **as a differential**,
 because the base tree fails it 44 times on its own (`opp-avg-kBps`, `qfprom`,
 `gcc` power domains, `rpm-proc`). Only the errors this tree *adds* are ours:
@@ -380,7 +381,7 @@ because the base tree fails it 44 times on its own (`opp-avg-kBps`, `qfprom`,
 | `charger` | **clean** (9 patches, 0/0/0) | the `battery` node's four `qcom,*` properties |
 | `sensor` | **clean** (1 patch) | — |
 | `voice` | **clean** (1 patch) | — |
-| `audio` | 3 × `ENOTSUPP`, 2 × `slim217` — **both false**, see below | three: the codec node's six `qcom,*` properties; `divclk1` and `wcd-vout-1p8` needing `ranges` under `soc@0`; `wcd-intr-default-state` failing the pinctrl schema |
+| `audio` | 3 × `ENOTSUPP`, 2 × `slim217` — **both false**, see below | **none** (was three, all fixed 2026-07-30) |
 | `camera` | 4 errors / 17 warnings on the **import** commit, all inherited; **0 / 1** on our delta, 0 / 2 on the device tree | — |
 | (`debug`) | not submitted by design | `qcom,start-at-probe` — undocumented on purpose |
 
@@ -393,6 +394,11 @@ The two dismissed audio warnings, checked rather than assumed:
 * **`slim217`.** Genuinely absent from `vendor-prefixes.yaml`, but four device
   trees already in Linus' tree use it (db820c, OnePlus 3/3T, Xiaomi, sdm845).
   A tree-wide gap, not something this port introduced.
+
+The audio row was also **understated** until it was re-measured: alongside the
+two dismissed warnings the series carried **five** `CHECK: Alignment should
+match open parenthesis`, in MBHC call sites that an earlier alignment pass had
+missed. They are fixed, so the row above is now the whole story for that series.
 
 What each of the remaining errors needs is listed in
 [`../TODO.md`](../TODO.md#open-before-anything-is-submitted).

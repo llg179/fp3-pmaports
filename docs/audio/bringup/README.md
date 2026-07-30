@@ -292,3 +292,15 @@ first year the same way.
 * **A stray `Quinary MI2S` backend** can attach to the voice front end.
 * **The jack is treated as 3-pole**, and there is no TX gain control exposed for
   the call path.
+* **The two jack-polarity properties are this port's invention.** The driver
+  reads `qcom,hphl-jack-type-normally-open` and
+  `qcom,gnd-jack-type-normally-open`; the rest of the family uses
+  `qcom,hphl-jack-type-normally-closed` and
+  `qcom,ground-jack-type-normally-closed` (`wcd_dt_parse_mbhc_data()`), whose
+  **default is the opposite** — absent means normally-*open* there, normally-
+  *closed* here. Neither is set in the FP3 device tree, so nothing fails
+  `dtbs_check` today and headset detection works as it is; aligning the names
+  would flip the default and has to be paired with setting the property on this
+  board, which is a change to a working detection path and wants a device test
+  of its own. Left deliberately for that reason when the six device-tree
+  properties were documented on 2026-07-30.
