@@ -67,6 +67,15 @@ Then, in rough order of cost:
    `wip/7.1.3/audio`, `integration/7.1.3` and `debug-int/7.1.3` alike, and
    sorted `dtc` decompiles of the board DTB before and after differ **only** in
    the two node moves, the dropped property and the renamed one.
+
+   Confirmed on the device too, on `linux-fp3-7.1.3-r27`: the eight `BTN0..7`
+   threshold registers read back **byte-identical** across the rename
+   (`18 30 48 90 a0 a0 a0 a0`), the moved `divclk1` still claims the PM8953
+   MCLK mux (`pin 0 (gpio1): divclk1 ... function func1`) and reaches
+   `enable_count = 1` while playback runs over `SLIMBUS_0_RX`, and
+   `23-audio-slimbus` passes with a headset plugged in — a 1 kHz tone crossing
+   the bus in both directions, **999.76 Hz at 32.97 dB**. The jack still
+   detects: `SW_HEADPHONE_INSERT` is active.
 5. **The battery node's four `qcom,*` properties cannot stay there.**
    `battery.yaml` has `additionalProperties: false` and **zero** vendor-prefixed
    properties, so there is no precedent to follow; the JEITA precedent that does
