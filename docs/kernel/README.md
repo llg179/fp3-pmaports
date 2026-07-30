@@ -437,9 +437,15 @@ twenty-one commits apply with no conflict at all.**
 | sensor | mainline | **1 / 1 clean** |
 | camera device tree | mainline | **1 / 1 clean** |
 | camera driver | mainline | one `Kconfig` conflict, **two lines** — the neighbouring IMX355 entry gained `select V4L2_CCI_I2C` |
-| audio driver | `broonie/for-next` | conflicts on the first patch |
-| audio device tree | mainline | conflicts |
+| audio driver | `broonie/for-next` | conflicts on the first patch — ⚠️ **stale**, see below |
+| audio device tree | mainline | conflicts — ⚠️ **stale**, see below |
 | voice | `broonie/for-next` | the file does not exist upstream |
+
+⚠️ **The two audio rows were measured against a nine-patch series that no longer
+exists.** Later the same day the device-tree work added a `dt-bindings` patch at
+the front and rewrote the device-tree commit, so `submit/7.1.3/audio` is now ten
+patches. Re-run the trial rebase before quoting either row; the other seven rows
+were not touched.
 
 **The charger and the sensor series are therefore ready in the strong sense** —
 not merely "the files they touch exist upstream", but "they apply".

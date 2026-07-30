@@ -115,6 +115,28 @@ Then, in rough order of cost:
     [`vendor/q6voice-sdm670`](https://github.com/llg179/linux/tree/vendor/q6voice-sdm670);
     the realistic move is to offer the SLIMBUS_0 work to that series' authors
     rather than to send anything ourselves.
+11. **Two more WCD9335 properties are this port's invention, and their default
+    is inverted.** The MBHC code reads `qcom,hphl-jack-type-normally-open` and
+    `qcom,gnd-jack-type-normally-open`; the rest of the family spells them
+    `qcom,hphl-jack-type-normally-closed` and
+    `qcom,ground-jack-type-normally-closed` (`wcd_dt_parse_mbhc_data()` in
+    `wcd-mbhc-v2.c`, used by wcd934x/937x/938x) — and **absent means
+    normally-open there, normally-closed here.** Neither is set in the FP3
+    device tree, so nothing fails `dtbs_check` and headset detection works
+    today; that is why the six-property fix on 2026-07-30 documented the
+    others and deliberately left these alone. Closing it means renaming the
+    properties, inverting the driver's sense **and** setting the new property
+    on this board to keep the current behaviour — a change to a working
+    detection path, so it needs its own device test with a headset. Same class
+    of defect as item 2 was, one step removed: an undocumented name we made up,
+    in code headed for the list.
+12. **The measured rebase table no longer describes the audio series.** It was
+    taken on 2026-07-30 against a nine-patch `submit/7.1.3/audio`; the series is
+    now **ten** patches — a `dt-bindings` patch was added at the front and the
+    device-tree commit changed — so the two audio rows in
+    [`kernel/README.md`](kernel/README.md#does-any-of-it-apply-to-a-maintainer-tree)
+    ("conflicts on the first patch", "conflicts") are stale and have to be
+    re-run before anyone quotes them. The other seven rows are untouched.
 
 Two things were checked and are **not** defects: the three `ENOTSUPP`
 comparisons in the audio machine driver (the ASoC core returns exactly that, and

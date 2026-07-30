@@ -130,6 +130,18 @@ Cross-cutting, mostly `dtbs_check` fallout. Detail:
    SLIMBUS_0 work to that series' authors, not to send ours.
 10. **Cover-letter disclosure** per `Documentation/process/generated-content.rst`:
     which tools, which prompts, which parts, and how it was tested.
+11. **Two more invented WCD9335 property names, with an inverted default.** The
+    MBHC code reads `qcom,hphl-jack-type-normally-open` /
+    `qcom,gnd-jack-type-normally-open`; the family uses the `-normally-closed`
+    forms, where **absent means normally-open** — the opposite of here. Neither
+    is in the FP3 device tree, so `dtbs_check` is clean and detection works;
+    fixing it flips a default on a working path and needs a headset test.
+    Deliberately left when 2-4 were closed. Details in
+    [`TODO.md`](TODO.md#open-before-anything-is-submitted).
+12. ⚠️ **The rebase table's two audio rows are stale.** Measured against a
+    nine-patch `submit/7.1.3/audio`; it is now ten (a `dt-bindings` patch at the
+    front, the DT commit rewritten). Re-run before quoting. The other seven rows
+    stand.
 
 ---
 
