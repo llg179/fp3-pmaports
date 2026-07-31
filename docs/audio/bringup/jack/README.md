@@ -263,7 +263,7 @@ amplifier and the Himax touchscreen), decompiled and searched. **No property
 name containing "jack" anywhere**, and the only MBHC properties are the two
 switch-type ones. The absence is real.
 
-## Why the shared mainline implementation cannot simply be adopted
+## Why the shared mainline implementation could not be adopted as it stood
 
 `wcd-mbhc-v2.c` is in mainline, maintained, and used by five codecs, so wiring
 `wcd9335` to it looks like the obvious answer. It is not, for one reason:
@@ -271,11 +271,15 @@ switch-type ones. The absence is real.
 **mainline's copy implements only ADC-based detection.** `grep` for detection
 entry points finds exactly one, `wcd_mbhc_adc_detect_plug_type()`, called
 directly with no alternative. And the WCD9335 has **no MBHC ADC**: the vendor's
-own field table for this codec defines 36 fields where mainline uses 48, and the
-thirteen missing ones are the entire ADC group plus a few status fields.
+own field table for this codec defines **29** fields where mainline names 48,
+and every missing one is either an ADC field, a moisture field or a headphone
+ground switch.
 
-The vendor solves this with two detection back-ends behind a five-pointer
-interface, selected at build time and dispatched at runtime:
+The vendor tree that actually drives this codec has no seam either - in the
+tasha-era `msm8952` trees `wcd-mbhc-v2.c` is a single 2284-line file that only
+does comparator detection, because at that point there was nothing else to do.
+The two-backend split appears later, once ADC-capable codecs arrive, and is
+what 163 vendor trees carry today:
 
 ```
 snd-soc-wcd-mbhc-y  := wcd-mbhc-v2.o          common core
@@ -297,7 +301,11 @@ Mainline flattened that seam when the code was upstreamed, and correctly so:
 every in-tree user was ADC-capable, and an indirection with a single
 implementation is something review declines. Restoring it is not a fight with an
 earlier decision - it is supplying the second user the decision was waiting for.
-The build-side change is the ordinary `foo-$(CONFIG_X) += bar.o` pattern.
+
+It also turned out that mainline never removed the *idea*, only the second
+implementation. `enum wcd_mbhc_detect_logic` has named `WCD_DETECTION_LEGACY`
+all along, and `mbhc->mbhc_detection_logic` was there too - written once with a
+constant, read in exactly one place. The seam was a stub waiting for a user.
 
 ## The vendor's field table is the authority for what each bit means
 
