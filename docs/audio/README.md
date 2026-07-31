@@ -198,14 +198,15 @@ of the boot. That has been observed in ordinary use but never reproduced
 deliberately — neither boot, nor clean plug cycles, nor audio activity that
 cycles the codec's power produced a stray edge.
 
-**Replacing the count with a register read is not possible on this codec.**
-`RESULT_3` is not an absolute plug status: it reports whether the transition the
-block was *armed for* occurred, and the arming bit is written from the very
-state one would be trying to derive. Measured directly, the register does not
-follow the socket on its own — it sat at `0x08` through eight physical cycles —
-and two driver variants built on reading it detected insertions only, never
-removals. There is also no board jack-detect GPIO to fall back on, unlike the
-msm8916/msm8953 boards using the PMIC-internal codec.
+**The count can probably be replaced, but it has not been yet.** `RESULT_3`
+holds the outcome of the last completed detection, which is the state as it was
+*before* the edge being handled — measured, agreeing on all nine edges of a
+deliberate sequence. An interrupt means the state changed, so the answer is the
+inverse of that reading, and no stored state is needed. Three variants built on
+reading it failed, all of them computing the value without that inversion; the
+corrected form is untested. There is no board jack-detect GPIO to fall back on,
+unlike the msm8916/msm8953 boards using the PMIC-internal codec — established
+from the device trees in the stock firmware, not merely from source.
 
 The route taken to that conclusion, including the hypotheses that were
 disproven and the tool that settled them, is in
