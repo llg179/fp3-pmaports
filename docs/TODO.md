@@ -32,14 +32,36 @@ be **intact**, so the camera never had the sensor series' problem.
 
 Then, in rough order of cost:
 
-1. **The camera has no binding and no MAINTAINERS entry.** `imx258` has both
-   (`sony,imx258.yaml` and its own `SONY IMX258 SENSOR DRIVER` block); a new
-   sensor driver without a DT binding is turned away on sight. The same patch
-   should take out the leftover `printk(KERN_INFO "imx363: pixel_rate: ...")` and
-   the commented-out register writes — **as a third commit, after the import**,
-   not folded into it: the import commit is byte-identical to its source and that
-   is what makes it checkable. It also carries all 4 errors and 17 warnings
-   `checkpatch` reports for the series.
+1. ~~**The camera has no binding and no MAINTAINERS entry.**~~ **Fixed
+   2026-07-31.** `sony,imx363.yaml` is written, the MAINTAINERS block claims the
+   driver, and the leftovers came out in a **third** commit after the import, so
+   the imported commit stays byte-identical to Joel Selvaraj's original — that
+   byte-identity is the only thing that makes our delta checkable.
+
+   What the binding is worth is measurable, and the measurement is the point:
+   until it existed, `dtbs_check` **skipped the camera node in silence**, because
+   a node whose `compatible` nothing documents produces no output at all rather
+   than being reported as unchecked. With the binding in place the node is
+   checked for the first time and **adds nothing**: the board goes from the
+   base's own 44 errors to 45, and the one addition is item 5's battery node,
+   already known.
+
+   Two places where copying `sony,imx258.yaml` would have been wrong. Its
+   `data-lanes` pins the entries to 1..4; this driver only ever switches on *how
+   many* there are, and 176 endpoints in mainline's arm64 device trees start
+   their lane list at 0 — nearly every qcom board — so the value constraint would
+   reject them for nothing. And imx258 leaves the supplies optional, where this
+   driver takes all three with a plain `devm_regulator_bulk_get()`.
+
+   The cleanup removed 97 lines: ninety-odd commented-out register writes, a
+   dead 19.2 MHz input-clock path whose config table never existed, and two
+   `printk(KERN_INFO)` calls. Two of those comments carried a **finding** rather
+   than code — that a set of downstream writes, and a set taken from imx258,
+   change nothing in the output — so they are kept as an ordinary comment.
+   `checkpatch --strict` on the new patches: **0, 0 and 1**, the one being
+   "does MAINTAINERS need updating?" which the next patch answers. The import's
+   own 34 complaints are untouched on purpose.
+
 2. ~~**The audio device tree adds six undocumented codec properties**~~ —
    `qcom,micbias{1..4}-microvolt`, `qcom,dmic-sample-rate`,
    `qcom,mbhc-vthreshold` on the `slim217,1a0` node. **Fixed 2026-07-30.** The

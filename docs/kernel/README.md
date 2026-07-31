@@ -85,6 +85,7 @@ Written for this port; author Lajosházi, László Gergely with Claude.
 | FP3 WCD9335 sound card + DMIC widgets | `apq8016_sbc.c` | working |
 | IMX363 **power sequence and I²C bring-up** (not the register tables) | `imx363.c` | sensor probes; streaming blocked on the CAMSS side |
 | Battery temperature | `qcom_smbx.c`, `qcom-spmi-adc5.c`, `pmi632.dtsi` | see [Battery temperature](#battery-temperature) |
+| IMX363 **device-tree binding** | `sony,imx363.yaml` | written 2026-07-31, modelled on `sony,imx258.yaml` but deliberately looser on `data-lanes` and stricter on the supplies — see [`../TODO.md`](../TODO.md#open-before-anything-is-submitted) item 1 |
 
 ### Fixes to pre-existing kernel code
 
@@ -452,7 +453,7 @@ at all**, twenty-three after one one-hunk resolution.
 | charger `qcom-spmi-adc5` | mainline | **1 / 1 clean** |
 | sensor | mainline | **1 / 1 clean** |
 | camera device tree | mainline | **1 / 1 clean** |
-| camera driver | mainline | one `Kconfig` hunk; **the second commit is clean once it is resolved** |
+| camera driver + binding | mainline | one `Kconfig` hunk; **the rest is clean once it is resolved** |
 | audio driver + binding | `broonie/for-next` | **11 / 12 clean** — only the machine driver conflicts |
 | audio device tree | mainline | conflicts — `&sound_card` does not exist upstream |
 | voice | `broonie/for-next` | the file does not exist upstream |

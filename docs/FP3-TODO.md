@@ -108,12 +108,12 @@ Redo this after every base bump; it is the only thing that answers the question.
 Cross-cutting, mostly `dtbs_check` fallout. Detail:
 [`docs/TODO.md`](https://github.com/llg179org/fp3-pmaports/blob/main/docs/TODO.md).
 
-1. **The camera needs `sony,imx363.yaml` and a MAINTAINERS entry.** A new sensor
-   driver without a binding is refused on sight; `imx258` has both. In the same
-   round, drop the leftover `printk(KERN_INFO)` and the commented-out register
-   writes — but as a **third commit**, never folded into the byte-identical
-   import, whose byte-identity is the thing that makes the delta checkable. That
-   commit carries all 4 checkpatch errors and 17 warnings of the series.
+1. ~~**The camera needs `sony,imx363.yaml` and a MAINTAINERS entry.**~~ **Fixed
+   2026-07-31**: binding, MAINTAINERS block and a third cleanup commit after the
+   byte-identical import. The node had been **skipped silently** by `dtbs_check`
+   for want of a binding; now checked, it adds nothing (44 → 45 errors, the one
+   addition being item 5). Details in
+   [`TODO.md`](TODO.md#open-before-anything-is-submitted).
 2. ~~**Six undocumented codec properties** on the audio `slim217,1a0` node.~~
    **Fixed 2026-07-30**: the WCD9335 binding carries them, and the button
    thresholds were renamed to the family's
