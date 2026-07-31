@@ -10,7 +10,7 @@ but postmarketOS forbids AI-assisted contributions, and this patch was written
 with AI assistance, so it cannot be sent there. Report the behaviour instead and
 let the project write its own fix.
 
-From: Lajoshazi, Laszlo Gergely <lajoshazilg@gmail.com>
+From: Lajoshazi, Laszlo Gergely
 Subject: [PATCH] q6voiced: actually start the voice PCM streams
 
 Opening and preparing the VoiceMMode1/CS-Voice PCM is not enough: the ASoC
