@@ -6,22 +6,25 @@ because everything interesting lives under `/sys/kernel/debug`.
 
 ## `jack-probe.py`
 
-Samples the WCD9335's own view of the headset jack against what the driver
-reports to userspace, and prints a line whenever anything changes:
+Samples **every** MBHC register on the codec while a jack is plugged and
+pulled, and prints a line whenever anything changes - raw, in hex and binary,
+with the names of the registers that moved.
 
-| column | source | meaning |
-|---|---|---|
-| `RESULT_3` / `plug(hw)` | codec register `0x0619` bit 3 | the codec's settled mechanical plug status, bit set while the jack is out |
-| `MECH` / `armed_for` | codec register `0x0614` bit 5 | which direction the L_DET block is currently armed for |
-| `SW_HP`, `SW_MIC` | `EVIOCGSW` on the "Headset Jack" input device | `SW_HEADPHONE_INSERT` and `SW_MICROPHONE_INSERT`, i.e. what the driver reports |
+It is deliberately opinion-free. The driver has already been wrong once about
+which bit of `RESULT_3` carries the plug status, and watching only the bit you
+believe in is exactly how that stays undiscovered. So the tool filters nothing:
+`ANA_MECH`, `ANA_ELECT`, `ANA_ZDET`, `RESULT_1..3`, `BTN0..7`, `CTL_1`,
+`CTL_2`, `PLUG_DETECT_CTL` and `ZDET_RAMP_CTL` are all sampled, next to
+`SW_HEADPHONE_INSERT` and `SW_MICROPHONE_INSERT` - what the driver reports to
+userspace - so hardware and report can be compared edge by edge.
 
-The driver tracks insertion by flipping a flag on every L_DET edge rather than
-by reading the plug status, so the hardware columns and the switch columns can
-disagree - and once they do, nothing puts them back in step. Seeing that
-disagreement, and seeing whether `RESULT_3` tracks the plug at all, is what
-this tool is for.
+A decoding of `RESULT_3` and `ANA_MECH` is printed after the run, taken from
+the five in-tree codecs of the same MBHC family (`wcd934x`, `wcd937x`,
+`wcd938x`, `wcd939x`, `pm4125`) which map those registers identically. Treat it
+as a reading aid, not as the measurement: the raw columns stand on their own if
+the decoding turns out not to apply to this codec.
 
-Run it, then plug and unplug a headset several times:
+## Running it
 
 ```sh
 sudo systemd-run --unit=jackprobe --collect \
@@ -30,19 +33,19 @@ sudo systemd-run --unit=jackprobe --collect \
 sudo cat /var/log/jackprobe.log
 ```
 
-Repeat each plug at least twice: a single insert/remove pair cannot show a
-state that drifts one edge at a time.
+Repeat each accessory at least twice: a state that drifts one edge at a time
+cannot be seen in a single insert/remove pair.
 
 ### Reading the output
 
-- `plug(hw)` should follow the socket. If it never changes while the switches
-  do, the register is not a usable source of absolute state on this board -
-  which is a result worth having, because it rules out replacing the driver's
-  counter with a plain register read.
-- `armed_for` should alternate, since the driver re-arms L_DET after each edge.
-  If it stays put, the re-arm write is not taking effect.
-- `SW_HP` disagreeing with `plug(hw)` locates the drift, and the timestamp says
-  which edge caused it.
+- Any register that tracks the socket is a candidate for absolute plug status.
+  If none does, that is a result too - it rules out replacing the driver's
+  edge counter with a plain register read, and points at the init sequence
+  instead.
+- `ANA_MECH` bit 5 should alternate, since the driver re-arms L_DET after each
+  edge. If it stays put, the re-arm write is not taking effect.
+- `SW_HP` disagreeing with the hardware locates the drift, and the timestamp
+  says which edge caused it.
 
 ### Caveat on the read path
 
