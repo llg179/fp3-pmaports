@@ -164,53 +164,59 @@ sequenceDiagram
 
 ## The headset jack
 
-Detection is done by the WCD9335's MBHC block. Nothing about it comes from
-upstream: the pre-port `sdm632-fairphone-fp3.dts` described the AW8898
-loudspeaker and no codec at all, so there is no mainline reference for a jack on
-this phone and every setting here is this port's own.
+Detection is done by the WCD9335's MBHC block, through the kernel's shared
+`wcd-mbhc-v2` implementation. Nothing about it comes from upstream: the pre-port
+`sdm632-fairphone-fp3.dts` described the AW8898 loudspeaker and no codec at all,
+so there is no mainline reference for a jack on this phone.
 
 **How it works.** The codec's L_DET block raises an interrupt when a plug moves
-in the socket. The driver keeps an insert state, seeded at probe from
-`ANA_MBHC_RESULT_3` bit 3 and flipped on each interrupt, and reports it as
-`SW_HEADPHONE_INSERT`. Whether the accessory has a microphone is decided
-separately, from the button-0 transient a mic contact produces while sliding
-past the ground ring during insertion: press *and* release seen means a headset,
-press alone means plain headphones. That decides `SW_MICROPHONE_INSERT`, and
+in the socket, and the shared code takes the direction of that edge from the
+codec's own arming bit, `MECH_DETECTION_TYPE`, rather than from anything the
+driver remembers. On an insertion it starts a detection that lasts up to three
+seconds: the hardware FSM drives a current source into the jack and the driver
+watches three comparator outputs — `HS_COMP_RESULT` and the HPHL and MIC Schmitt
+triggers — re-toggling the FSM between readings until the plug type settles. A
+button that is already down when the FSM starts is what separates a three-pole
+headphone, whose microphone pin is shorted to ground, from a four-pole headset.
+The result is reported as `SW_HEADPHONE_INSERT` and `SW_MICROPHONE_INSERT`, and
 `fp3-voiced` picks the call's output and input from the two.
 
-**The plug switches are normally open.** Qualcomm's device tree for this
-hardware class — an external tasha codec on Quinary MI2S, which is this phone —
-sets `qcom,msm-mbhc-hphl-swh = <1>` and `qcom,msm-mbhc-gnd-swh = <1>`, against
-`<0>` for boards using the PMIC-internal codec. The equivalent properties are
-set here to match.
+Nothing in the board file describes the jack. Both switches are normally open,
+which is what the shared code assumes when neither
+`qcom,hphl-jack-type-normally-closed` nor `qcom,ground-jack-type-normally-closed`
+is present.
 
-**What is measured to work**, over repeated physical insert/remove cycles with
-both a 3-pole and a 4-pole accessory:
+**What is measured to work**, over a deliberate sequence of ten physical
+movements with both a 3-pole and a 4-pole accessory:
 
-- the boot value is right in both directions — plugged in at boot reads plugged,
-  empty reads empty;
-- no interrupt is lost: every physical event produced exactly one;
-- headphones and headsets are told apart correctly every time.
+| stimulus | reported |
+|---|---|
+| empty socket at boot | nothing inserted |
+| 4-pole headset | headphone **and** microphone |
+| 3-pole headphone | headphone only |
+| removal, either accessory | nothing inserted |
 
-**The known weakness** is that the insert state is a count rather than a
-reading, so a single missed or spurious interrupt would invert it for the rest
-of the boot. That has been observed in ordinary use but never reproduced
-deliberately — neither boot, nor clean plug cycles, nor audio activity that
-cycles the codec's power produced a stray edge.
+- **no interrupt is lost**: ten movements produced exactly ten interrupts;
+- the plug type is decided by measurement, not assumed — the two accessories
+  give different answers while `RESULT_3` reads the same for both, so the
+  discrimination comes from the detection algorithm rather than from a status
+  bit;
+- no stored insert state exists to drift, so the inversion that used to strand a
+  whole boot in the wrong state has no mechanism left.
 
-**The count can probably be replaced, but it has not been yet.** `RESULT_3`
-holds the outcome of the last completed detection, which is the state as it was
-*before* the edge being handled — measured, agreeing on all nine edges of a
-deliberate sequence. An interrupt means the state changed, so the answer is the
-inverse of that reading, and no stored state is needed. Three variants built on
-reading it failed, all of them computing the value without that inversion; the
-corrected form is untested. There is no board jack-detect GPIO to fall back on,
-unlike the msm8916/msm8953 boards using the PMIC-internal codec — established
-from the device trees in the stock firmware, not merely from source.
+**What is not established.** `RESULT_3` reads `0x10` with the socket empty and
+`0x00` with a plug in, which looks like an absolute plug status — but in every
+sample taken so far `MECH_DETECTION_TYPE` moves with it, and that coupling is
+exactly what made the same register untrustworthy before. Separating the two
+would need a sample where the arming bit is held while the socket changes, and
+there is none. Nothing in the current arrangement depends on the answer.
 
-The route taken to that conclusion, including the hypotheses that were
-disproven and the tool that settled them, is in
-[`bringup/jack/`](bringup/jack/).
+There is no board jack-detect GPIO to fall back on, unlike the msm8916/msm8953
+boards using the PMIC-internal codec — established from the device trees in the
+stock firmware, not merely from source.
+
+The route taken here, including the private implementation this replaced and the
+hypotheses that were disproven on the way, is in [`bringup/jack/`](bringup/jack/).
 
 ## What each piece in this repo contributes
 

@@ -343,3 +343,78 @@ rather than the hardware.
 - **The stock firmware is a board description you can read.** Pulling the DTBs
   out of `boot.img`/`dtbo.img` and decompiling them takes a few minutes and
   answers hardware-presence questions that no source tree can.
+
+---
+
+# Outcome: the shared implementation, measured
+
+The two rounds above end on "the count cannot be replaced by reading a
+register". That conclusion stands for the register, and is beside the point for
+the problem: the count was replaced by **not keeping one**. `wcd9335` now uses
+the kernel's shared `wcd-mbhc-v2`, with a legacy comparator backend added to it
+because this codec has no MBHC ADC.
+
+## What the caveat was worth
+
+Every negative result in both rounds carried the same footnote — they were all
+measured under this port's own MBHC init, which is a subset of the vendor's. The
+footnote turned out to be the whole story for at least one of them:
+
+| socket | old init | shared init |
+|---|---|---|
+| empty | `RESULT_3 = 0x08` | `RESULT_3 = 0x10` |
+| plug in | `RESULT_3 = 0x08` | `RESULT_3 = 0x00` |
+
+The register that "does not follow the socket" follows it once the block is
+programmed the way the vendor programs it. **This is not yet a usable absolute
+status** — `MECH_DETECTION_TYPE` co-varies with it in every sample, which is the
+same confound the second round identified — but "the hardware cannot do this" was
+never a safe reading of the earlier data, and it was made anyway.
+
+## Measured, ten physical movements
+
+| stimulus | reported |
+|---|---|
+| empty socket at boot | nothing inserted |
+| 4-pole headset | headphone **and** microphone |
+| 3-pole headphone | headphone only |
+| removal | nothing inserted |
+
+Ten movements, ten interrupts, no loss. The plug type is decided by the
+detection algorithm, not read off a bit: `RESULT_3` is `0x00` for both
+accessories, and what separates them is the button-press comparator firing
+continuously for the three-pole plug whose microphone pin is grounded.
+
+## Two defects the measurement found in the new code
+
+- **A plug cycle that names no type left an interrupt enable unpaid**, and the
+  next detection tripped `Unbalanced enable for IRQ`. The `enable_irq()` was
+  removed; it only refined extension-cable handling, and removal is detected
+  mechanically anyway. Worth recording *why* it was there: the risk had been
+  reasoned about before the run and dismissed with "the balance holds for the
+  normal sequence" - which was true only of sequences where something gets
+  reported.
+- **The plug type can still be `INVALID` after the three-second loop**, because
+  every path through the loop can end in a `continue`. Mainline's
+  `wcd_mbhc_find_plug_and_report()` answers that with `WARN(1)`, while the
+  downstream version it was ported from only logged, which is why the vendor code
+  carries no guard.
+
+## Method notes from this round
+
+- **A failing instrument looks exactly like a quiet subject.** Two capture
+  scripts reported nothing while the driver was working perfectly: one piped
+  `evtest` into a loop, where block buffering held every line, and one polled
+  with `sleep 0.2`, which the device's shell does not honour. Both were believed
+  before the single direct read that contradicted them. Take one manual reading
+  of the thing the harness is supposed to report before trusting a null result
+  from it.
+- **A shared implementation can require hardware plumbing the driver never
+  needed.** Moving to `wcd-mbhc-v2` meant two headphone over-current interrupts
+  that the codec has always had but this driver never mapped, and the shared code
+  refuses to initialise without them.
+- **An interrupt id is not an interrupt.** The other codecs resolve theirs with
+  `regmap_irq_get_virq()` at probe; a static table of regmap-irq indices compiles,
+  loads, and requests entirely different interrupts. Caught by reading a sibling
+  driver rather than by testing - the failure would have looked like "the jack
+  does not work".
