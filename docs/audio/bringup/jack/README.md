@@ -418,3 +418,48 @@ continuously for the three-pole plug whose microphone pin is grounded.
   loads, and requests entirely different interrupts. Caught by reading a sibling
   driver rather than by testing - the failure would have looked like "the jack
   does not work".
+
+## The buttons, and the debounce that is no longer needed
+
+Two full cycles, captured event by event:
+
+```
+BE    SW_HEADPHONE_INSERT=1  SW_MICROPHONE_INSERT=1  SW_JACK_PHYSICAL_INSERT=1
+GOMB  KEY_MEDIA 1 -> 0
+KI    all three -> 0          <- no key event
+BE    all three -> 1
+GOMB  KEY_MEDIA 1 -> 0
+KI    all three -> 0          <- no key event
+```
+
+The private implementation carried a 120 ms delayed-report workaround because
+unplugging tripped the button comparator ~84 ms before the mechanical detection
+noticed, and userspace saw a complete media-key tap. That does not happen here,
+so the workaround did not need porting.
+
+Press and release arrive in the same millisecond: the shared code reports the
+button on release, which is why the pair is not a timing measurement of the
+press.
+
+## Instruments, third attempt
+
+Three capture scripts in a row reported nothing while the driver was working:
+
+| instrument | why it was silent |
+|---|---|
+| `evtest \| while read` | block buffering in the pipe |
+| poll loop with `sleep 0.2` | the device shell does not honour fractional sleeps |
+| `timeout N evtest > file` | SIGTERM kills the process before libc flushes |
+| `... \| sed 's/^/tag /'` | `sed` buffers too - one line got through, the rest did not |
+
+What finally worked has **no stage between the kernel and the output**: a small
+Python reader over `select()` on the device nodes, printing with `flush=True`,
+run in the foreground so nothing can kill it mid-buffer. Tagging is done inside
+the reader rather than by a filter, because the filter was itself one of the
+failures. Kept as [`../tools/evwatch.py`](../tools/evwatch.py).
+
+The general form, worth more than the script: **before believing a null result
+from a harness, take one manual reading of the thing the harness is supposed to
+report.** A silent instrument and a quiet subject are indistinguishable from the
+log alone, and here the difference was four rounds of a person plugging a cable
+in and out.

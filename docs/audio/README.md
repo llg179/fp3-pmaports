@@ -192,9 +192,10 @@ movements with both a 3-pole and a 4-pole accessory:
 | stimulus | reported |
 |---|---|
 | empty socket at boot | nothing inserted |
-| 4-pole headset | headphone **and** microphone |
+| 4-pole headset | headphone, microphone, physical insert |
 | 3-pole headphone | headphone only |
-| removal, either accessory | nothing inserted |
+| headset button, short press | `KEY_MEDIA` press and release |
+| removal, either accessory | all switches cleared, **no key event** |
 
 - **no interrupt is lost**: ten movements produced exactly ten interrupts;
 - the plug type is decided by measurement, not assumed — the two accessories
@@ -202,7 +203,15 @@ movements with both a 3-pole and a 4-pole accessory:
   discrimination comes from the detection algorithm rather than from a status
   bit;
 - no stored insert state exists to drift, so the inversion that used to strand a
-  whole boot in the wrong state has no mechanism left.
+  whole boot in the wrong state has no mechanism left;
+- **removal produces no spurious key press.** The private implementation needed a
+  hand-rolled 120 ms debounce here, because unplugging tripped the button
+  comparator before the mechanical detection noticed and userspace saw a complete
+  media-key tap - enough to start a music player. Two full cycles produced key
+  events only from actual presses.
+
+Only one of the two `Fairphone 3 Headset Jack` input devices carries anything;
+the second stays silent.
 
 **What is not established.** `RESULT_3` reads `0x10` with the socket empty and
 `0x00` with a plug in, which looks like an absolute plug status — but in every
