@@ -1,5 +1,12 @@
 # fp3-pmaports
 
+> ⚠️ **AI-generated.** This page — and the code, device tree and tooling it
+> describes — was written by Claude (Opus 5) working under the direction of
+> Lajosházi, László Gergely, who reviewed every change and made or reviewed
+> every measurement it rests on. Kernel commits carry `Co-authored-by: Claude`;
+> anything prepared for the LKML carries `Assisted-by:` instead and never a
+> `Signed-off-by` from the assistant, since only a human can certify the DCO.
+
 The postmarketOS package that builds the Fairphone 3 mainline kernel — mainline
 `msm8953` with the WCD9335 SLIMbus audio work, the Sony IMX363 rear camera, the
 PMI632 charger and the sensors the SSC keeps behind a QMI service.
@@ -7,13 +14,6 @@ PMI632 charger and the sensors the SSC keeps behind a QMI service.
 Without this, the [kernel branches](https://github.com/llg179org/linux) are only
 source: nothing records which config was used, which symbols had to be turned
 on by hand, or how the thing was actually built.
-
-> **AI-generated.** Written by Claude (Opus 5) under the direction of
-> Lajosházi, László Gergely, who reviewed every change and made the
-> measurements behind the numbers. Kernel commits carry `Co-authored-by:
-> Claude`; anything prepared for the LKML carries `Assisted-by:` instead and
-> never a `Signed-off-by` from the assistant, since only a human can certify
-> the DCO.
 
 ## The goal, and why the names have no version in them
 

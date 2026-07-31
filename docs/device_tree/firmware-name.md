@@ -1,13 +1,16 @@
 # `firmware-name`: why the path stays
 
+> ⚠️ **AI-generated.** This page — and the code, device tree and tooling it
+> describes — was written by Claude (Opus 5) working under the direction of
+> Lajosházi, László Gergely, who reviewed every change and made or reviewed
+> every measurement it rests on. Kernel commits carry `Co-authored-by: Claude`;
+> anything prepared for the LKML carries `Assisted-by:` instead and never a
+> `Signed-off-by` from the assistant, since only a human can certify the DCO.
+
 A review of the Fairphone 3 device tree asked for `firmware-name` to be reduced
 to a bare file name, without the `qcom/msm8953/fairphone/fp3/` prefix. This page
 is the answer, with the evidence, so the question does not have to be argued
 twice.
-
-> **AI-generated.** Researched and written by Claude (Opus 5) under the direction
-> of Lajosházi, László Gergely. The firmware measurements below were taken from
-> this phone; the upstream references are linked and can be checked.
 
 **Short answer: the path is the current upstream convention, and the FP3 already
 follows it exactly. No change.**

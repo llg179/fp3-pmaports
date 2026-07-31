@@ -1,5 +1,12 @@
 # Fairphone 3 (sdm632) mainline port — what is still open
 
+> ⚠️ **AI-generated.** This page — and the code, device tree and tooling it
+> describes — was written by Claude (Opus 5) working under the direction of
+> Lajosházi, László Gergely, who reviewed every change and made or reviewed
+> every measurement it rests on. Kernel commits carry `Co-authored-by: Claude`;
+> anything prepared for the LKML carries `Assisted-by:` instead and never a
+> `Signed-off-by` from the assistant, since only a human can certify the DCO.
+
 This is the **by-branch view** of what is still open: which branch owns which
 item, and whether it can be sent anywhere at all. The by-item view, with the
 measurements and the reasoning behind each entry, is [`TODO.md`](TODO.md), and
@@ -130,18 +137,22 @@ Cross-cutting, mostly `dtbs_check` fallout. Detail:
    SLIMBUS_0 work to that series' authors, not to send ours.
 10. **Cover-letter disclosure** per `Documentation/process/generated-content.rst`:
     which tools, which prompts, which parts, and how it was tested.
-11. **Two more invented WCD9335 property names, with an inverted default.** The
-    MBHC code reads `qcom,hphl-jack-type-normally-open` /
-    `qcom,gnd-jack-type-normally-open`; the family uses the `-normally-closed`
-    forms, where **absent means normally-open** — the opposite of here. Neither
-    is in the FP3 device tree, so `dtbs_check` is clean and detection works;
-    fixing it flips a default on a working path and needs a headset test.
-    Deliberately left when 2-4 were closed. Details in
+11. ~~**Two more invented WCD9335 property names, with an inverted default.**~~
+    **Fixed 2026-07-31**, and not by renaming them: the codec was moved onto the
+    shared `wcd-mbhc-v2`, so it now calls the family's own
+    `wcd_dt_parse_mbhc_data()` and the invented properties were deleted from the
+    driver, the binding and the board file. Details in
     [`TODO.md`](TODO.md#open-before-anything-is-submitted).
 12. ⚠️ **The rebase table's two audio rows are stale.** Measured against a
     nine-patch `submit/7.1.3/audio`; it is now ten (a `dt-bindings` patch at the
     front, the DT commit rewritten). Re-run before quoting. The other seven rows
     stand.
+13. ⚠️ **`submit/7.1.3/audio` still carries the private MBHC implementation**,
+    which the 2026-07-31 jack rework deleted. Regenerate it from
+    `wip/7.1.3/audio`, splitting the core change three ways (function-table
+    refactor → legacy backend → the choice as an API parameter), and only then
+    re-run item 12. Details in
+    [`TODO.md`](TODO.md#open-before-anything-is-submitted).
 
 ---
 
@@ -195,8 +206,11 @@ upstream on item 8. Gaps, in
     speaker path itself measures clean (999.76 Hz at 31.77 dB). Unexplained, and
     deliberately not filed as environmental.
 22. **A stray `Quinary MI2S` backend can attach to the voice front end.**
-23. **The jack is treated as 3-pole**, and no TX gain control is exposed for the
-    call path.
+23. ~~**The jack is treated as 3-pole**~~ — **fixed 2026-07-31.** The codec moved
+    onto the shared `wcd-mbhc-v2` with a legacy comparator backend, and a 4-pole
+    headset and a 3-pole headphone now report differently
+    (`SW_MICROPHONE_INSERT` only for the headset). **No TX gain control is
+    exposed for the call path** is still open.
 
 ## `wip/7.1.3/camera` — Sony IMX363
 

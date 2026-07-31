@@ -1,18 +1,14 @@
 # FP3 sensors on pmOS mainline
 
+> ⚠️ **AI-generated.** This page — and the code, device tree and tooling it
+> describes — was written by Claude (Opus 5) working under the direction of
+> Lajosházi, László Gergely, who reviewed every change and made or reviewed
+> every measurement it rests on. Kernel commits carry `Co-authored-by: Claude`;
+> anything prepared for the LKML carries `Assisted-by:` instead and never a
+> `Signed-off-by` from the assistant, since only a human can certify the DCO.
+
 Accelerometer, gyroscope, magnetometer and proximity on the Fairphone 3 under a
 mainline kernel, through the Snapdragon Sensor Core.
-
-> **AI-generated.** The drivers, tools and documentation in this directory were
-> written by Claude (Opus 5) working under the direction of Lajosházi, László
-> Gergely, who reviewed every change and made every physical measurement they
-> rest on. Kernel commits carry `Co-authored-by: Claude`; anything prepared for
-> the LKML carries `Assisted-by:` instead and never a `Signed-off-by` from the
-> assistant, since only a human can certify the DCO.
->
-> The investigation that produced all this — including three confident
-> conclusions that had to be retracted — is a separate document:
-> [`bringup/README.md`](bringup/README.md).
 
 ## Why there is no I2C driver here
 

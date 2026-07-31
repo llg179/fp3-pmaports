@@ -1,14 +1,16 @@
 # The kernel config
 
+> ⚠️ **AI-generated.** This page — and the code, device tree and tooling it
+> describes — was written by Claude (Opus 5) working under the direction of
+> Lajosházi, László Gergely, who reviewed every change and made or reviewed
+> every measurement it rests on. Kernel commits carry `Co-authored-by: Claude`;
+> anything prepared for the LKML carries `Assisted-by:` instead and never a
+> `Signed-off-by` from the assistant, since only a human can certify the DCO.
+
 [`config-fp3.aarch64`](../../linux-fp3/config-fp3.aarch64) is the postmarketOS
 `qcom-msm8953` config carried forward to the current base;
 [`APKBUILD`](../../linux-fp3/APKBUILD)'s `prepare()` then turns on what that
 config misses:
-
-> **AI-generated.** Written by Claude (Opus 5) under the direction of
-> Lajosházi, László Gergely, who reviewed it. The symbols are recorded
-> here because a kernel that is missing one looks exactly like a kernel whose
-> driver is broken.
 
 | symbol | why |
 |---|---|

@@ -1,14 +1,16 @@
 # Downstream device trees
 
+> ⚠️ **AI-generated.** This page — and the code, device tree and tooling it
+> describes — was written by Claude (Opus 5) working under the direction of
+> Lajosházi, László Gergely, who reviewed every change and made or reviewed
+> every measurement it rests on. Kernel commits carry `Co-authored-by: Claude`;
+> anything prepared for the LKML carries `Assisted-by:` instead and never a
+> `Signed-off-by` from the assistant, since only a human can certify the DCO.
+
 The 4.9 downstream device tree in two forms. "Downstream" here is the
 Android-era tree the device shipped with, as opposed to the mainline one we
 work on; the **vendor is Fairphone** (fairphone.com), who make this phone — the
 FP3 being the third model in their FP1…FP5 line.
-
-> **AI-generated.** Written by Claude (Opus 5) under the direction of
-> Lajosházi, László Gergely, who reviewed it. **Only this page is
-> generated.** The trees it describes are the vendors' own published sources,
-> carried here unmodified.
 
 | | |
 |---|---|

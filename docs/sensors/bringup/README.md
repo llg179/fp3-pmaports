@@ -1,19 +1,18 @@
 # Bringing up the FP3 sensors
 
+> ⚠️ **AI-generated.** This page — and the code, device tree and tooling it
+> describes — was written by Claude (Opus 5) working under the direction of
+> Lajosházi, László Gergely, who reviewed every change and made or reviewed
+> every measurement it rests on. Kernel commits carry `Co-authored-by: Claude`;
+> anything prepared for the LKML carries `Assisted-by:` instead and never a
+> `Signed-off-by` from the assistant, since only a human can certify the DCO.
+
 The investigation behind [`../README.md`](../README.md), kept as a narrative:
 what was believed at each step, what was measured, and what that forced us to
 conclude — including the places where the belief was wrong and had to be
 retracted. The reference material — what the port consists of, where each piece
 came from, how to build and test it — is in the README; this is the reasoning,
 and the instruments and raw data that produced it.
-
-> **AI-generated.** Written by Claude (Opus 5) working under the direction of
-> Lajosházi, László Gergely, who reviewed it and performed every physical
-> measurement it reports. The same applies to most of the code it describes —
-> see the provenance table in [`../README.md`](../README.md#provenance) for who
-> wrote what. Treat the reasoning as reviewed but not infallible: three
-> conclusions in here were stated confidently and later retracted, and they are
-> left in place, marked, because the retractions are the useful part.
 
 Nothing here is needed to run the sensors. Everything that is, lives in
 [`../../../userspace-sensors/`](../../../userspace-sensors/).

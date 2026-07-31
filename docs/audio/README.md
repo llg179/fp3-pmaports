@@ -1,15 +1,16 @@
 # How audio works on this device
 
+> ⚠️ **AI-generated.** This page — and the code, device tree and tooling it
+> describes — was written by Claude (Opus 5) working under the direction of
+> Lajosházi, László Gergely, who reviewed every change and made or reviewed
+> every measurement it rests on. Kernel commits carry `Co-authored-by: Claude`;
+> anything prepared for the LKML carries `Assisted-by:` instead and never a
+> `Signed-off-by` from the assistant, since only a human can certify the DCO.
+
 What carries the sound, which piece configures what, and the rules the
 arrangement has to obey. For the driver changes behind it see
 [`../kernel/README.md`](../kernel/README.md); for the device-tree nodes,
 [`../device_tree/README.md`](../device_tree/README.md).
-
-> **AI-generated.** Written by Claude (Opus 5) under the direction of
-> Lajosházi, László Gergely, who made every acoustic measurement the
-> claims here rest on. How the arrangement was found — including the
-> conclusions that had to be retracted — is in
-> [`bringup/`](bringup/).
 
 This describes the setup that works today: what carries the sound, which piece
 configures what, and the rules the arrangement has to obey. Media playback and

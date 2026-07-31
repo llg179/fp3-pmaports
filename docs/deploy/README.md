@@ -1,12 +1,14 @@
 # Building and deploying
 
+> ⚠️ **AI-generated.** This page — and the code, device tree and tooling it
+> describes — was written by Claude (Opus 5) working under the direction of
+> Lajosházi, László Gergely, who reviewed every change and made or reviewed
+> every measurement it rests on. Kernel commits carry `Co-authored-by: Claude`;
+> anything prepared for the LKML carries `Assisted-by:` instead and never a
+> `Signed-off-by` from the assistant, since only a human can certify the DCO.
+
 How a change gets from an edit to a booted phone, and how the last working
 kernel stays bootable while the new one is tried.
-
-> **AI-generated.** Written by Claude (Opus 5) under the direction of
-> Lajosházi, László Gergely, who ran every one of these procedures on
-> the device. The traps recorded here are ones that cost a build cycle in
-> practice, not ones anticipated on paper.
 
 ## Building
 

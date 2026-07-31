@@ -1,12 +1,14 @@
 # Ubuntu Touch kernel device tree (sources)
 
+> ⚠️ **AI-generated.** This page — and the code, device tree and tooling it
+> describes — was written by Claude (Opus 5) working under the direction of
+> Lajosházi, László Gergely, who reviewed every change and made or reviewed
+> every measurement it rests on. Kernel commits carry `Co-authored-by: Claude`;
+> anything prepared for the LKML carries `Assisted-by:` instead and never a
+> `Signed-off-by` from the assistant, since only a human can certify the DCO.
+
 The device-tree sources of the [kernel the phone actually boots under Ubuntu
 Touch](https://gitlab.com/ubports/porting/community-ports/android10/fairphone/android_kernel_fairphone_sdm632) — the counterpart of the live dump one level up.
-
-> **AI-generated.** Written by Claude (Opus 5) under the direction of
-> Lajosházi, László Gergely, who reviewed it. **Only this page is
-> generated.** The device tree beside it is [UBports'](https://gitlab.com/ubports/porting/community-ports/android10/fairphone/android_kernel_fairphone_sdm632) published source,
-> unmodified.
 
 **This is the tree that matches the device.** Compiling `sdm632-mtp-s3.dts` from
 here and comparing against the live blob gives **zero** node differences (1804

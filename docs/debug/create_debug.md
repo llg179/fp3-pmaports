@@ -1,13 +1,17 @@
 # Building the watchdog safety net onto any branch, from scratch
 
+> ⚠️ **AI-generated.** This page — and the code, device tree and tooling it
+> describes — was written by Claude (Opus 5) working under the direction of
+> Lajosházi, László Gergely, who reviewed every change and made or reviewed
+> every measurement it rests on. Kernel commits carry `Co-authored-by: Claude`;
+> anything prepared for the LKML carries `Assisted-by:` instead and never a
+> `Signed-off-by` from the assistant, since only a human can certify the DCO.
+
 This page is a **procedure**, written to be executed literally — by a person or
 by an assistant — on a branch that has no debug layer. It assumes no branch at
 all: everything it needs is stored next to it in [`files/`](files/). Since
 `wip/<base>/debug` was retired on 2026-07-30, this page **is** the way the layer
 is applied, not the fallback.
-
-> **AI-generated.** Written by Claude (Opus 5) under the direction of
-> Lajosházi, László Gergely, who ran the experiments behind it.
 
 **What you get:** the SoC watchdog starts at driver probe instead of waiting for
 userspace, so a hang anywhere in boot resets the phone instead of leaving a

@@ -1,20 +1,18 @@
 # Bringing up FP3 audio
 
+> ⚠️ **AI-generated.** This page — and the code, device tree and tooling it
+> describes — was written by Claude (Opus 5) working under the direction of
+> Lajosházi, László Gergely, who reviewed every change and made or reviewed
+> every measurement it rests on. Kernel commits carry `Co-authored-by: Claude`;
+> anything prepared for the LKML carries `Assisted-by:` instead and never a
+> `Signed-off-by` from the assistant, since only a human can certify the DCO.
+
 The investigation behind [`../README.md`](../README.md), kept as a narrative:
 what was believed at each step, what was measured, and what that forced us to
 conclude — including, at length, the places where the belief was wrong. The
 reference material — what the audio port consists of, how the layers fit, how to
 check it works — is in the README; this is the reasoning, and the instruments
 and raw data that produced it.
-
-> **AI-generated.** Written by Claude (Opus 5) under the direction of
-> Lajosházi, László Gergely, who owned the device, made every physical
-> measurement, and supplied the judgement about what to believe. The same
-> applies to most of the code it describes. Treat the reasoning as reviewed but
-> not infallible: several conclusions in here were stated with confidence and
-> later retracted, and they are left in place, marked, because **the
-> retractions are the useful part** — this investigation's characteristic
-> failure was a well-evidenced argument for looking in the wrong place.
 
 Nothing here is needed to run audio. Everything that is, lives in
 [`../../../userspace-audio/`](../../../userspace-audio/) and in the kernel
@@ -204,6 +202,22 @@ Verified over 14 edges and 6 cycles without drift. Note which input device is
 which: the codec's own jack is `event5`, created first in the probe; `event6` is
 the dead machine-driver one.
 
+**All four of those points were superseded on 2026-07-31, and the second one was
+wrong.** The codec was moved onto the kernel's *shared* `wcd-mbhc-v2`, with a new
+legacy comparator backend added to it because this codec has no MBHC ADC. Points
+1 and 3 survive as facts about the hardware; point 2 does not — `MECH_DETECTION_TYPE`
+is exactly what the shared code takes the direction from, and it is reliable.
+Point 4 became unnecessary, because nothing stores an insert state any more.
+
+The reason the earlier reading looked solid is worth keeping: **every one of
+those measurements was taken under this port's own incomplete MBHC init.** With
+the register setup the shared code performs, `RESULT_3` follows the socket
+(`0x10` empty, `0x00` plugged) where before it sat at `0x08` either way. Two
+rounds concluded "the hardware cannot do this" from an instrument that had never
+been switched on properly. The full record, including what is still *not*
+established about `RESULT_3`, is in [`jack/`](jack/) and the settled description
+is in [`../README.md`](../README.md#the-headset-jack).
+
 ## Step 5 — call audio, and a week undone by one sentence
 
 Call audio was declared, in permanent notes, to be blocked on a deep hole in
@@ -290,17 +304,9 @@ first year the same way.
   speaker path itself measures clean (999.76 Hz at 31.77 dB). Unexplained;
   deliberately not filed as "environmental".
 * **A stray `Quinary MI2S` backend** can attach to the voice front end.
-* **The jack is treated as 3-pole**, and there is no TX gain control exposed for
-  the call path.
-* **The two jack-polarity properties are this port's invention.** The driver
-  reads `qcom,hphl-jack-type-normally-open` and
-  `qcom,gnd-jack-type-normally-open`; the rest of the family uses
-  `qcom,hphl-jack-type-normally-closed` and
-  `qcom,ground-jack-type-normally-closed` (`wcd_dt_parse_mbhc_data()`), whose
-  **default is the opposite** — absent means normally-*open* there, normally-
-  *closed* here. Neither is set in the FP3 device tree, so nothing fails
-  `dtbs_check` today and headset detection works as it is; aligning the names
-  would flip the default and has to be paired with setting the property on this
-  board, which is a change to a working detection path and wants a device test
-  of its own. Left deliberately for that reason when the six device-tree
-  properties were documented on 2026-07-30.
+* **There is no TX gain control exposed for the call path.** (The other half of
+  this item — "the jack is treated as 3-pole" — was closed on 2026-07-31; see
+  step 4.)
+* **`submit/7.1.3/audio` is stale**: it still carries the private MBHC
+  implementation and its button debounce, both of which step 4's rework deleted.
+  It has to be regenerated before it is sent anywhere.

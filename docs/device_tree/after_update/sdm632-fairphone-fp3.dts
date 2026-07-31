@@ -959,13 +959,8 @@
 				qcom,dmic-sample-rate = <2400000>;
 
 				/*
-				 * Headset (MBHC) button thresholds. These
-				 * are the common Qualcomm reference values; the
-				 * jack insert/remove path does not depend on them
-				 * and works regardless. If the physical jack turns
-				 * out to be normally-open, add the
-				 * qcom,hphl-jack-type-normally-open and
-				 * qcom,gnd-jack-type-normally-open properties.
+				 * Headset (MBHC) button thresholds - the common
+				 * Qualcomm reference values.
 				 */
 				qcom,mbhc-buttons-vthreshold-microvolt =
 					<75000 150000 237000 450000 500000

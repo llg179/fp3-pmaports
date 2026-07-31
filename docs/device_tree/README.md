@@ -1,14 +1,16 @@
 # Device tree
 
+> ⚠️ **AI-generated.** This page — and the code, device tree and tooling it
+> describes — was written by Claude (Opus 5) working under the direction of
+> Lajosházi, László Gergely, who reviewed every change and made or reviewed
+> every measurement it rests on. Kernel commits carry `Co-authored-by: Claude`;
+> anything prepared for the LKML carries `Assisted-by:` instead and never a
+> `Signed-off-by` from the assistant, since only a human can certify the DCO.
+
 Everything about the FP3 device tree: the change this port makes, where its
 content came from, and how much of the surrounding tree is upstream. The trees
 themselves are checked in here, so none of the claims below have to be taken on
 trust.
-
-> **AI-generated.** Written by Claude (Opus 5) under the direction of
-> Lajosházi, László Gergely, who reviewed it. The device trees checked
-> in under `downstream/` are **not** ours and not generated — they are the
-> vendor's and [UBports'](https://gitlab.com/ubports/porting/community-ports/android10/fairphone/android_kernel_fairphone_sdm632) published sources, unmodified.
 
 | directory | contents | what it is | its README |
 |---|---|---|---|
@@ -18,8 +20,9 @@ trust.
 ☠️ `integration/<base>` deliberately excludes the `debug` layer, so these
 snapshots do **not** show the watchdog node — that lives on `debug-int/<base>`, in
 its own `sdm632-fairphone-fp3-debug.dtsi`, and is documented in
-[`../debug/create_debug.md`](../debug/create_debug.md). Refreshed 2026-07-30
-after the split; before it, `after_update/` carried the watchdog inline.
+[`../debug/create_debug.md`](../debug/create_debug.md). Refreshed 2026-07-31,
+after the jack rework dropped the two invented switch-type properties; before
+2026-07-30, `after_update/` carried the watchdog inline.
 | [`downstream/`](downstream/) | — | the Android-era 4.9 tree, in the two forms below; where the values in the nodes we **add** come from | [README](downstream/README.md) — **compares the two**, and answers which Fairphone release the running tree is closest to |
 | &nbsp;&nbsp;└ [`downstream/UT/`](downstream/UT/) | [`fp3-ubuntu-touch-live.dts`](downstream/UT/fp3-ubuntu-touch-live.dts) | the tree **as it runs**: dumped off the phone under Ubuntu Touch, fully resolved — ground truth for values | [README](downstream/UT/README.md) |
 | &nbsp;&nbsp;&nbsp;&nbsp;└ [`downstream/UT/kernel-dt/`](downstream/UT/kernel-dt/) | board file [`sdm632-mtp-s3.dts`](downstream/UT/kernel-dt/arch/arm64/boot/dts/qcom/sdm632-mtp-s3.dts) in [`…/dts/qcom/`](downstream/UT/kernel-dt/arch/arm64/boot/dts/qcom/) (938 files) + [`include/dt-bindings/`](downstream/UT/kernel-dt/include/dt-bindings/) | the **sources that dump was built from** — the UBports FP3 kernel's device tree (<https://gitlab.com/ubports/porting/community-ports/android10/fairphone/android_kernel_fairphone_sdm632>, branch `ubuntutouch`); the only tree that reproduces the live one exactly | [README](downstream/UT/kernel-dt/README.md) |

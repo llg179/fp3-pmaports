@@ -1,15 +1,17 @@
 # FP3 userspace audio (pulseaudio)
 
+> ⚠️ **AI-generated.** This page — and the code, device tree and tooling it
+> describes — was written by Claude (Opus 5) working under the direction of
+> Lajosházi, László Gergely, who reviewed every change and made or reviewed
+> every measurement it rests on. Kernel commits carry `Co-authored-by: Claude`;
+> anything prepared for the LKML carries `Assisted-by:` instead and never a
+> `Signed-off-by` from the assistant, since only a human can certify the DCO.
+
 The kernel work makes the WCD9335 codec play and capture; this is the userspace
 half that makes it work through **pulseaudio**, so audio comes out of apps and
 not just `aplay`/`arecord`. Verified end-to-end on postmarketOS 7.0.9 (phosh,
 pulseaudio 17, alsa-lib 1.2.16): speaker playback and the built-in handset
 microphone both work through pulseaudio, surviving a cold reboot.
-
-> **AI-generated.** Written by Claude (Opus 5) under the direction of
-> Lajosházi, László Gergely, who made every acoustic measurement the
-> claims here rest on. How it was arrived at is in
-> [`../docs/audio/bringup/`](../docs/audio/bringup/).
 
 ## What's here
 
@@ -72,12 +74,14 @@ The headset microphone (AMIC2) and the built-in handset mic (DMIC0) share the
 codec's decimator 0, so only one is active at a time. Two things stop this from
 being automatic:
 
-  - **jack detection had to be written first.** mainline WCD9335 has no MBHC
-    at all; this port adds it, and only the `Headset Jack` control (and the
-    matching input device) ever moves - `Mic Jack` and `Headphone Jack` are
-    pins of the machine driver's jack that nothing reports into. During a call
-    `fp3-voiced` follows the jack; for media capture the choice is still
-    manual, see below.
+  - **jack detection had to be written first.** mainline WCD9335 has no MBHC at
+    all; this port adds it — since 2026-07-31 through the kernel's shared
+    `wcd-mbhc-v2` — and only the `Headset Jack` control (and the matching input
+    device) ever moves; `Mic Jack` and `Headphone Jack` are pins of the machine
+    driver's jack that nothing reports into. During a call `fp3-voiced` follows
+    the jack; for media capture the choice is still manual, see below. That is
+    now a userspace gap only: the kernel does say whether the plugged accessory
+    has a microphone.
 
   - **the mux must be changed while the capture is idle.** Re-applying the
     input mux while a capture stream is *live* does not re-run the ADC widget's
@@ -100,7 +104,7 @@ does, because the mux may only be changed while the capture is idle.
 | Speaker playback | works through pulseaudio (verified, cold-boot) |
 | Earpiece / Headphones playback | routed and openable; separate card profiles |
 | Handset microphone (DMIC0) | works through pulseaudio as `fp3-handset-mic` (verified) |
-| Headset microphone (AMIC2) | works through pulseaudio, selected with `fp3-mic-select headset` (verified acoustically); no auto jack detection |
+| Headset microphone (AMIC2) | works through pulseaudio, selected with `fp3-mic-select headset` (verified acoustically). The jack reports a headset separately from a headphone, and calls follow it; **media capture does not switch automatically** |
 | Voice call | **works, verified with live calls** — earpiece + handset mic, headset + headset mic, and speakerphone (Quinary MI2S), with per-output volume, mute and the speakerphone button, and route changes in ~0.35 s. Driven by `fp3-voiced`, which takes the card from pulseaudio for the duration of the call and mirrors the volume onto the gain in the path |
 
 
@@ -191,21 +195,21 @@ The codec reports the jack on two controls and only one of them moves here:
 
 | control | meaning | on this board |
 |---|---|---|
-| `Headset Jack` | 4-pole plug, has a microphone | **the one that works** (codec MBHC) |
-| `Headphone Jack` | 3-pole plug, no microphone | never fires - it is a pin of the machine driver's jack, which nothing reports into |
-| `Mic Jack` | microphone-only accessory | same, never fires |
+| `Headset Jack` | the codec's own jack, carrying headphone, microphone, mechanical and the button bits | **the one that works** (codec MBHC) |
+| `Headphone Jack` | a pin of the machine driver's jack | never fires - nothing reports into it |
+| `Mic Jack` | same | same, never fires |
 
 So every jack-aware UCM device names `Headset Jack`, and `fp3-voiced` reads the
 codec's jack *input device* (`/dev/input/event*`, `SW_HEADPHONE_INSERT` /
-`SW_MICROPHONE_INSERT`) rather than polling a mixer control. A
-plugged jack means headset speaker plus headset microphone (AMIC2 on MIC BIAS2,
-2.8 V - the built-in microphones are the digital DMIC0-3 instead).
+`SW_MICROPHONE_INSERT`) rather than polling a mixer control.
 
-**Open:** a 3-pole plug is also reported as `Headset Jack`, so the uplink would
-be routed to a microphone that is not there. The classification belongs in the
-codec's MBHC code, which already has a `SND_JACK_HEADPHONE` branch it never
-reaches; deciding it needs the mic-bias load measurement. Until then, treat a
-plugged jack as a headset.
+**The two switches are independent, and that is the point.** Since 2026-07-31 the
+codec runs on the kernel's shared `wcd-mbhc-v2`, which measures the plug rather
+than assuming it: a 4-pole headset raises both switches, a 3-pole headphone
+raises only `SW_HEADPHONE_INSERT`. `fp3-voiced` therefore routes the uplink to
+the headset microphone (AMIC2 on MIC BIAS2, 2.8 V) only when there is one, and
+falls back to the built-in digital DMIC0-3 otherwise. The headset button arrives
+on the same device as `KEY_MEDIA`.
 
 Traps that cost real debugging time:
 

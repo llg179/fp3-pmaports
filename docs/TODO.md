@@ -1,13 +1,16 @@
 # Open items
 
+> ⚠️ **AI-generated.** This page — and the code, device tree and tooling it
+> describes — was written by Claude (Opus 5) working under the direction of
+> Lajosházi, László Gergely, who reviewed every change and made or reviewed
+> every measurement it rests on. Kernel commits carry `Co-authored-by: Claude`;
+> anything prepared for the LKML carries `Assisted-by:` instead and never a
+> `Signed-off-by` from the assistant, since only a human can certify the DCO.
+
 Things that are known-broken, deliberately unfinished, or parked with enough
 context to pick up later. Each entry says what was measured, not what was
 guessed. Items that are already written up elsewhere are linked rather than
 repeated.
-
-> **AI-generated.** Written by Claude (Opus 5) under the direction of
-> Lajosházi, László Gergely, who decided what belongs here and what is
-> already settled. Each entry reports a measurement he made or reviewed.
 
 ## Open before anything is submitted
 
@@ -115,21 +118,18 @@ Then, in rough order of cost:
     [`vendor/q6voice-sdm670`](https://github.com/llg179org/linux/tree/vendor/q6voice-sdm670);
     the realistic move is to offer the SLIMBUS_0 work to that series' authors
     rather than to send anything ourselves.
-11. **Two more WCD9335 properties are this port's invention, and their default
-    is inverted.** The MBHC code reads `qcom,hphl-jack-type-normally-open` and
-    `qcom,gnd-jack-type-normally-open`; the rest of the family spells them
-    `qcom,hphl-jack-type-normally-closed` and
-    `qcom,ground-jack-type-normally-closed` (`wcd_dt_parse_mbhc_data()` in
-    `wcd-mbhc-v2.c`, used by wcd934x/937x/938x) — and **absent means
-    normally-open there, normally-closed here.** Neither is set in the FP3
-    device tree, so nothing fails `dtbs_check` and headset detection works
-    today; that is why the six-property fix on 2026-07-30 documented the
-    others and deliberately left these alone. Closing it means renaming the
-    properties, inverting the driver's sense **and** setting the new property
-    on this board to keep the current behaviour — a change to a working
-    detection path, so it needs its own device test with a headset. Same class
-    of defect as item 2 was, one step removed: an undocumented name we made up,
-    in code headed for the list.
+11. ~~**Two more WCD9335 properties are this port's invention, and their default
+    is inverted.**~~ — `qcom,hphl-jack-type-normally-open` and
+    `qcom,gnd-jack-type-normally-open`, against the family's
+    `-normally-closed` spellings with the opposite default. **Fixed
+    2026-07-31**, and the fix removed the question rather than answering it: the
+    codec was moved onto the kernel's shared `wcd-mbhc-v2` (with a new legacy
+    comparator backend, since this codec has no MBHC ADC), so it now calls the
+    family's own `wcd_dt_parse_mbhc_data()`. Both invented names were deleted
+    from the driver, from the binding and from the board file, and the board
+    relies on the shared default — which is normally-open, the behaviour it
+    already had. Verified with a headset on the device: a 4-pole headset, a
+    3-pole headphone, the button and both removals all report correctly.
 12. **The measured rebase table no longer describes the audio series.** It was
     taken on 2026-07-30 against a nine-patch `submit/7.1.3/audio`; the series is
     now **ten** patches — a `dt-bindings` patch was added at the front and the
@@ -137,6 +137,17 @@ Then, in rough order of cost:
     [`kernel/README.md`](kernel/README.md#does-any-of-it-apply-to-a-maintainer-tree)
     ("conflicts on the first patch", "conflicts") are stale and have to be
     re-run before anyone quotes them. The other seven rows are untouched.
+13. **`submit/7.1.3/audio` no longer matches the branch it is distilled from.**
+    The jack rework of 2026-07-31 replaced the private MBHC implementation with
+    the shared `wcd-mbhc-v2` plus a new legacy backend, so the two commits the
+    series still carries — *"add MBHC headset jack detection"* and *"debounce the
+    MBHC button reports"* — describe code that no longer exists on
+    `wip/7.1.3/audio`, and the debounce is not needed at all any more. The series
+    has to be regenerated, and the new core commit split three ways for the list:
+    the refactor to a function table (no functional change), the legacy backend
+    itself, and making the choice a `wcd_mbhc_init()` parameter. Until then, do
+    not send it. Regenerating it invalidates item 12 as well, so re-run the
+    rebase table afterwards, not before.
 
 Two things were checked and are **not** defects: the three `ENOTSUPP`
 comparisons in the audio machine driver (the ASoC core returns exactly that, and

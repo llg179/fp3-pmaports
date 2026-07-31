@@ -1,5 +1,12 @@
 # The move under `llg179org`
 
+> ⚠️ **AI-generated.** This page — and the code, device tree and tooling it
+> describes — was written by Claude (Opus 5) working under the direction of
+> Lajosházi, László Gergely, who reviewed every change and made or reviewed
+> every measurement it rests on. Kernel commits carry `Co-authored-by: Claude`;
+> anything prepared for the LKML carries `Assisted-by:` instead and never a
+> `Signed-off-by` from the assistant, since only a human can certify the DCO.
+
 Done on 2026-07-31. Kept as a record, because the next owner change - or the
 next person reading a stale URL - needs the order and the one hazard, not a
 reconstruction.

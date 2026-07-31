@@ -1,12 +1,16 @@
 # Debug: the safety net, and where the method lives
 
+> ⚠️ **AI-generated.** This page — and the code, device tree and tooling it
+> describes — was written by Claude (Opus 5) working under the direction of
+> Lajosházi, László Gergely, who reviewed every change and made or reviewed
+> every measurement it rests on. Kernel commits carry `Co-authored-by: Claude`;
+> anything prepared for the LKML carries `Assisted-by:` instead and never a
+> `Signed-off-by` from the assistant, since only a human can certify the DCO.
+
 The `debug` category is the one part of this port that is **not** trying to make
 the phone do something. It exists so that a bring-up session on a phone sitting
 on a desk in another room does not end with a device that needs a thumb on a
 button.
-
-> **AI-generated.** Written by Claude (Opus 5) under the direction of
-> Lajosházi, László Gergely, who ran the experiments it describes.
 
 ## The how-to is not here
 

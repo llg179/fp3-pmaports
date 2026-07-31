@@ -1,15 +1,15 @@
 # FP3 charging on pmOS mainline
 
+> ⚠️ **AI-generated.** This page — and the code, device tree and tooling it
+> describes — was written by Claude (Opus 5) working under the direction of
+> Lajosházi, László Gergely, who reviewed every change and made or reviewed
+> every measurement it rests on. Kernel commits carry `Co-authored-by: Claude`;
+> anything prepared for the LKML carries `Assisted-by:` instead and never a
+> `Signed-off-by` from the assistant, since only a human can certify the DCO.
+
 The PMI632 charger on the Fairphone 3 under a mainline kernel: what makes it
 charge, what stops it charging too hard, and how it got from 1 A to the 2 A
 this phone's pack is rated for.
-
-> **AI-generated.** The driver changes, device tree and documentation in this
-> directory were written by Claude (Opus 5) working under the direction of
-> Lajosházi, László Gergely, who reviewed every change and made or reviewed
-> every measurement they rest on. Kernel commits carry `Co-authored-by: Claude`;
-> anything prepared for the LKML carries `Assisted-by:` instead and never a
-> `Signed-off-by` from the assistant, since only a human can certify the DCO.
 
 ## The shape of it
 

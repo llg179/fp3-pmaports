@@ -1,14 +1,17 @@
 # Rolling to a new kernel base
 
+> ⚠️ **AI-generated.** This page — and the code, device tree and tooling it
+> describes — was written by Claude (Opus 5) working under the direction of
+> Lajosházi, László Gergely, who reviewed every change and made or reviewed
+> every measurement it rests on. Kernel commits carry `Co-authored-by: Claude`;
+> anything prepared for the LKML carries `Assisted-by:` instead and never a
+> `Signed-off-by` from the assistant, since only a human can certify the DCO.
+
 ## The model this procedure moves
 
 The layers and the category rule are on the
 [front page](../README.md#the-branch-model); this is the part you only need when
 a base actually changes.
-
-> **AI-generated.** Written by Claude (Opus 5) under the direction of
-> Lajosházi, László Gergely, who has run this procedure through the
-> base changes it describes.
 
 Worked across two real bases — `7.0.9` (retired, kept as history) and `7.1.3`
 (current) — every branch reads off at a glance:

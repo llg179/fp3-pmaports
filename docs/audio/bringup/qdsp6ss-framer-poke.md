@@ -1,13 +1,16 @@
 # The QDSP6SS framer poke: what it was, and why it is gone
 
+> ⚠️ **AI-generated.** This page — and the code, device tree and tooling it
+> describes — was written by Claude (Opus 5) working under the direction of
+> Lajosházi, László Gergely, who reviewed every change and made or reviewed
+> every measurement it rests on. Kernel commits carry `Co-authored-by: Claude`;
+> anything prepared for the LKML carries `Assisted-by:` instead and never a
+> `Signed-off-by` from the assistant, since only a human can certify the DCO.
+
 The kernel wrote to a QDSP6SS register on every boot, in two places, to make the
 WCD9335 audio codec answer at all. The code was added on 2026-07-25 and removed
 on 2026-07-29, after it was measured to do nothing. This page is the record:
 what the poke was, why it looked necessary, and what settled it.
-
-> **AI-generated.** Written by Claude (Opus 5) under the direction of
-> Lajosházi, László Gergely, who ran the phone and made the physical
-> measurements. The commits it describes are linked.
 
 ## Why it existed
 

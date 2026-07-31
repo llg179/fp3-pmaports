@@ -1,12 +1,14 @@
 # fp3-selftest — functional regression battery
 
+> ⚠️ **AI-generated.** This page — and the code, device tree and tooling it
+> describes — was written by Claude (Opus 5) working under the direction of
+> Lajosházi, László Gergely, who reviewed every change and made or reviewed
+> every measurement it rests on. Kernel commits carry `Co-authored-by: Claude`;
+> anything prepared for the LKML carries `Assisted-by:` instead and never a
+> `Signed-off-by` from the assistant, since only a human can certify the DCO.
+
 Run this after every kernel bump, so that "everything still works" is a
 repeatable measurement instead of a memory.
-
-> **AI-generated.** Written by Claude (Opus 5) under the direction of
-> Lajosházi, László Gergely, who reviewed the checks and ran them on the
-> device. Every check here exists because something it now catches went
-> unnoticed once.
 
 The suite exists because of a specific near-miss: a missing DAPM route
 (`SLIMBUS_0_RX` ← `SLIMBUS_0_RX Voice Mixer`) made the voice-call PCM impossible

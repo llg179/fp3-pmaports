@@ -1,15 +1,17 @@
 # Kernel changes: what we touch, whose code it is, what is new
 
+> ⚠️ **AI-generated.** This page — and the code, device tree and tooling it
+> describes — was written by Claude (Opus 5) working under the direction of
+> Lajosházi, László Gergely, who reviewed every change and made or reviewed
+> every measurement it rests on. Kernel commits carry `Co-authored-by: Claude`;
+> anything prepared for the LKML carries `Assisted-by:` instead and never a
+> `Signed-off-by` from the assistant, since only a human can certify the DCO.
+
 The counterpart of [`../device_tree/README.md`](../device_tree/README.md) for the
 C code. Almost nothing here is a new driver: every file is somebody else's work
 with a Fairphone 3 shaped hole filled in. This page says, per file, **where it
 came from and from whom**, **what we added and what that was derived from**, and
 **what genuinely did not exist before**.
-
-> **AI-generated.** Written by Claude (Opus 5) under the direction of
-> Lajosházi, László Gergely, who reviewed every change it describes.
-> Where a file is somebody else's work, the table says so; where the assistant
-> wrote it, the provenance line says that too.
 
 Measured on `integration/7.1.3` against its base `v7.1.3-r0`. Everything in the
 "what we add" column was developed with the assistance of
@@ -65,8 +67,8 @@ base.
 
 | component | file | whose code | what we added |
 |---|---|---|---|
-| WCD9335 codec | `wcd9335.c` | Srinivas Kandagatla, [`20aedafdf492`](https://github.com/torvalds/linux/commit/20aedafdf4926e7a957f8b302a18c8fb75c7e332) | init fix, TX front-end hold release, DT-driven mic bias and DMIC rate, MBHC jack detection, button debounce, capture gains |
-| MBHC jack detection | `wcd9335.c` | Kandagatla's **[2018 MBHC series](https://lkml.iu.edu/hypermail/linux/kernel/1809.3/03254.html), which never merged** | revived onto today's driver and adapted to measured behaviour: the insert/remove direction is a software toggle here because `MECH_DETECT_TYPE` reads back unreliably |
+| WCD9335 codec | `wcd9335.c` | Srinivas Kandagatla, [`20aedafdf492`](https://github.com/torvalds/linux/commit/20aedafdf4926e7a957f8b302a18c8fb75c7e332) | init fix, TX front-end hold release, DT-driven mic bias and DMIC rate, the move onto the shared MBHC, capture gains |
+| MBHC jack detection | `wcd-mbhc-v2.c`, `wcd9335.c` | the kernel's own shared MBHC, whose `WCD_DETECTION_LEGACY` enum and `mbhc_detection_logic` field were already there with no second user | the **legacy comparator backend** behind a `wcd_mbhc_fn` table, and the wcd9335 side of it: the register field map, the codec callbacks, the button-threshold conversion and the interrupt mapping. A private implementation revived from Kandagatla's **[2018 MBHC series](https://lkml.iu.edu/hypermail/linux/kernel/1809.3/03254.html), which never merged**, came first and was deleted — see [`audio/bringup/jack/`](../audio/bringup/jack/) |
 | msm8916 machine driver | `apq8016_sbc.c` | Kandagatla, [`bdb052e81f62`](https://github.com/torvalds/linux/commit/bdb052e81f6236b4febb50ed74f79f770fa82cc5) | a SLIMbus backend, following how the existing WCD9335 machine drivers wire the codec |
 | Q6 Voice DAI | `q6voice-dai.c` | Gerhold / Knecht / Pflüger — **not upstream**, carried by [msm8953-mainline](https://github.com/msm8953-mainline/linux/blob/v7.1.3-r0/sound/soc/qcom/qdsp6/q6voice-dai.c) | the VoiceMMode1 / CS-Voice mixer routes to `SLIMBUS_0_RX/TX`, including the mixer → port output edge |
 | Q6 AFE | `q6afe.c` | Kandagatla, [`7fa2d70f9766`](https://github.com/torvalds/linux/commit/7fa2d70f976657111a5ea4f3d16a738ddaa10c4f) | `ADSP_EALREADY` on `AFE_PORT_CMD_DEVICE_START` treated as success |
@@ -123,9 +125,22 @@ worked on any of them.
 | [`b3a83765fa54`](https://github.com/llg179org/linux/commit/b3a83765fa54) | fix codec init: select the efuse sense state before enabling sensing, set `MCLK_CFG` bit 2 | **new** — found by comparing against the downstream Qualcomm sequence |
 | [`ad3bfc32011b`](https://github.com/llg179org/linux/commit/ad3bfc32011b) | release the TX front-end hold after the ADC is up | **new** — `wcd9335_codec_enable_adc()` takes the hold and mainline never releases it, so the decimator returns exact zero. Nobody had noticed because nobody had captured audio on this codec in mainline |
 | [`cb8efad0cd2a`](https://github.com/llg179org/linux/commit/cb8efad0cd2a) | take mic-bias voltage and DMIC clock rate from the DT | the property names follow the existing WCD9335 binding; the FP3's values come from Fairphone's downstream `msm8953-audio.dtsi` |
-| [`742ab5a8236a`](https://github.com/llg179org/linux/commit/742ab5a8236a) | MBHC headset jack detection | **revived from the 2018 MBHC series that was never merged** into mainline, adapted to this codec's measured behaviour (the insert/remove direction is a software toggle here, because `MECH_DETECT_TYPE` reads back unreliably) |
-| [`371b3fa4d85a`](https://github.com/llg179org/linux/commit/371b3fa4d85a) | debounce the MBHC button reports | **new** — measured on the phone: an unplug trips the button comparator 84 ms before mechanical detection notices, so unplugging headphones started the media player |
-| [`85e5cebf6dad`](https://github.com/llg179org/linux/commit/85e5cebf6dad) | expose the `DEC0..DEC8` capture gains | **new** — the registers exist and mirror the RX ones exactly; the driver simply never exposed them, so capture level could not be set at all |
+| [`b486048d9442`](https://github.com/llg179org/linux/commit/b486048d9442) | map the two headphone OCP fault interrupts | **new here** — trivial, but the shared MBHC requires both, and the mainline driver never mapped them |
+| [`e665515a2de6`](https://github.com/llg179org/linux/commit/e665515a2de6) | move the codec onto the shared MBHC | **reused from the tree** — this replaced a private implementation revived from Kandagatla's [2018 MBHC series](https://lkml.iu.edu/hypermail/linux/kernel/1809.3/03254.html). The register field table, the callbacks and the button-threshold conversion are FP3 work; the state machine is the kernel's |
+| [`741df01d2966`](https://github.com/llg179org/linux/commit/741df01d2966) | expose the `DEC0..DEC8` capture gains | **new** — the registers exist and mirror the RX ones exactly; the driver simply never exposed them, so capture level could not be set at all |
+
+Two more commits in this series are on `sound/soc/codecs/wcd-mbhc-v2.c` rather
+than on the codec: [`d02280cd75dc`](https://github.com/llg179org/linux/commit/d02280cd75dc)
+adds the legacy comparator backend behind a `wcd_mbhc_fn` table, and
+[`67485baf1cf0`](https://github.com/llg179org/linux/commit/67485baf1cf0) stops the
+shared code enabling an interrupt it cannot balance.
+
+☠️ A hash quoted on this page stops being the branch tip's version of that change
+the moment the branch is rebuilt — the cherry-pick onto `integration`, and the
+next rebase, both give it a new one. The links keep working because the old tip
+was tagged under `archive/*` before the rewrite, which is the whole reason that
+convention exists; they may nonetheless point at an *archived twin* of the commit
+rather than the one on the branch today. Resolve by subject, not by hash.
 
 ## Audio: the machine driver
 

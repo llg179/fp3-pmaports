@@ -1,15 +1,16 @@
 # FP3 sensor userspace
 
+> ⚠️ **AI-generated.** This page — and the code, device tree and tooling it
+> describes — was written by Claude (Opus 5) working under the direction of
+> Lajosházi, László Gergely, who reviewed every change and made or reviewed
+> every measurement it rests on. Kernel commits carry `Co-authored-by: Claude`;
+> anything prepared for the LKML carries `Assisted-by:` instead and never a
+> `Signed-off-by` from the assistant, since only a human can certify the DCO.
+
 Everything the phone needs for the SSC sensors, next to the kernel package that
 provides the drivers. Nothing here is optional: without the registry server the
 sensors never start, and without the near level `iio-sensor-proxy` ignores the
 proximity sensor in silence.
-
-> **AI-generated.** Written by Claude (Opus 5) under the direction of Lajosházi,
-> László Gergely, who reviewed every change and made the measurements behind the
-> numbers. How this was arrived at is written up in
-> [`../docs/sensors/bringup/`](../docs/sensors/bringup/); what the port consists
-> of is in [`../docs/sensors/`](../docs/sensors/).
 
 | file | role |
 |---|---|
