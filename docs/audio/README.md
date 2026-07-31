@@ -162,6 +162,150 @@ sequenceDiagram
     VD->>PA: restore an available HiFi profile
 ```
 
+## The headset jack
+
+The jack is detected by the WCD9335's MBHC block (Multi-Button Headset
+Control). It is the one part of the audio path where this port cannot follow an
+upstream example, because **upstream has no jack on this phone at all**: the
+pre-port `sdm632-fairphone-fp3.dts` describes the AW8898 loudspeaker on Quinary
+MI2S and nothing else — no SLIMbus codec, no MBHC, no micbias. Everything below
+is this port's own, which is also why it is the part with the most open
+questions.
+
+### What the hardware offers, and what we actually use
+
+| source | what it is | what we do with it |
+|---|---|---|
+| `ANA_MBHC_MECH` bit 7 `L_DET_EN` | mechanical level detection, raises the insert/remove interrupt | enabled at init |
+| `ANA_MBHC_MECH` bit 5 `MECH_DETECTION_TYPE` | which direction L_DET is armed for | written after each edge; **never read back** |
+| `ANA_MBHC_MECH` bits 4, 3 | `HPHL_PLUG_TYPE`, `GND_PLUG_TYPE` — normally-open vs normally-closed jack switches | set from DT, see below |
+| `ANA_MBHC_RESULT_3` bit 4 | `SWCH_LEVEL_REMOVE` — the mechanical plug status | **not used** |
+| `ANA_MBHC_RESULT_3` bit 3 | `HS_COMP_RESULT` — the headset comparator, an *electrical* result | used, wrongly, as the boot-time plug status |
+| `ANA_MBHC_RESULT_3` bits 0-2 | `BTN_RESULT` — which button is down | button reporting |
+| the button transient during insertion | a mic contact sweeping the ground ring trips button 0 | 3-pole vs 4-pole classification |
+
+The `RESULT_3` layout is not guesswork: `wcd934x`, `wcd937x`, `wcd938x`,
+`wcd939x` and `pm4125` all map that register identically through
+`wcd-mbhc-v2`'s field table.
+
+### How the working drivers do it, and how we differ
+
+Three independent implementations solve the same problem, and **all three take
+the direction of an edge from the hardware**. Ours is the only one that counts.
+
+`msm8916-wcd-analog` — the driver every other msm8953/msm8916 phone uses, so
+the closest relative there is:
+
+```c
+if (snd_soc_component_read(component, CDC_A_MBHC_DET_CTL_1) &
+                CDC_A_MBHC_DET_CTL_MECH_DET_TYPE_MASK)
+        ins = true;                     /* the edge that fired is the one we armed for */
+```
+
+`wcd-mbhc-v2` — shared by the five codecs above:
+
+```c
+detection_type = wcd_mbhc_read_field(mbhc, WCD_MBHC_MECH_DETECTION_TYPE);
+wcd_mbhc_write_field(mbhc, WCD_MBHC_MECH_DETECTION_TYPE, !detection_type);
+if (detection_type) { /* insertion */ }
+```
+
+ours, in `wcd9335.c`:
+
+```c
+wcd->jack_inserted = !wcd->jack_inserted;   /* a running count */
+```
+
+The consequence is structural: a count has no way back to the truth. One missed
+or spurious edge inverts the reported state **for the rest of the boot**, and
+the only thing that decides whether it is right at all is the value it started
+from.
+
+`msm8916-wcd-analog` has a second, independent answer that we do not: a
+board-level jack-detect GPIO wired through `snd_soc_jack_add_gpios`, readable at
+any time including at boot. Neither Qualcomm's msm8953 audio device tree nor
+this phone's has such a line, so that route is closed here.
+
+### The boot value, which is the actual defect
+
+The initial state is seeded once, from `RESULT_3` bit 3 — `HS_COMP_RESULT`, the
+electrical comparator, not the plug. Measured on this board that bit reads 1
+constantly, so the seed always computes "nothing plugged in". That happens to be
+right whenever the socket is empty at boot, which is the common case, and is
+silently wrong whenever a headset is already in.
+
+### What has been measured, and what it rules out
+
+The tool is [`bringup/tools/jack-probe.py`](bringup/tools/jack-probe.py), which
+samples every MBHC register raw while a jack is plugged and pulled. Two runs of
+eight physical insert/remove cycles each, with the read path validated against a
+known positive (`ANA_MICB2` and `ANA_BIAS` move when the microphone bias is
+powered, so the reads do reach the codec):
+
+- **No MBHC status register tracks the plug.** `RESULT_3` stays at `0x08` and
+  `ANA_MECH` does not move, through every cycle. Replacing the counter with a
+  register read is therefore not possible as the block is currently configured —
+  a driver change written to do exactly that was measured before it shipped and
+  would have reported "unplugged" permanently.
+- **`MECH_DETECTION_TYPE` does not alternate** either, so the approach all three
+  working drivers rely on is closed to us as things stand.
+- **The counter itself is not the weak part.** Both runs tracked all eight edges
+  with none lost, and the 3-pole/4-pole classification was correct every time
+  (`SW_MICROPHONE_INSERT` clear for headphones, set for a headset).
+
+Only six of the registers sampled are live reads. `ANA_MECH`, `ANA_ELECT`,
+`ANA_ZDET` and `RESULT_1..3` are in the driver's volatile list; everything else
+— the button thresholds, `CTL_1`, `CTL_2`, `PLUG_DETECT_CTL` — is served from
+the regmap cache and proves nothing. The six happen to be exactly the status
+registers, which is why the conclusion holds. Reading the rest live needs the
+regmap `cache_bypass` knob, and with it every read crosses SLIMbus, so a full
+dump takes minutes: switch it on, take **one** dump, switch it off.
+
+### What downstream says about this board
+
+Qualcomm's own `msm8953-audio.dtsi` carries two MBHC configurations, and the
+distinction matters because this phone is squarely in the second one:
+
+```dts
+/* the internal-codec card, "msm8953-snd-card-mtp" */
+qcom,msm-mbhc-hphl-swh = <0>;
+qcom,msm-mbhc-gnd-swh  = <0>;
+
+/* the external-codec card: tasha (WCD9335) on Quinary MI2S - this phone */
+qcom,tasha-mclk-clk-freq = <9600000>;
+qcom,msm-mbhc-hphl-swh = <1>;
+qcom,msm-mbhc-gnd-swh  = <1>;
+qcom,quin-mi2s-gpios = <&cdc_quin_mi2s_gpios>;
+```
+
+`swh` is the jack switch type: 0 normally closed, 1 normally open. The device
+tree here now sets `qcom,hphl-jack-type-normally-open` and
+`qcom,gnd-jack-type-normally-open` to match, and the change was verified to
+reach the codec (`ANA_MECH` 0x85 → 0x9d, the two plug-type bits).
+
+☠️ It changed nothing observable. The same eight-cycle measurement after the
+change produced the same result: no status register moves. It is kept because
+it is the correct description of the hardware according to the vendor's own
+device tree, **not** because it fixed anything — a distinction worth preserving,
+since a plausible-looking change that is credited with a fix it did not make
+sends the next investigation in the wrong direction.
+
+Two further differences from `wcd_mbhc_init()` remain, neither yet tested:
+`GND_DET_EN` (`ANA_MECH` bit 6) and `MIC_CLAMP_CTL` are never programmed here.
+`GND_DET_EN` is a weak candidate — no in-tree codec sets `cfg->gnd_det_en`, and
+downstream has no device tree property for it.
+
+### Where this leaves the open problem
+
+Edge detection works, accessory classification works, and the status registers
+are inert. What remains is the boot value, and no register currently answers it.
+The two routes that do not depend on one are to report nothing until the first
+real edge and take its direction from the electrical detection — which only
+produces a meaningful result on a genuine insertion — or to identify and
+swallow an early interrupt arriving during bring-up, if that is what inverts the
+state. Distinguishing them needs the seed value and the timing of the first
+edges logged from the driver itself.
+
 ## What each piece in this repo contributes
 
 | path | what it does |
