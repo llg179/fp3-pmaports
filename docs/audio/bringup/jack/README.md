@@ -165,6 +165,12 @@ in place a single real call would show it.
 - Two temporary `dev_info` lines in `wcd9335.c`, one at the seed and one per
   edge, printing the registers and the uptime. Not committed; they are cheap to
   restore from this description and should not live in the tree.
+- [`read-result3-variant.patch`](read-result3-variant.patch) — the last of the
+  read-based variants exactly as it was measured, with those two `dev_info`
+  lines and the `IRQF_TRIGGER_FALLING` addition. It is kept because it is the
+  artefact the "one event late" section was measured on, **not** because it
+  works: it derives the post-edge state from a register that still holds the
+  pre-edge one. Restore it to reproduce that measurement, not to fix the jack.
 
 ---
 

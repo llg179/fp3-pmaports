@@ -1,0 +1,58 @@
+diff --git a/sound/soc/codecs/wcd9335.c b/sound/soc/codecs/wcd9335.c
+index 537e920cc1e3..d4566017efde 100644
+--- a/sound/soc/codecs/wcd9335.c
++++ b/sound/soc/codecs/wcd9335.c
+@@ -4000,6 +4000,7 @@ static irqreturn_t wcd9335_mbhc_sw_irq(int irq, void *data)
+ {
+ 	struct wcd9335_codec *wcd = data;
+ 	struct snd_soc_component *component = wcd->component;
++	unsigned int res3;
+ 	bool ins;
+ 
+ 	/*
+@@ -4011,14 +4012,24 @@ static irqreturn_t wcd9335_mbhc_sw_irq(int irq, void *data)
+ 	 * - seeded from the settled plug status at init - for the direction, and use
+ 	 * MECH_DETECT_TYPE purely to re-arm the next edge.
+ 	 */
+-	wcd->jack_inserted = !wcd->jack_inserted;
+-	ins = wcd->jack_inserted;
++	/*
++	 * The plug status is read, not remembered. Nothing carries the state
++	 * between interrupts: the interrupt says only that something moved, and
++	 * the answer comes from the codec each time. The arming is written from
++	 * that same reading rather than from a stored value, so there is no
++	 * second copy of the state to drift out of step.
++	 */
++	res3 = snd_soc_component_read(component, WCD9335_ANA_MBHC_RESULT_3);
++	ins = !(res3 & BIT(3));
++	wcd->jack_inserted = ins;
+ 
+-	/* Re-arm L_DET for the opposite edge (detect removal once inserted). */
+ 	snd_soc_component_update_bits(component, WCD9335_ANA_MBHC_MECH,
+ 				      WCD9335_MBHC_MECH_DETECT_TYPE_MASK,
+ 				      ins << WCD9335_MBHC_MECH_DETECT_TYPE_SHIFT);
+ 
++	dev_info(component->dev, "DBG mbhc edge @%u ms: RESULT_3=0x%02x -> %s\n",
++		 jiffies_to_msecs(jiffies), res3, ins ? "IN" : "OUT");
++
+ 	if (ins) { /* hs insertion */
+ 		u32 btndet_curr_src;
+ 
+@@ -4248,6 +4259,9 @@ static void wcd9335_mbhc_initialise(struct wcd9335_codec *wcd)
+ 	msleep(300);
+ 	wcd->jack_inserted =
+ 		!(snd_soc_component_read(comp, WCD9335_ANA_MBHC_RESULT_3) & BIT(3));
++	dev_info(comp->dev, "DBG mbhc seed: MECH=0x%02x -> inserted=%d\n",
++		 snd_soc_component_read(comp, WCD9335_ANA_MBHC_MECH),
++		 wcd->jack_inserted);
+ }
+ 
+ static irqreturn_t wcd9335_slimbus_irq(int irq, void *data)
+@@ -4359,6 +4373,7 @@ static int wcd9335_setup_irqs(struct wcd9335_codec *wcd)
+ 		ret = devm_request_threaded_irq(wcd->dev, irq, NULL,
+ 						wcd9335_irqs[i].handler,
+ 						IRQF_TRIGGER_RISING |
++						IRQF_TRIGGER_FALLING |
+ 						IRQF_ONESHOT,
+ 						wcd9335_irqs[i].name, wcd);
+ 		if (ret) {
