@@ -438,11 +438,12 @@ import split there was nothing left to distil.
 
 All five branches are based on `v7.1.3-r0`, which is an msm8953-mainline release
 carrying its own out-of-tree patches — not a tree any maintainer will apply
-against. So on 2026-07-30 each group was **trial-rebased onto the tree it would
-actually be sent to**, in a throwaway worktree: `broonie/for-next` `1523ce38eeb6`
-for ASoC, `sre/linux-power-supply` `for-next` `5584ad5706e5` for the charger
-driver, `torvalds/master` `11028ab62899` for everything else. **Eleven of the
-twenty-one commits apply with no conflict at all.**
+against. So each group is **trial-rebased onto the tree it would actually be sent
+to**, in a throwaway worktree. Re-measured 2026-07-31 against fresh bases —
+`broonie/for-next` `b8f7ea37085e` for ASoC, `sre/linux-power-supply` `for-next`
+`c57cb36f76eb` for the charger driver, `torvalds/master` `6269cc6f52c6` for
+everything else. **Twenty-two of the twenty-seven commits apply with no conflict
+at all**, twenty-three after one one-hunk resolution.
 
 | group | target | result |
 |---|---|---|
@@ -451,16 +452,33 @@ twenty-one commits apply with no conflict at all.**
 | charger `qcom-spmi-adc5` | mainline | **1 / 1 clean** |
 | sensor | mainline | **1 / 1 clean** |
 | camera device tree | mainline | **1 / 1 clean** |
-| camera driver | mainline | one `Kconfig` conflict, **two lines** — the neighbouring IMX355 entry gained `select V4L2_CCI_I2C` |
-| audio driver | `broonie/for-next` | conflicts on the first patch — ⚠️ **stale**, see below |
-| audio device tree | mainline | conflicts — ⚠️ **stale**, see below |
+| camera driver | mainline | one `Kconfig` hunk; **the second commit is clean once it is resolved** |
+| audio driver + binding | `broonie/for-next` | **11 / 12 clean** — only the machine driver conflicts |
+| audio device tree | mainline | conflicts — `&sound_card` does not exist upstream |
 | voice | `broonie/for-next` | the file does not exist upstream |
 
-⚠️ **The two audio rows were measured against a nine-patch series that no longer
-exists.** Later the same day the device-tree work added a `dt-bindings` patch at
-the front and rewrote the device-tree commit, so `submit/7.1.3/audio` is now ten
-patches. Re-run the trial rebase before quoting either row; the other seven rows
-were not touched.
+Two rows moved since 2026-07-30, and in opposite directions.
+
+**Audio improved from "conflicts on the first patch" to eleven of twelve.** That
+row was measured against a nine-patch series that no longer exists; the binding
+was written, and the series was regenerated on 2026-07-31 with the shared-MBHC
+work split three ways. Everything in it now applies except the machine driver,
+which is the one patch that actually needs the missing prerequisite.
+
+**The camera Kconfig conflict is no longer the IMX355 entry** — it has moved to
+`VIDEO_OV9282`, which upstream changed from `depends on OF_GPIO` to
+`depends on OF` plus `select V4L2_CCI_I2C`. Same shape, different neighbour: the
+conflict follows whichever entry happens to sit next to ours, so the specific
+name is not worth remembering. What matters is that it is a single hunk, and that
+resolving it in favour of upstream leaves our own entry untouched and the second
+camera commit applying cleanly.
+
+☠️ Measured per commit, aborting each failure before the next, so a group's count
+is "how many of these apply", not "how far the series gets". Those differ where a
+failure cascades: the camera import creating `imx363.c` fails on `Kconfig`, and
+without it the delta commit has no file to patch, which reads as **0 / 2** while
+the real answer is one trivial hunk. Re-run it after every base bump, and resolve
+the first failure before believing the second.
 
 **The charger and the sensor series are therefore ready in the strong sense** —
 not merely "the files they touch exist upstream", but "they apply".

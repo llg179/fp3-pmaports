@@ -69,10 +69,12 @@ Upstream-bound commits carry `Assisted-by: Claude:<model-id>` and the AI must
 
 ## Does it even apply to a maintainer tree?
 
-Measured 2026-07-30 by cherry-picking each group onto a detached head at the real
-destination, not inferred from "the files exist upstream". Bases: Mark Brown
-`sound/for-next` `1523ce38eeb6`, Sebastian Reichel `linux-power-supply/for-next`
-`5584ad5706e5`, `torvalds/master` `11028ab62899`. 11 of 21 commits applied clean.
+Measured by cherry-picking each group onto a detached head at the real
+destination, not inferred from "the files exist upstream". Re-measured
+**2026-07-31** against fresh bases: Mark Brown `sound/for-next` `b8f7ea37085e`,
+Sebastian Reichel `linux-power-supply/for-next` `c57cb36f76eb`,
+`torvalds/master` `6269cc6f52c6`. **22 of 27 commits applied clean**, 23 after
+one one-hunk resolution.
 
 | group | destination | result |
 |---|---|---|
@@ -81,10 +83,21 @@ destination, not inferred from "the files exist upstream". Bases: Mark Brown
 | charger `adc5` channel | mainline | 1/1 clean |
 | sensor (`qmi_encdec`) | mainline | 1/1 clean |
 | camera dts | mainline | 1/1 clean |
-| camera driver | mainline | conflicts, 2 lines of `Kconfig` |
-| audio driver | `sound/for-next` | conflicts on patch 1 — missing prerequisite |
-| audio dts | mainline | conflicts — `&sound_card` label does not exist |
+| camera driver | mainline | one `Kconfig` hunk; the second commit is clean once resolved |
+| audio driver + binding | `sound/for-next` | 11/12 — only the machine driver conflicts, on item 8 |
+| audio dts | mainline | conflicts — `&sound_card` does not exist |
 | voice | `sound/for-next` | the file does not exist upstream |
+
+Audio moved from "conflicts on patch 1" to eleven of twelve, because the binding
+was written and the series regenerated. The camera's `Kconfig` conflict moved
+from the IMX355 entry to `VIDEO_OV9282`; it follows whichever entry sits next to
+ours, so the neighbour's name is not worth tracking.
+
+☠️ Counted per commit, aborting each failure before trying the next, so a group's
+figure is "how many of these apply" and not "how far the series gets". Where a
+failure cascades the two differ sharply: the camera import creates `imx363.c` and
+fails on `Kconfig`, after which the delta commit has no file to patch and the
+group reads 0/2 when the truth is one trivial hunk.
 
 Redo this after every base bump; it is the only thing that answers the question.
 
@@ -143,10 +156,9 @@ Cross-cutting, mostly `dtbs_check` fallout. Detail:
     `wcd_dt_parse_mbhc_data()` and the invented properties were deleted from the
     driver, the binding and the board file. Details in
     [`TODO.md`](TODO.md#open-before-anything-is-submitted).
-12. ⚠️ **The rebase table's two audio rows are stale.** Measured against a
-    nine-patch `submit/7.1.3/audio`; it is now ten (a `dt-bindings` patch at the
-    front, the DT commit rewritten). Re-run before quoting. The other seven rows
-    stand.
+12. ~~**The rebase table's two audio rows are stale.**~~ **Re-measured
+    2026-07-31** against fresh bases, all nine rows, against the regenerated
+    thirteen-patch series: audio is now 11/12. Table above.
 13. ~~**`submit/7.1.3/audio` still carries the private MBHC implementation.**~~
     **Regenerated 2026-07-31** as thirteen single-domain patches, the shared-MBHC
     change split three ways; `aw8898` is excluded because it is not in Linus'

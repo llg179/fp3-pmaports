@@ -130,13 +130,25 @@ Then, in rough order of cost:
     relies on the shared default — which is normally-open, the behaviour it
     already had. Verified with a headset on the device: a 4-pole headset, a
     3-pole headphone, the button and both removals all report correctly.
-12. **The measured rebase table no longer describes the audio series.** It was
-    taken on 2026-07-30 against a nine-patch `submit/7.1.3/audio`; the series is
-    now **ten** patches — a `dt-bindings` patch was added at the front and the
-    device-tree commit changed — so the two audio rows in
-    [`kernel/README.md`](kernel/README.md#does-any-of-it-apply-to-a-maintainer-tree)
-    ("conflicts on the first patch", "conflicts") are stale and have to be
-    re-run before anyone quotes them. The other seven rows are untouched.
+12. ~~**The measured rebase table no longer describes the audio series.**~~
+    **Re-measured 2026-07-31**, all nine rows, against fresh bases
+    (`broonie/for-next` `b8f7ea37085e`, `psy/for-next` `c57cb36f76eb`,
+    `torvalds/master` `6269cc6f52c6`) and the regenerated thirteen-patch series:
+    **22 of 27 commits apply with no conflict**, 23 after one one-hunk
+    resolution. Audio went from "conflicts on the first patch" to **11/12** — the
+    only conflict left is the machine driver, which is item 9's missing
+    prerequisite and nothing else. Table in
+    [`kernel/README.md`](kernel/README.md#does-any-of-it-apply-to-a-maintainer-tree).
+
+    Two things the re-run corrected about the *method*, not the result. The
+    camera's `Kconfig` conflict is no longer the IMX355 entry but `VIDEO_OV9282`:
+    it lands on whichever entry sits next to ours, so naming the neighbour dates
+    the note for nothing. And counting per commit while aborting each failure
+    makes a cascade look like a catastrophe — the camera import fails on
+    `Kconfig`, so the delta commit has no `imx363.c` to patch and the group reads
+    **0/2** when the honest answer is one hunk, after which the second commit is
+    clean.
+
 13. ~~**`submit/7.1.3/audio` no longer matches the branch it is distilled
     from.**~~ **Regenerated 2026-07-31**, from thirteen commits: the binding, the
     machine driver, four wcd9335 fixes, q6afe, the OCP interrupts, the shared-MBHC
