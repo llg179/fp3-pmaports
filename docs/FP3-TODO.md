@@ -147,11 +147,11 @@ Cross-cutting, mostly `dtbs_check` fallout. Detail:
     nine-patch `submit/7.1.3/audio`; it is now ten (a `dt-bindings` patch at the
     front, the DT commit rewritten). Re-run before quoting. The other seven rows
     stand.
-13. ⚠️ **`submit/7.1.3/audio` still carries the private MBHC implementation**,
-    which the 2026-07-31 jack rework deleted. Regenerate it from
-    `wip/7.1.3/audio`, splitting the core change three ways (function-table
-    refactor → legacy backend → the choice as an API parameter), and only then
-    re-run item 12. Details in
+13. ~~**`submit/7.1.3/audio` still carries the private MBHC implementation.**~~
+    **Regenerated 2026-07-31** as thirteen single-domain patches, the shared-MBHC
+    change split three ways; `aw8898` is excluded because it is not in Linus'
+    tree. Item 12 is now the only thing standing between this series and a
+    rebase measurement. Details in
     [`TODO.md`](TODO.md#open-before-anything-is-submitted).
 
 ---

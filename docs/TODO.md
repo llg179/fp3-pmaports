@@ -137,17 +137,24 @@ Then, in rough order of cost:
     [`kernel/README.md`](kernel/README.md#does-any-of-it-apply-to-a-maintainer-tree)
     ("conflicts on the first patch", "conflicts") are stale and have to be
     re-run before anyone quotes them. The other seven rows are untouched.
-13. **`submit/7.1.3/audio` no longer matches the branch it is distilled from.**
-    The jack rework of 2026-07-31 replaced the private MBHC implementation with
-    the shared `wcd-mbhc-v2` plus a new legacy backend, so the two commits the
-    series still carries — *"add MBHC headset jack detection"* and *"debounce the
-    MBHC button reports"* — describe code that no longer exists on
-    `wip/7.1.3/audio`, and the debounce is not needed at all any more. The series
-    has to be regenerated, and the new core commit split three ways for the list:
-    the refactor to a function table (no functional change), the legacy backend
-    itself, and making the choice a `wcd_mbhc_init()` parameter. Until then, do
-    not send it. Regenerating it invalidates item 12 as well, so re-run the
-    rebase table afterwards, not before.
+13. ~~**`submit/7.1.3/audio` no longer matches the branch it is distilled
+    from.**~~ **Regenerated 2026-07-31**, from thirteen commits: the binding, the
+    machine driver, four wcd9335 fixes, q6afe, the OCP interrupts, the shared-MBHC
+    work split three ways (function-table refactor with no functional change →
+    legacy backend → the choice as a `wcd_mbhc_init()` parameter), the wcd9335
+    conversion, and the device tree alone at the end. Every patch is
+    single-domain; `checkpatch --strict` is clean apart from the two entries below
+    that were checked and are not defects. The previous tip is the tag
+    `archive/submit-7.1.3-audio-pre-mbhc-rework`.
+
+    Three deliberate differences from `wip/7.1.3/audio`, none of them accidental:
+    the `aw8898` `.prepare` fix is **excluded** (that driver is carried by
+    msm8953-mainline and is not in Linus' tree, so it has no upstream destination
+    in this series); the two q6afe commits are squashed into one; and the new
+    `DEC*` volume controls are aligned to the open parenthesis while the
+    pre-existing `RX*` ones above them are left exactly as mainline has them —
+    the earlier series realigned those too, which is drive-by churn on code this
+    work does not otherwise touch.
 
 Two things were checked and are **not** defects: the three `ENOTSUPP`
 comparisons in the audio machine driver (the ASoC core returns exactly that, and
