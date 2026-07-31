@@ -165,3 +165,167 @@ in place a single real call would show it.
 - Two temporary `dev_info` lines in `wcd9335.c`, one at the seed and one per
   edge, printing the registers and the uptime. Not committed; they are cheap to
   restore from this description and should not live in the tree.
+
+---
+
+# Second round: what the register actually holds, and why the shared code cannot take us
+
+The first round ended on "no MBHC register follows the socket, so the edge count
+cannot be replaced". That conclusion was drawn from variants that all failed the
+same way, and it was too strong. What follows corrects it.
+
+## The register does hold the state - one event late
+
+Instrumenting the interrupt handler to log `RESULT_3` on entry, with the working
+counter left in place so there was something true to compare against, gave nine
+edges over a deliberate insert/remove sequence:
+
+| edge | state before the event | `RESULT_3` |
+|---|---|---|
+| 1 | OUT | `0x08` |
+| 2 | IN | `0x00` |
+| 3 | OUT | `0x08` |
+| … | … | agreeing on all nine |
+
+`RESULT_3` reports the **outcome of the last completed detection**, which is the
+state as it was *before* the edge being handled. Nine out of nine.
+
+That makes the correct derivation trivial, because an interrupt means the state
+changed:
+
+```c
+ins = !!(read(RESULT_3) & BIT(3));   /* bit 3 = "was out" -> is now in */
+```
+
+Every variant built in the first round computed `!(...)` instead - the pre-edge
+value used as the post-edge answer. Inverted on every edge, and since the arming
+bit was written from the same value, the pair latched immediately. The three
+failures, the `OUT,OUT,OUT / IN,IN,IN` pattern and the two results that looked
+like success are all that one missing negation.
+
+So the first round's conclusion stands only as: *the three variants tried were
+wrong*. Whether the corrected polarity works has not been measured.
+
+## The inversion, caught live
+
+The same run ended with **nine** edges - an odd number - an empty socket, and the
+driver reporting a headset present. One event went unpaired and the state stayed
+inverted, which is the original complaint, reproduced with a log for the first
+time.
+
+## Debouncing is not the cause
+
+The insert/remove debounce is programmed to 96 ms
+(`PLUG_DETECT_CTL` = `0x86`, `INSREM_DBNC` = 6). Deliberately fast plug-unplug
+pairs still produced **both** edges, 244 ms and 336 ms apart, against 2544 ms and
+2368 ms for the slow control pairs. Nothing merges at the speed a hand can
+manage, so lost events are not a debouncing artefact and lowering the timer would
+not help.
+
+## Two interrupts exist for the two directions, and are unused
+
+The codec exposes five MBHC interrupts and this driver requests three:
+
+```
+WCD9335_IRQ_MBHC_SW_DET                  8   requested - mechanical, no direction
+WCD9335_IRQ_MBHC_ELECT_INS_REM_DET       9   NOT requested - electrical removal
+WCD9335_IRQ_MBHC_BUTTON_PRESS_DET       10   requested
+WCD9335_IRQ_MBHC_BUTTON_RELEASE_DET     11   requested
+WCD9335_IRQ_MBHC_ELECT_INS_REM_LEG_DET  12   NOT requested - electrical insertion
+```
+
+All five are wired into the regmap-irq chip already. The vendor driver binds the
+two unused ones to separate handlers:
+
+```c
+.mbhc_sw_intr     = WCD9335_IRQ_MBHC_SW_DET,
+.mbhc_hs_ins_intr = WCD9335_IRQ_MBHC_ELECT_INS_REM_LEG_DET,
+.mbhc_hs_rem_intr = WCD9335_IRQ_MBHC_ELECT_INS_REM_DET,
+```
+
+so "one interrupt sets inserted, another sets removed" is the hardware's own
+arrangement, not a workaround. The vendor keeps them masked outside the detection
+phases, so whether they fire usefully on their own is untested here.
+
+## There is no board jack-detect GPIO - now actually established
+
+The earlier claim rested on grepping two source trees, neither of which would
+necessarily carry a board-level line. The authoritative source is the shipped
+firmware: 34 device tree blobs extracted from the stock `boot.img` and
+`dtbo.img`, including the ones describing this phone (identified by the AW8898
+amplifier and the Himax touchscreen), decompiled and searched. **No property
+name containing "jack" anywhere**, and the only MBHC properties are the two
+switch-type ones. The absence is real.
+
+## Why the shared mainline implementation cannot simply be adopted
+
+`wcd-mbhc-v2.c` is in mainline, maintained, and used by five codecs, so wiring
+`wcd9335` to it looks like the obvious answer. It is not, for one reason:
+
+**mainline's copy implements only ADC-based detection.** `grep` for detection
+entry points finds exactly one, `wcd_mbhc_adc_detect_plug_type()`, called
+directly with no alternative. And the WCD9335 has **no MBHC ADC**: the vendor's
+own field table for this codec defines 36 fields where mainline uses 48, and the
+thirteen missing ones are the entire ADC group plus a few status fields.
+
+The vendor solves this with two detection back-ends behind a five-pointer
+interface, selected at build time and dispatched at runtime:
+
+```
+snd-soc-wcd-mbhc-y  := wcd-mbhc-v2.o          common core
+                    += wcd-mbhc-adc.o          if CONFIG_..._ADC
+                    += wcd-mbhc-legacy.o       if CONFIG_..._LEGACY
+```
+
+```c
+struct wcd_mbhc_fn {
+        irqreturn_t (*wcd_mbhc_hs_ins_irq)(int, void *);
+        irqreturn_t (*wcd_mbhc_hs_rem_irq)(int, void *);
+        void        (*wcd_mbhc_detect_plug_type)(struct wcd_mbhc *);
+        bool        (*wcd_mbhc_detect_anc_plug_type)(struct wcd_mbhc *);
+        void        (*wcd_cancel_hs_detect_plug)(struct wcd_mbhc *, struct work_struct *);
+};
+```
+
+Mainline flattened that seam when the code was upstreamed, and correctly so:
+every in-tree user was ADC-capable, and an indirection with a single
+implementation is something review declines. Restoring it is not a fight with an
+earlier decision - it is supplying the second user the decision was waiting for.
+The build-side change is the ordinary `foo-$(CONFIG_X) += bar.o` pattern.
+
+## The vendor's field table is the authority for what each bit means
+
+Most of the guesswork in the first round is answered by a table that was
+available all along: the vendor driver's `wcd_mbhc_registers[]` for this exact
+codec, 36 entries of register plus mask.
+
+```c
+WCD_MBHC_REGISTER("WCD_MBHC_L_DET_EN",            WCD9335_ANA_MBHC_MECH, 0x80, 7, 0),
+WCD_MBHC_REGISTER("WCD_MBHC_GND_DET_EN",          WCD9335_ANA_MBHC_MECH, 0x40, 6, 0),
+WCD_MBHC_REGISTER("WCD_MBHC_MECH_DETECTION_TYPE", WCD9335_ANA_MBHC_MECH, 0x20, 5, 0),
+WCD_MBHC_REGISTER("WCD_MBHC_MIC_CLAMP_CTL",       WCD9335_MBHC_PLUG_DETECT_CTL, 0x30, 4, 0),
+```
+
+It also settles a caveat hanging over every negative result in the first round.
+Those were all measured under **this driver's** init sequence, which is a subset
+of the vendor's: `GND_DET_EN` and `MIC_CLAMP_CTL` are never programmed here, and
+the button current source is left permanently enabled. "The register does not
+work on this codec" may yet turn out to be a statement about the configuration
+rather than the hardware.
+
+## Method notes worth keeping
+
+- **A restore is not a restore until a checksum says so.** A module was staged in
+  `/tmp` and re-installed from there across several reboots. `/tmp` does not
+  survive a reboot; `install` failed silently; the command chain used `;` rather
+  than `&&`, so the reboot happened anyway; and the device was declared restored
+  twice while running the wrong module. One measurement was taken on it and had
+  to be thrown away. Verify by md5 after installing *and* after booting.
+- **When a person applies the stimulus, specify the spacing, not just the
+  order.** "In, then out" five times produced five interrupts for ten movements,
+  which was read as one direction never being detected. Unspecified timing meant
+  a merged fast pair explained it equally well; the ambiguity was created by the
+  instruction. Repeating it with five-second gaps ruled the timing out.
+- **The stock firmware is a board description you can read.** Pulling the DTBs
+  out of `boot.img`/`dtbo.img` and decompiling them takes a few minutes and
+  answers hardware-presence questions that no source tree can.
