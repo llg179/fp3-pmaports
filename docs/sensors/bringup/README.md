@@ -17,6 +17,12 @@ and the instruments and raw data that produced it.
 Nothing here is needed to run the sensors. Everything that is, lives in
 [`../../../userspace-sensors/`](../../../userspace-sensors/).
 
+> **Where things stand is deliberately not on this page.** What works today and
+> where each piece came from is in [`../README.md`](../README.md); what is still
+> open is in [`../../TODO.md`](../../TODO.md) and
+> [`../../FP3-TODO.md`](../../FP3-TODO.md). This is a record of how the current
+> arrangement was arrived at, and it is **not** revised when the device changes.
+
 ## The instruments
 
 | file | what it does |
@@ -991,15 +997,3 @@ fastboot set_active b          # back to pmOS
 Done once here after a forced reboot, and it found real damage: journal recovery,
 two extent-tree optimisations, wrong free block and inode counts, and a stuck
 `orphan_present` flag.
-
-## Next steps
-
-1. **Calibrate the magnetometer** — a full-sphere fit to separate the hard-iron
-   offset from the scale, and a heading check against a known direction.
-2. **The mount matrix** — check `AccelerometerTilt` against the phone's physical
-   orientation and replace the inherited msm8996 matrix if it does not match.
-3. **The intermittent SLIMbus audio failure** — still unexplained. The framer
-   pokes were ruled out by measurement and removed, so the next lead has to
-   come from somewhere else.
-4. **Find the real content of groups 20, 2691 and 3050**, which are zero-filled.
-5. **Package upstream's C `sns-reg` as an aport**, replacing `snsregd.py`.

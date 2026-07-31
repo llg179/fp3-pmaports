@@ -12,6 +12,11 @@ WCD9335 audio codec answer at all. The code was added on 2026-07-25 and removed
 on 2026-07-29, after it was measured to do nothing. This page is the record:
 what the poke was, why it looked necessary, and what settled it.
 
+> This page is a closed record: the poke existed, it was measured, it is gone.
+> What the audio path does today is in [`../README.md`](../README.md); what is
+> still open is in [`../../TODO.md`](../../TODO.md) and
+> [`../../FP3-TODO.md`](../../FP3-TODO.md).
+
 ## Why it existed
 
 The Fairphone 3's codec sits on SLIMbus, and the bus master — the *framer* —
@@ -105,17 +110,19 @@ audio that does not open — not a line in the log.
 ## What was removed
 
 A single revert commit, 76 lines gone: both driver changes and the device tree
-property. On `wip/7.1.3/audio` as `c71d7df` and on `integration/7.1.3` as
-`3b3043f`.
+property, on the audio branch and its integration twin. Branch tips are not
+quoted here because they move; find it by subject —
+*"Revert the SLIMbus framer pokes: measured unnecessary"*.
 
 Reverting the PAS commit does **not** change which ADSP firmware is loaded. The
 descriptor it added differed from the msm8996 one only in the firmware name and
 the quirk register, and the FP3 device tree sets `firmware-name` on `&lpass`,
 which `qcom_pas_probe()` prefers over the descriptor.
 
-The upstream-bound series `submit/7.1.3/audio` was regenerated without the two
-commits, so the quirk is not proposed to the LKML. The previous tip is preserved
-as the tag `submit-7.1.3-audio-with-poke-2026-07-29`.
+The quirk is not proposed to the LKML. The state of the submission branch
+belongs in [`../../TODO.md`](../../TODO.md), not here; the version that still
+carried the poke is kept reachable as the tag
+`submit-7.1.3-audio-with-poke-2026-07-29`.
 
 ## What it cost to find out
 

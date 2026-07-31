@@ -11,6 +11,11 @@ Small measurement helpers for the FP3 audio path. They read state, they do not
 change it, so they are safe to run on a working phone. All of them need root,
 because everything interesting lives under `/sys/kernel/debug`.
 
+> This page describes instruments only. What the audio path does today is in
+> [`../../README.md`](../../README.md); what is still open is in
+> [`../../../TODO.md`](../../../TODO.md) and
+> [`../../../FP3-TODO.md`](../../../FP3-TODO.md).
+
 ## `jack-probe.py`
 
 Samples **every** MBHC register on the codec while a jack is plugged and

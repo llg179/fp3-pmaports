@@ -12,6 +12,13 @@ the record of what was tried on the way there, kept because most of it is
 *negative* — whole approaches that look obviously right and do not work on this
 codec. Without it the next attempt starts by rebuilding them.
 
+> **No status and no open items live on this page.** What the jack does today is
+> in [`../../README.md`](../../README.md#the-headset-jack); what is still open is
+> in [`../../../TODO.md`](../../../TODO.md) and
+> [`../../../FP3-TODO.md`](../../../FP3-TODO.md). Each round below records what
+> was true when it was measured — and rounds one and two reached conclusions that
+> round three overturned, which is why they are kept.
+
 ## The problem as it presented itself
 
 The reported jack state was sometimes inverted for a whole boot: audio routed to
@@ -154,16 +161,6 @@ init sequence, not a measurement, puts the block in a known state first.
 
 An absolute source would have to be independent of `MECH_DETECTION_TYPE`, and
 nothing available on this codec is.
-
-## What is still open
-
-The inversion that started this has never been reproduced deliberately. Boot,
-clean plug cycles and codec power transitions are all measured clean, so
-whatever produces the stray or missed edge happens somewhere not yet exercised —
-most likely during a real call, where the modem and the voice path are also
-active. The instrumentation for catching it passively is a `dev_info` in the
-interrupt handler printing the registers and the uptime at each edge; with that
-in place a single real call would show it.
 
 ## Instrumentation used
 

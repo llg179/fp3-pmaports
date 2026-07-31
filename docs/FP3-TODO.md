@@ -195,8 +195,11 @@ six to `psy/for-next`, two dts and one `adc5` channel to mainline. Gaps, in
 ## `wip/7.1.3/audio` — WCD9335 on SLIMbus
 
 Playback, microphone, MBHC and the call path all work on the device. Blocked
-upstream on item 8. Gaps, in
-[`docs/audio/bringup/README.md`](https://github.com/llg179org/fp3-pmaports/blob/main/docs/audio/bringup/README.md#what-is-still-open):
+upstream on item 8. How it works is in
+[`docs/audio/README.md`](https://github.com/llg179org/fp3-pmaports/blob/main/docs/audio/README.md),
+how it was arrived at in
+[`docs/audio/bringup/`](https://github.com/llg179org/fp3-pmaports/tree/main/docs/audio/bringup);
+the gaps are here and only here:
 
 20. **The intermittent first-use failure needs a new lead, not another
     workaround.** The QDSP6SS framer-poke suspicion was closed by measurement

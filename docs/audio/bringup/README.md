@@ -18,6 +18,14 @@ Nothing here is needed to run audio. Everything that is, lives in
 [`../../../userspace-audio/`](../../../userspace-audio/) and in the kernel
 package.
 
+> **Where things stand is deliberately not on this page.** What works today and
+> how it fits together is in [`../README.md`](../README.md); what is still open
+> is in [`../../TODO.md`](../../TODO.md) and
+> [`../../FP3-TODO.md`](../../FP3-TODO.md). This is a record of how the current
+> arrangement was arrived at, and it is **not** revised when the device changes —
+> so read anything below as "what was true when it was measured", with the date
+> the step carries.
+
 ## Contents
 
 | | |
@@ -294,19 +302,3 @@ first year the same way.
 | **The greeter's own PulseAudio** | while the screen is locked, `pactl` aimed at the user's runtime directory talks to an autospawned empty daemon — which looks exactly like "the card lost its sink" |
 | **Raw `pkill` to take the card** | the sound server returns within seconds and reconfigures the mixer, so the measurement reports whatever it left behind. Use the suite's `audio_grab` |
 | **Speaker checks are not SLIMbus checks** | `21-audio-acoustic` and `22-audio-headset` play through QUIN_MI2S and the AW8898. Only [`23-audio-slimbus`](../../../tests/checks/23-audio-slimbus-test.sh) crosses the bus, in both directions |
-
-## What is still open
-
-* **The intermittent first-use failure.** In some boots audio fails at first
-  use. The framer pokes were the prime suspect and have been ruled out by
-  measurement, so this needs a new lead rather than a new workaround.
-* **The `21`/`22` acoustic checks fail** at both −12 dB and 0 dB while the
-  speaker path itself measures clean (999.76 Hz at 31.77 dB). Unexplained;
-  deliberately not filed as "environmental".
-* **A stray `Quinary MI2S` backend** can attach to the voice front end.
-* **There is no TX gain control exposed for the call path.** (The other half of
-  this item — "the jack is treated as 3-pole" — was closed on 2026-07-31; see
-  step 4.)
-* **`submit/7.1.3/audio` is stale**: it still carries the private MBHC
-  implementation and its button debounce, both of which step 4's rework deleted.
-  It has to be regenerated before it is sent anywhere.
