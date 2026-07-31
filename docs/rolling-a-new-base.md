@@ -52,7 +52,7 @@ of the branches and the package `pkgver` change.
 
 ## Setting the checkouts up (once per machine)
 
-Three trees are involved: the [kernel fork](https://github.com/llg179/linux),
+Three trees are involved: the [kernel fork](https://github.com/llg179org/linux),
 this repo, and a postmarketOS build
 environment. The kernel fork keeps upstream and our work on **separate
 remotes** — `origin` is `msm8953-mainline` and is never pushed to, `fork` is
@@ -63,12 +63,12 @@ ours and is the only push target.
 git clone https://github.com/msm8953-mainline/linux.git linux-fp3
 cd linux-fp3
 #   port 443, because plain SSH (22) stalls on some networks
-git remote add fork ssh://git@ssh.github.com:443/llg179/linux.git
+git remote add fork ssh://git@ssh.github.com:443/llg179org/linux.git
 git fetch fork
 cd ..
 
 # this repo: the APKBUILD, the config, the userspace bits and the tests
-git clone ssh://git@ssh.github.com:443/llg179/fp3-pmaports.git
+git clone ssh://git@ssh.github.com:443/llg179org/fp3-pmaports.git
 
 # the build environment: pmbootstrap + a pmaports checkout it works out of
 git clone https://gitlab.postmarketos.org/postmarketOS/pmbootstrap.git

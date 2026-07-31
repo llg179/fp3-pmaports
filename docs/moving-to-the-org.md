@@ -1,24 +1,20 @@
-# Moving the repositories under `llg179org`
+# The move under `llg179org`
 
-Three repositories move: `llg179/linux`, `llg179/fp3-pmaports` and
-`llg179/Claude-skills-Fairphone3`. This is the order and the checks; the
-rewrite itself is one script at the end.
+Done on 2026-07-31. Kept as a record, because the next owner change - or the
+next person reading a stale URL - needs the order and the one hazard, not a
+reconstruction.
 
-## ☠️ Do the transfer first, rewrite second
+## The order that matters
 
-Rewriting the URLs before the repositories exist under the organisation breaks
-every one of them at once, including the kernel package's source URL. GitHub
-sets up a redirect from the old path when a repository is transferred, so the
-old URLs keep working *after* the move — which means there is no window where
-anything is broken, as long as the order is that way round.
+Transfer first, rewrite second. Rewriting the URLs before the repositories exist
+under the new owner breaks every one of them at once, including the kernel
+package's source URL. Transferring first leaves **no broken window at all**:
+GitHub redirects the old path, so both spellings work until the rewrite lands.
 
-Transfer in the GitHub UI: **Settings → General → Danger Zone → Transfer
-ownership**, target `llg179org`. Repeat for all three.
+## What was actually affected
 
-## What is actually affected
-
-131 references across the two documented repositories, but only five of them do
-anything at runtime. Those five are the ones to verify by hand:
+131 references across the two documented repositories, of which five do anything
+at runtime:
 
 | file | what it is | what breaks if wrong |
 |---|---|---|
@@ -28,82 +24,42 @@ anything at runtime. Those five are the ones to verify by hand:
 | `userspace-audio/systemd/fp3-voiced.service` | `Documentation=` | cosmetic |
 | `userspace-sensors/snsregd.service` | `Documentation=` | cosmetic |
 
-Everything else is prose in READMEs and skills.
+Everything else is prose. Outside the repositories, and therefore easy to miss:
+the `fork` remote of the kernel checkout (shared by its worktrees), the `origin`
+remotes of the other two, and `~/.claude/CLAUDE.md`.
 
-Not in any repository, so easy to forget:
+## The hazard, and what it measured
 
-- the `fork` remote of the local kernel checkout and of every worktree;
-- the `origin` remote of the other two checkouts;
-- `~/.claude/CLAUDE.md`, which names all three repositories.
-
-## The one real hazard
-
-The kernel package fetches a source tarball by commit:
-
-```
-https://github.com/llg179/linux/archive/$_commit.tar.gz
-```
-
-GitHub serves that only while the commit is reachable from some ref, and after a
-transfer it serves it through a redirect. Two things to confirm rather than
-assume, because the failure surfaces as a build that worked yesterday:
+The kernel package fetches its source by commit, so the question is not whether
+the redirect exists but whether it serves the same bytes:
 
 ```sh
-# the redirect works at all (302, not 404)
-curl -sI -o /dev/null -w '%{http_code}\n' \
-  "https://github.com/llg179/linux/archive/$_commit.tar.gz"
-
-# and the new path serves the same bytes
-curl -sL "https://github.com/llg179org/linux/archive/$_commit.tar.gz" | sha512sum
+C=$(grep '^_commit=' linux-fp3/APKBUILD | cut -d\" -f2)
+curl -sL "https://github.com/<owner>/linux/archive/$C.tar.gz" | sha512sum
 ```
 
-The second command's output must match the `sha512sums` line in the APKBUILD. If
-it does, nothing needs regenerating; if it does not, the tarball is not
-byte-identical and `pmbootstrap checksum` has to run again.
+Measured across this move: the old path answers 301, the new one 302, and the
+digest matched the APKBUILD `sha512sums` entry exactly. Nothing had to be
+regenerated. Confirm it rather than assume it - the failure mode is a package
+that built yesterday and does not today.
 
-## The rewrite
+## ☠️ The rewrite rewrites this file too
 
-After all three transfers are done:
+The substitution that migrates the repositories also migrates **the document
+describing the migration**, turning its example commands into no-ops and its
+verification greps into nonsense. That happened here and had to be undone by
+hand.
 
-```sh
-for r in /mnt/1TB/pmos/linux-fp3 /mnt/1TB/pmos/fp3-pmaports \
-         /home/fp3/git/Claude-skills-Fairphone3; do
-	git -C "$r" grep -l 'llg179' | xargs -r sed -i 's|llg179/|llg179org/|g'
-done
+Two ways out, and the second is why this page now reads as history: either keep
+the literal owner strings out of the substitution\'s reach, or write the page
+after the fact so it has no commands left to corrupt. A page that instructs a
+tree-wide edit is inside that tree.
 
-# remotes, including every worktree of the kernel checkout
-git -C /mnt/1TB/pmos/linux-fp3 remote set-url fork \
-	ssh://git@ssh.github.com:443/llg179org/linux.git
-git -C /mnt/1TB/pmos/fp3-pmaports remote set-url origin \
-	ssh://git@ssh.github.com:443/llg179org/fp3-pmaports.git
-git -C /home/fp3/git/Claude-skills-Fairphone3 remote set-url origin \
-	https://github.com/llg179org/Claude-skills-Fairphone3.git
-```
+For the same reason the pattern needs its trailing slash - matching `<old>/`
+rather than `<old>` - or a second run turns the new owner into `<new>org`. The
+version with the slash is idempotent; the version without it is not.
 
-☠️ `sed 's|llg179/|llg179org/|g'` is written with the trailing slash on purpose.
-Without it, a second run rewrites `llg179org/` into `llg179orgorg/`, and the
-pattern is idempotent only with the slash present.
+## What did not move
 
-The kernel checkout has worktrees; `git remote set-url` on the main checkout
-covers them, since they share one config.
-
-## Checks after the rewrite
-
-```sh
-# nothing still points at the old owner
-git -C <repo> grep -c 'llg179/' ; # expect 0 in each
-
-# the fork is reachable under the new name
-git -C /mnt/1TB/pmos/linux-fp3 ls-remote fork | head -3
-
-# the package still builds from the rewritten source URL
-cd /mnt/1TB/pmos && ./pmb build --arch aarch64 --force --lax linux-fp3
-```
-
-The last one is the only check that proves it: the other two say the strings are
-right, and only a build says the bytes arrive.
-
-## What does not move
-
-The kernel checkout's `origin` is upstream `msm8953-mainline/linux` and is never
-pushed to. It is unaffected, and must stay pointing where it does.
+The kernel checkout\'s `origin` is upstream `msm8953-mainline/linux` and is never
+pushed to. It was left pointing where it was.

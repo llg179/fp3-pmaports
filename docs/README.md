@@ -58,7 +58,7 @@ drop-ins and call-audio helpers that the audio page describes.
 
 **Method.** How to form a hardware hypothesis, which instrument answers which
 question, the brick-safety rules, the traps that cost a build cycle — those live
-in the [FP3 skills](https://github.com/llg179/Claude-skills-Fairphone3), because
+in the [FP3 skills](https://github.com/llg179org/Claude-skills-Fairphone3), because
 they outlive this device. These pages answer *what is true now*; the skills
 answer *how to find out*, and their `references/archive/` keeps the dated
 investigation logs that answer *was this already tried*.

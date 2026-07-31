@@ -112,7 +112,7 @@ Then, in rough order of cost:
     **never been posted to the LKML** — patchwork returns nothing for "q6voice"
     or "Q6 Voice" — so there is no message-id to depend on and the file does not
     exist upstream to patch. Archived as
-    [`vendor/q6voice-sdm670`](https://github.com/llg179/linux/tree/vendor/q6voice-sdm670);
+    [`vendor/q6voice-sdm670`](https://github.com/llg179org/linux/tree/vendor/q6voice-sdm670);
     the realistic move is to offer the SLIMBUS_0 work to that series' authors
     rather than to send anything ourselves.
 11. **Two more WCD9335 properties are this port's invention, and their default

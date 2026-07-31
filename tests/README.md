@@ -68,7 +68,7 @@ in exactly that state today.
 **An untested category cannot read as green.** `checks/CATEGORIES` lists the
 topic categories, and the runner guards both directions: every listed category
 must have a check, and every `wip/<base>/*` branch on the
-[fork](https://github.com/llg179/linux) must be listed. If a check is skipped,
+[fork](https://github.com/llg179org/linux) must be listed. If a check is skipped,
 its category is reported uncovered and
 the run does not pass without `--allow-uncovered CAT`.
 

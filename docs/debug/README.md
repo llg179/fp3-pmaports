@@ -14,20 +14,20 @@ button.
 hypothesis, which instrument answers which question, how to run one change at a
 time on a device you cannot afford to brick, how to recover a slot that will not
 boot — all of that lives in
-**[llg179/Claude-skills-Fairphone3](https://github.com/llg179/Claude-skills-Fairphone3/tree/main)**,
+**[llg179org/Claude-skills-Fairphone3](https://github.com/llg179org/Claude-skills-Fairphone3/tree/main)**,
 because it would still be true on a different phone.
 
 | skill | what it covers |
 |---|---|
-| [`fp3-porting-debug`](https://github.com/llg179/Claude-skills-Fairphone3/tree/main/plugins/fp3/skills/fp3-porting-debug) | the umbrella method: hardware facts, the three OS tracks, how to acquire ground truth, the debugging techniques, and `references/archive/` — the dated investigation logs that answer *was this already tried* |
-| [`fp3-kernel-test`](https://github.com/llg179/Claude-skills-Fairphone3/tree/main/plugins/fp3/skills/fp3-kernel-test) | the edit → build → deploy → capture loop for one kernel/DT/firmware change, with the brick-safety gates and the recovery recipes |
+| [`fp3-porting-debug`](https://github.com/llg179org/Claude-skills-Fairphone3/tree/main/plugins/fp3/skills/fp3-porting-debug) | the umbrella method: hardware facts, the three OS tracks, how to acquire ground truth, the debugging techniques, and `references/archive/` — the dated investigation logs that answer *was this already tried* |
+| [`fp3-kernel-test`](https://github.com/llg179org/Claude-skills-Fairphone3/tree/main/plugins/fp3/skills/fp3-kernel-test) | the edit → build → deploy → capture loop for one kernel/DT/firmware change, with the brick-safety gates and the recovery recipes |
 
 The **initial setup is described in the skills' own README**:
-[installing the skills](https://github.com/llg179/Claude-skills-Fairphone3/tree/main#installing-the-skills),
-[configuration](https://github.com/llg179/Claude-skills-Fairphone3/tree/main#configuration)
+[installing the skills](https://github.com/llg179org/Claude-skills-Fairphone3/tree/main#installing-the-skills),
+[configuration](https://github.com/llg179org/Claude-skills-Fairphone3/tree/main#configuration)
 (nothing is hardcoded to one machine; `FP3_PW` and `FP3_SERIAL` are yours and
 have no default), and
-[installing the two OSes](https://github.com/llg179/Claude-skills-Fairphone3/tree/main#installing-the-two-oses)
+[installing the two OSes](https://github.com/llg179org/Claude-skills-Fairphone3/tree/main#installing-the-two-oses)
 — Ubuntu Touch on slot `_a` as the working-hardware oracle, postmarketOS on slot
 `_b` as the mainline target, swapped with nothing but `fastboot set_active`.
 That arrangement, not any single technique, is what makes the debugging in these
@@ -53,7 +53,7 @@ work against a moving base; this one carries a fixed, additive change that
 `git am` replays anywhere.
 
 So the layer lives in two places, both of which are checked: **one commit** on
-[`debug-int/<base>`](https://github.com/llg179/linux/tree/debug-int/7.1.3) in the
+[`debug-int/<base>`](https://github.com/llg179org/linux/tree/debug-int/7.1.3) in the
 kernel fork, and [`files/`](files/) here, from which it can be rebuilt on a
 branch that has neither. (Deliberately no commit hashes: this layer is replayed
 on every base roll, and a hash in a sentence is wrong by the next one.)

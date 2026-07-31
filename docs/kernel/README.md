@@ -55,7 +55,7 @@ as the sensor stack, which carries Yassine Oudjana's SMGR series. This was
 **recorded wrongly on this page until 2026-07-30**, where it said the driver was
 "entirely ours in substance"; see [Camera](#camera-imx363c). Since 2026-07-30 the
 branch says so too: the import is [its own
-commit](https://github.com/llg179/linux/commit/cda174905a83) authored by Joel
+commit](https://github.com/llg179org/linux/commit/cda174905a83) authored by Joel
 Selvaraj, and our change sits on top of it.
 
 Every other file above is an in-place change to code that was already in the
@@ -120,23 +120,23 @@ worked on any of them.
 
 | commit | what it does | where it comes from |
 |---|---|---|
-| [`b3a83765fa54`](https://github.com/llg179/linux/commit/b3a83765fa54) | fix codec init: select the efuse sense state before enabling sensing, set `MCLK_CFG` bit 2 | **new** — found by comparing against the downstream Qualcomm sequence |
-| [`ad3bfc32011b`](https://github.com/llg179/linux/commit/ad3bfc32011b) | release the TX front-end hold after the ADC is up | **new** — `wcd9335_codec_enable_adc()` takes the hold and mainline never releases it, so the decimator returns exact zero. Nobody had noticed because nobody had captured audio on this codec in mainline |
-| [`cb8efad0cd2a`](https://github.com/llg179/linux/commit/cb8efad0cd2a) | take mic-bias voltage and DMIC clock rate from the DT | the property names follow the existing WCD9335 binding; the FP3's values come from Fairphone's downstream `msm8953-audio.dtsi` |
-| [`742ab5a8236a`](https://github.com/llg179/linux/commit/742ab5a8236a) | MBHC headset jack detection | **revived from the 2018 MBHC series that was never merged** into mainline, adapted to this codec's measured behaviour (the insert/remove direction is a software toggle here, because `MECH_DETECT_TYPE` reads back unreliably) |
-| [`371b3fa4d85a`](https://github.com/llg179/linux/commit/371b3fa4d85a) | debounce the MBHC button reports | **new** — measured on the phone: an unplug trips the button comparator 84 ms before mechanical detection notices, so unplugging headphones started the media player |
-| [`85e5cebf6dad`](https://github.com/llg179/linux/commit/85e5cebf6dad) | expose the `DEC0..DEC8` capture gains | **new** — the registers exist and mirror the RX ones exactly; the driver simply never exposed them, so capture level could not be set at all |
+| [`b3a83765fa54`](https://github.com/llg179org/linux/commit/b3a83765fa54) | fix codec init: select the efuse sense state before enabling sensing, set `MCLK_CFG` bit 2 | **new** — found by comparing against the downstream Qualcomm sequence |
+| [`ad3bfc32011b`](https://github.com/llg179org/linux/commit/ad3bfc32011b) | release the TX front-end hold after the ADC is up | **new** — `wcd9335_codec_enable_adc()` takes the hold and mainline never releases it, so the decimator returns exact zero. Nobody had noticed because nobody had captured audio on this codec in mainline |
+| [`cb8efad0cd2a`](https://github.com/llg179org/linux/commit/cb8efad0cd2a) | take mic-bias voltage and DMIC clock rate from the DT | the property names follow the existing WCD9335 binding; the FP3's values come from Fairphone's downstream `msm8953-audio.dtsi` |
+| [`742ab5a8236a`](https://github.com/llg179org/linux/commit/742ab5a8236a) | MBHC headset jack detection | **revived from the 2018 MBHC series that was never merged** into mainline, adapted to this codec's measured behaviour (the insert/remove direction is a software toggle here, because `MECH_DETECT_TYPE` reads back unreliably) |
+| [`371b3fa4d85a`](https://github.com/llg179org/linux/commit/371b3fa4d85a) | debounce the MBHC button reports | **new** — measured on the phone: an unplug trips the button comparator 84 ms before mechanical detection notices, so unplugging headphones started the media player |
+| [`85e5cebf6dad`](https://github.com/llg179org/linux/commit/85e5cebf6dad) | expose the `DEC0..DEC8` capture gains | **new** — the registers exist and mirror the RX ones exactly; the driver simply never exposed them, so capture level could not be set at all |
 
 ## Audio: the machine driver
 
-[`35f5d0f76e5d`](https://github.com/llg179/linux/commit/35f5d0f76e5d) on `sound/soc/qcom/apq8016_sbc.c` adds a SLIMbus backend, the FP3
+[`35f5d0f76e5d`](https://github.com/llg179org/linux/commit/35f5d0f76e5d) on `sound/soc/qcom/apq8016_sbc.c` adds a SLIMbus backend, the FP3
 WCD9335 card definition and the digital-microphone DAPM widgets. The SLIMbus
 backend follows how the existing WCD9335 machine drivers wire the codec; the card
 itself is FP3-specific and **new**.
 
 ## Audio: the Q6 DSP side
 
-* [`34f6f8bf16a6`](https://github.com/llg179/linux/commit/34f6f8bf16a6) — `q6voice-dai.c`: wire the VoiceMMode1 / CS-Voice mixers to
+* [`34f6f8bf16a6`](https://github.com/llg179org/linux/commit/34f6f8bf16a6) — `q6voice-dai.c`: wire the VoiceMMode1 / CS-Voice mixers to
   `SLIMBUS_0_RX/TX`, including the mixer → port output route. It goes on top of a
   driver that is itself not upstream (Gerhold / Knecht / Pflüger, above). Without
   it a call could only use the MI2S speaker path.
@@ -151,14 +151,14 @@ itself is FP3-specific and **new**.
   through SLIMBUS_6, where ours does SLIMBUS_0 only. The two differ in that scope
   and in one ASoC rename (`snd_soc_dapm_kcontrol_dapm` →
   `_to_dapm`) — nothing else. Archived as
-  [`vendor/q6voice-sdm670`](https://github.com/llg179/linux/tree/vendor/q6voice-sdm670).
+  [`vendor/q6voice-sdm670`](https://github.com/llg179org/linux/tree/vendor/q6voice-sdm670).
 
   The lesson is not about credit — nobody's work was published as ours, the
   commit was written before the prior art was found. It is that **the same search
   that found the camera's origin would have found this one**, and it was never
   run for `voice`. Where a subsystem is out-of-tree, look for who else carries it
   *before* writing the patch, not after.
-* [`867e40aa8ebd`](https://github.com/llg179/linux/commit/867e40aa8ebd) + [`6f5f64855a18`](https://github.com/llg179/linux/commit/6f5f64855a18) — `q6afe.c`: treat `ADSP_EALREADY` on
+* [`867e40aa8ebd`](https://github.com/llg179org/linux/commit/867e40aa8ebd) + [`6f5f64855a18`](https://github.com/llg179org/linux/commit/6f5f64855a18) — `q6afe.c`: treat `ADSP_EALREADY` on
   `AFE_PORT_CMD_DEVICE_START` as success. **New**, and not FP3-specific: any two
   front ends sharing one backend hit it. Here a call and a media stream both use
   `SLIMBUS_0_RX`, the ADSP answers `ADSP_EALREADY`, and the driver turned that
@@ -227,7 +227,7 @@ open: the driver's two modes carry link frequencies that **disagree with the DT'
 
 The claim used to be that the size of our change was unknowable without the
 original file. With the original file in hand it is a two-command answer, and
-[`vendor/imx363-sdm670`](https://github.com/llg179/linux/tree/vendor/imx363-sdm670)
+[`vendor/imx363-sdm670`](https://github.com/llg179org/linux/tree/vendor/imx363-sdm670)
 keeps it answerable — an archival snapshot whose tree is byte-identical to the
 source commit's, so nothing depends on GitLab still being there.
 
@@ -263,9 +263,9 @@ device tree.
 
 | commit | author | what |
 |---|---|---|
-| [`cda174905a83`](https://github.com/llg179/linux/commit/cda174905a83) | **Joel Selvaraj** | the import, verbatim — file, `Kconfig` entry and `Makefile` line byte-identical to the source |
-| [`942e4db3f425`](https://github.com/llg179/linux/commit/942e4db3f425) | Lajosházi, László Gergely | the four power-path changes above |
-| [`0c7ea33fa5c5`](https://github.com/llg179/linux/commit/0c7ea33fa5c5) | Lajosházi, László Gergely | the device-tree node |
+| [`cda174905a83`](https://github.com/llg179org/linux/commit/cda174905a83) | **Joel Selvaraj** | the import, verbatim — file, `Kconfig` entry and `Makefile` line byte-identical to the source |
+| [`942e4db3f425`](https://github.com/llg179org/linux/commit/942e4db3f425) | Lajosházi, László Gergely | the four power-path changes above |
+| [`0c7ea33fa5c5`](https://github.com/llg179org/linux/commit/0c7ea33fa5c5) | Lajosházi, László Gergely | the device-tree node |
 
 The import commit carries the original `Signed-off-by` chain — Joel Selvaraj,
 panpanpanpan, Richard Acayan — with ours added on the end, which is what
@@ -289,7 +289,7 @@ makes the import checkable.
 
 ## Charger: `qcom_smbx.c`
 
-[`24e5c045b8fc`](https://github.com/llg179/linux/commit/24e5c045b8fc) adds SMB5 (PMI632) support to Casey Connolly's SMB2 driver. The
+[`24e5c045b8fc`](https://github.com/llg179org/linux/commit/24e5c045b8fc) adds SMB5 (PMI632) support to Casey Connolly's SMB2 driver. The
 differences are described in the variant structure rather than open-coded: the
 status register prefix (MISC `0x600` on SMB2, DCDC `0x100` on SMB5), the current
 step (25 mA vs 50 mA), the charge-status bit positions, and the JEITA status
@@ -309,15 +309,15 @@ put each of those values at the layer that owns it:
 
 | commit | what it adds |
 |---|---|
-| [`51803fe941cb`](https://github.com/llg179/linux/commit/51803fe941cb825a5fe8d26e3d2a8a7374296758) | the hardware JEITA comparator thresholds and the per-soft-zone charge currents. The block was already *running* on the PMIC's generic defaults; this replaces them with the pack's characterised values, carried as raw ADC codes |
-| [`5a736a69f51e`](https://github.com/llg179/linux/commit/5a736a69f51e3a473776cc9c1c5c8f4b51b9a2f5) | the fast-charge current as a `thermal_cooling_device`, so a thermal zone can throttle charging the way it throttles a CPU |
-| [`20c8679e024c`](https://github.com/llg179/linux/commit/20c8679e024c384b38f66e9d07a612be9b911883) | `constant-charge-current-max-microamp` actually reaching the hardware |
-| [`5c8991aaa5b2`](https://github.com/llg179/linux/commit/5c8991aaa5b23ef39574c05021339274acbedc26) | **the ceiling on it becomes the PMIC's datasheet maximum** rather than a policy number. The previous commit had bounded the device tree with a new per-generation constant — 2 A on the PMI632, which is the rating of one Fairphone's battery, not of the chip — so every other PMI632 board would have been held to it |
-| [`60afc91548aa`](https://github.com/llg179/linux/commit/60afc91548aa7edeb7c44ce710fcd966ccf3bc44) | the JEITA description read from the **battery** node instead of the charger's. Which temperatures a cell may be charged at is a property of the cell, and with it on the charger a board could not describe two packs |
-| [`bac69263baf0`](https://github.com/llg179/linux/commit/bac69263baf0d24619d8aac20e1e3efe629cb828) | the battery ID verified before any of the battery's limits are applied, so a board that names one pack cannot silently charge the other to it |
-| [`c8974511d585`](https://github.com/llg179/linux/commit/c8974511d585fa02a496797ddbb91fc395b0b801) | thermal mitigation clamps to the programmed current instead of refusing to probe above it — otherwise the outcome of the fallback above was a phone with no charger driver |
-| [`dd590915e536`](https://github.com/llg179/linux/commit/dd590915e536) | the **binding**: `qcom,pmi632-charger` documented in the existing `qcom,pmi8998-charger.yaml` rather than a second file, together with the three optional io-channels, `qcom,thermal-mitigation`, `#cooling-cells` and `qcom,batt-id-pullup-ohm`. This closed the last `checkpatch` item on the submit series |
-| [`76974ab78023`](https://github.com/llg179/linux/commit/76974ab78023) | the cooling-map nodes renamed to `map-charger-*`, because `thermal-zones.yaml` requires `^map[-a-zA-Z0-9]*$` and the original `charger-warm` failed `dtbs_check`. Nothing reads those names at runtime |
+| [`51803fe941cb`](https://github.com/llg179org/linux/commit/51803fe941cb825a5fe8d26e3d2a8a7374296758) | the hardware JEITA comparator thresholds and the per-soft-zone charge currents. The block was already *running* on the PMIC's generic defaults; this replaces them with the pack's characterised values, carried as raw ADC codes |
+| [`5a736a69f51e`](https://github.com/llg179org/linux/commit/5a736a69f51e3a473776cc9c1c5c8f4b51b9a2f5) | the fast-charge current as a `thermal_cooling_device`, so a thermal zone can throttle charging the way it throttles a CPU |
+| [`20c8679e024c`](https://github.com/llg179org/linux/commit/20c8679e024c384b38f66e9d07a612be9b911883) | `constant-charge-current-max-microamp` actually reaching the hardware |
+| [`5c8991aaa5b2`](https://github.com/llg179org/linux/commit/5c8991aaa5b23ef39574c05021339274acbedc26) | **the ceiling on it becomes the PMIC's datasheet maximum** rather than a policy number. The previous commit had bounded the device tree with a new per-generation constant — 2 A on the PMI632, which is the rating of one Fairphone's battery, not of the chip — so every other PMI632 board would have been held to it |
+| [`60afc91548aa`](https://github.com/llg179org/linux/commit/60afc91548aa7edeb7c44ce710fcd966ccf3bc44) | the JEITA description read from the **battery** node instead of the charger's. Which temperatures a cell may be charged at is a property of the cell, and with it on the charger a board could not describe two packs |
+| [`bac69263baf0`](https://github.com/llg179org/linux/commit/bac69263baf0d24619d8aac20e1e3efe629cb828) | the battery ID verified before any of the battery's limits are applied, so a board that names one pack cannot silently charge the other to it |
+| [`c8974511d585`](https://github.com/llg179org/linux/commit/c8974511d585fa02a496797ddbb91fc395b0b801) | thermal mitigation clamps to the programmed current instead of refusing to probe above it — otherwise the outcome of the fallback above was a phone with no charger driver |
+| [`dd590915e536`](https://github.com/llg179org/linux/commit/dd590915e536) | the **binding**: `qcom,pmi632-charger` documented in the existing `qcom,pmi8998-charger.yaml` rather than a second file, together with the three optional io-channels, `qcom,thermal-mitigation`, `#cooling-cells` and `qcom,batt-id-pullup-ohm`. This closed the last `checkpatch` item on the submit series |
+| [`76974ab78023`](https://github.com/llg179org/linux/commit/76974ab78023) | the cooling-map nodes renamed to `map-charger-*`, because `thermal-zones.yaml` requires `^map[-a-zA-Z0-9]*$` and the original `charger-warm` failed `dtbs_check`. Nothing reads those names at runtime |
 
 Why the result is 2 A and not the pack's rated 2.7 A, what the JEITA
 compensation register can and cannot express, and the register-level
@@ -470,7 +470,7 @@ That scaffolding **was posted**: Adam Skladowski's *MSM8953/MSM8976 ASoC support
 Because it has a cover letter with a message-id, it is a **citable prerequisite**
 — `b4 prep --edit-deps` / a `prerequisite-patch-id:` block, which is how the
 kernel expects an unmerged dependency to be declared. The marker tag
-[`vendor/asoc-msm8953-base`](https://github.com/llg179/linux/releases/tag/vendor%2Fasoc-msm8953-base)
+[`vendor/asoc-msm8953-base`](https://github.com/llg179org/linux/releases/tag/vendor%2Fasoc-msm8953-base)
 names the two commits in our base that stand in for it.
 
 The voice series has no such option, and that is written up under

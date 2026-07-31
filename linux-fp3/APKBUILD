@@ -18,12 +18,12 @@ pkgrel=30
 pkgdesc="msm8953-mainline for the Fairphone 3: WCD9335 audio, IMX363 camera, PMI632 charger"
 arch="aarch64"
 _carch="arm64"
-url="https://github.com/llg179/linux"
+url="https://github.com/llg179org/linux"
 license="GPL-2.0-only"
 options="!strip !check !tracedeps pmb:cross-native"
 makedepends="bash bison findutils flex openssl-dev perl postmarketos-installkernel python3"
 source="
-	$pkgname-$_commit.tar.gz::https://github.com/llg179/linux/archive/$_commit.tar.gz
+	$pkgname-$_commit.tar.gz::https://github.com/llg179org/linux/archive/$_commit.tar.gz
 	config-$_flavor.aarch64
 "
 builddir="$srcdir/linux-$_commit"

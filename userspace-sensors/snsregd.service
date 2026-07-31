@@ -1,6 +1,6 @@
 [Unit]
 Description=Qualcomm Sensor Registry server (SNS_REG) for the FP3
-Documentation=https://github.com/llg179/fp3-pmaports/tree/main/docs/sensors
+Documentation=https://github.com/llg179org/fp3-pmaports/tree/main/docs/sensors
 # The SSC waits for this service indefinitely, so there is nothing to race and
 # nothing to order against: it may start at any point after the ADSP is up.
 # Deliberately NOT ordered before basic.target -- a boot-armed unit that blocks

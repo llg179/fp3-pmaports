@@ -221,7 +221,7 @@ check_categories() {
 	fi
 
 	# Port 443: a plain-SSH (port 22) git operation stalls on this network.
-	_fork="ssh://git@ssh.github.com:443/llg179/linux.git"
+	_fork="ssh://git@ssh.github.com:443/llg179org/linux.git"
 	if ! _heads=$(git ls-remote --heads "$_fork" "refs/heads/wip/$_base/*" 2>/dev/null); then
 		echo "FAIL: cannot reach the kernel fork to cross-check topic branches"
 		echo "      (pass --offline to run without this guard)"

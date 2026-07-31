@@ -4,7 +4,7 @@ The postmarketOS package that builds the Fairphone 3 mainline kernel — mainlin
 `msm8953` with the WCD9335 SLIMbus audio work, the Sony IMX363 rear camera, the
 PMI632 charger and the sensors the SSC keeps behind a QMI service.
 
-Without this, the [kernel branches](https://github.com/llg179/linux) are only
+Without this, the [kernel branches](https://github.com/llg179org/linux) are only
 source: nothing records which config was used, which symbols had to be turned
 on by hand, or how the thing was actually built.
 
@@ -17,7 +17,7 @@ on by hand, or how the thing was actually built.
 
 ## The goal, and why the names have no version in them
 
-[`llg179/linux`](https://github.com/llg179/linux) is a **rolling forward-port**
+[`llg179org/linux`](https://github.com/llg179org/linux) is a **rolling forward-port**
 of Fairphone 3 support onto the
 latest [`msm8953-mainline`](https://github.com/msm8953-mainline/linux) release
 (`X.Y.Z/main`), kept moving from one kernel base to the next until the work
@@ -126,7 +126,7 @@ pin still resolves:
 
 ```sh
 curl -sI -o /dev/null -w '%{http_code}\n' \
-  "https://github.com/llg179/linux/archive/<_commit>.tar.gz"     # 302, not 404
+  "https://github.com/llg179org/linux/archive/<_commit>.tar.gz"     # 302, not 404
 ```
 
 **The category rule (version-free):** a change lands on `wip/X.Y.Z/<category>`
@@ -207,7 +207,7 @@ four fixes; on top of the camera import, four power-path changes (+68 / −21 on
 ☠️ This page and the kernel page both **described the camera driver as
 substantially ours until 2026-07-30**, and so did the commit message on
 `submit/7.1.3/camera`. All three are corrected: the import is now
-[its own commit](https://github.com/llg179/linux/commit/cda174905a83) authored by
+[its own commit](https://github.com/llg179org/linux/commit/cda174905a83) authored by
 Joel Selvaraj, carrying the original `Signed-off-by` chain, with our change on top
 of it. It is worth knowing *why* it stood so long — the wrong claim was
 self-consistent and nobody had tried to fetch the original file. The check that
@@ -248,12 +248,12 @@ arrangement obeys — playback, the microphones, headset detection and call audi
 
 ## Related
 
-* <https://github.com/llg179/linux> — the kernel: `wip/<base>/<category>` (work
+* <https://github.com/llg179org/linux> — the kernel: `wip/<base>/<category>` (work
   plus bump fixes), `integration/<base>` (the upstream-bound sum),
   `debug-int/<base>` (what the device runs), and `submit/<base>/<category>` (the
   minimal series for the LKML). It carries kernel source only — the open-item
   lists live here, in [`docs/`](docs/README.md#what-is-still-open)
-* <https://github.com/llg179/Claude-skills-Fairphone3> — the method: bring-up
+* <https://github.com/llg179org/Claude-skills-Fairphone3> — the method: bring-up
   notes, ground-truth techniques, the guard-railed test loop, and the
   `msm8953-mainline-pr` skill for preparing a `submit` series
 * [`docs/`](docs/README.md) — everything longer than this page: how the audio
@@ -273,7 +273,7 @@ arrangement obeys — playback, the microphones, headset detection and call audi
 The board `.dtb` comes from five files; we touch **two**
 (`sdm632-fairphone-fp3.dts`, `pmi632.dtsi`, +423/−4 lines, most of it the
 integrated DT commit
-[`ca289613`](https://github.com/llg179/linux/commit/6749bae07da1)),
+[`ca289613`](https://github.com/llg179org/linux/commit/6749bae07da1)),
 and 17 of the 20 upstream commits in the board file are in Linus' tree — the
 SoC-level `msm8953.dtsi` much less so, which constrains what a
 `submit/<base>/*` series may assume.

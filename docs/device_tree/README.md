@@ -49,23 +49,23 @@ can be read without a kernel checkout.
 
 Provenance, as of this snapshot:
 
-* base: `v7.1.3-r0` (tag in [`llg179/linux`](https://github.com/llg179/linux), the msm8953-mainline 7.1.3 release)
+* base: `v7.1.3-r0` (tag in [`llg179org/linux`](https://github.com/llg179org/linux), the msm8953-mainline 7.1.3 release)
 * ours: `integration/7.1.3` — seven commits touch the device tree, the bulk of it
-  [`6749bae07da1`](https://github.com/llg179/linux/commit/6749bae07da17a2a9fffceaa4f78ec0d6c6353e8)
+  [`6749bae07da1`](https://github.com/llg179org/linux/commit/6749bae07da17a2a9fffceaa4f78ec0d6c6353e8)
   *"FP3: integrated device tree (audio + charger + camera) for 7.1.3 testing"*
   (+375/−4); then
-  [`b7a6d32e`](https://github.com/llg179/linux/commit/b7a6d32eb9b954ce45d5630ba653b85d081b4ea8)
+  [`b7a6d32e`](https://github.com/llg179org/linux/commit/b7a6d32eb9b954ce45d5630ba653b85d081b4ea8)
   adds the watchdog node (+41),
-  [`3b3043fe`](https://github.com/llg179/linux/commit/3b3043feab7c6f322c8543aab05f97fe8052dac0)
+  [`3b3043fe`](https://github.com/llg179org/linux/commit/3b3043feab7c6f322c8543aab05f97fe8052dac0)
   removes the three framer-poke lines again,
-  [`1f5b95d9`](https://github.com/llg179/linux/commit/1f5b95d9d62adb7b31644903d14bc3b8aa8c0f8c)
+  [`1f5b95d9`](https://github.com/llg179org/linux/commit/1f5b95d9d62adb7b31644903d14bc3b8aa8c0f8c)
   adds the battery thermistor channel (+12/−2), and
-  [`0eba8b8a`](https://github.com/llg179/linux/commit/0eba8b8a2f1f220fb6277724a7c553391020b979)
+  [`0eba8b8a`](https://github.com/llg179org/linux/commit/0eba8b8a2f1f220fb6277724a7c553391020b979)
   raises the charge current to 2 A with the JEITA and thermal guards that go
   with it (+74/−6),
-  [`da1591a6`](https://github.com/llg179/linux/commit/da1591a64116b91a809cd4f9df6caca7488dbc4a)
+  [`da1591a6`](https://github.com/llg179org/linux/commit/da1591a64116b91a809cd4f9df6caca7488dbc4a)
   corrects it to the pack this phone actually has, and
-  [`0231f6b4`](https://github.com/llg179/linux/commit/0231f6b459175b8b9370d2fb7187abb7ce822b84)
+  [`0231f6b4`](https://github.com/llg179org/linux/commit/0231f6b459175b8b9370d2fb7187abb7ce822b84)
   moves the battery's own properties onto the battery node and adds the ID
   resistor it should present
 
@@ -98,7 +98,7 @@ block:
 | **audio** — WCD9335 over SLIMbus | Fairphone's published 4.9 sources ([`downstream/fairphone/3.A.0136/`](downstream/fairphone/3.A.0136/)): `msm8953.dtsi` (SLIMbus BAM `c104000`, NGD `c140000`), `msm8953-audio.dtsi` (the `slim217,1a0` device address, mic-bias voltages, DMIC clock), `msm8953-pinctrl.dtsi` (`cdc_reset`, `wcd_intr`, MCLK muxes) — Qualcomm BSP code as shipped by Fairphone | the existing **mainline** WCD9335 boards (DragonBoard 820c / MSM8996): codec binding and driver by **Srinivas Kandagatla** (`ASoC: wcd9335`, 2019) on his SLIMbus NGD controller (2018); binding conversion **Yassine Oudjana** (2022), node moved to the boards by **Krzysztof Kozlowski** (2023). We follow that shape, *not* downstream's `qcom,tasha-slim-pgd` | **the combination**: mainline had WCD9335 only on MSM8996, never on MSM8953. The NGD/BAM nodes at msm8953 addresses, `divclk1_cdc`, `wcd_vout_1p8`, the three pin-mux nodes, the MBHC button thresholds and the `slim-playback`/`slim-capture` DAI links are written here for the first time |
 | **camera** — Sony IMX363 | Fairphone's `msm8953-camera-sensor-mtp.dtsi`: regulators, CCI wiring, power sequence. The I²C address `0x1a` is **not** from there — the FP3 straps SLASEL high, confirmed by probing the bus | the mainline **camss** graph binding (`port@0` / `csiphy0_ep`); it sits on **Luca Weiss'** groundwork in the board file — [`9e834e768d0b`](https://github.com/torvalds/linux/commit/9e834e768d0b2e9007cd6a5c778d2d8e3674e78f) camera fixed regulators and [`cfc22c2121cb`](https://github.com/torvalds/linux/commit/cfc22c2121cbf8bb75cb9a9993f13c17587ed55e) CCI + EEPROM, both in Linus' tree | the `camera@1a` node and the `&camss` port graph for this board — and the driver under it, which was **taken from Joel Selvaraj's [`5130bc702ea2`](https://gitlab.com/sdm670-mainline/linux/-/commit/5130bc702ea2efc53f6b652b4282067ee9ae7fd2)** on `sdm670-mainline/linux`, reverse-engineered there against a Pixel-3a-family sensor — see [`../kernel/README.md`](../kernel/README.md#camera-imx363c) |
 | **charger** — PMI632 | the charger node's interrupt numbers and ADC channel assignment from Qualcomm's downstream `pmi632.dtsi` in the same release; the battery's cell parameters and OCV curve from Fairphone's own fuel-gauge profile `qg-batterydata-Kayo-3000mah-Nov4th2019-pmi632` — 3000 mAh, 4.39 V float, the 25 °C column of its `pc-temp-v1` table converted from 100 µV units | mainline `simple-battery` plus the `qcom_smbx` SMB5 binding | the SMB5 charger node in mainline's `pmi632.dtsi` (added disabled, as a PMIC-level description should be) and the board-level `&pmi632_charger` + `fp3_battery` that enable it. The charge current, the JEITA thresholds and the mitigation table are covered on the [charger page](../charger/README.md) |
-| **sound card** | — | — | nothing: we *extend* `&sound_card` rather than rewrite it. The card itself is **Vldly's** [`5f0487e5a374`](https://github.com/llg179/linux/commit/5f0487e5a3748855721652afced36b2d1fe2bb25) (2022, msm8953-mainline only, not in Linus' tree) and the AW8898/MI2S speaker path on it is **Luca Weiss'** [`4fd8c23afa2e`](https://github.com/llg179/linux/commit/4fd8c23afa2e1d907fd981c29dd35278c53c9ea5) + [`4335b0ae1eb6`](https://github.com/llg179/linux/commit/4335b0ae1eb6e9da37e2078f5affebb937b8e18d) |
+| **sound card** | — | — | nothing: we *extend* `&sound_card` rather than rewrite it. The card itself is **Vldly's** [`5f0487e5a374`](https://github.com/llg179org/linux/commit/5f0487e5a3748855721652afced36b2d1fe2bb25) (2022, msm8953-mainline only, not in Linus' tree) and the AW8898/MI2S speaker path on it is **Luca Weiss'** [`4fd8c23afa2e`](https://github.com/llg179org/linux/commit/4fd8c23afa2e1d907fd981c29dd35278c53c9ea5) + [`4335b0ae1eb6`](https://github.com/llg179org/linux/commit/4335b0ae1eb6e9da37e2078f5affebb937b8e18d) |
 
 ### What the charger side describes
 
@@ -125,13 +125,13 @@ we edit is **Luca Weiss'** work — he has carried the FP3 in mainline since
 2022-02-20; our commits are entries in a 23-commit history (see
 [Genealogy](#genealogy-of-the-board-file-23-commits-oldest-first)). Second,
 several nodes we build on top of exist **only in msm8953-mainline**, not in
-Linus' tree — the sound card above, [`e54a56452736`](https://github.com/llg179/linux/commit/e54a564527364e0f40cd71753dd68fe5baa3829d) hardware codec (**Sireesh
-Kodali**), [`ccf0e0d540ba`](https://github.com/llg179/linux/commit/ccf0e0d540baf309e3dd6a4ff4f661773b871196) camss (**Vldly**) — which is why an upstream series
+Linus' tree — the sound card above, [`e54a56452736`](https://github.com/llg179org/linux/commit/e54a564527364e0f40cd71753dd68fe5baa3829d) hardware codec (**Sireesh
+Kodali**), [`ccf0e0d540ba`](https://github.com/llg179org/linux/commit/ccf0e0d540baf309e3dd6a4ff4f661773b871196) camss (**Vldly**) — which is why an upstream series
 cannot assume they are there.
 
 ### Refreshing this snapshot after a base bump
 
-From a [`llg179/linux`](https://github.com/llg179/linux) checkout, with `<base>` the new kernel base:
+From a [`llg179org/linux`](https://github.com/llg179org/linux) checkout, with `<base>` the new kernel base:
 
 ```sh
 for f in sdm632-fairphone-fp3.dts pmi632.dtsi; do
@@ -154,8 +154,8 @@ and only **two** of them carry any of our work:
 
 | file | lines | commits | where it comes from |
 |---|---|---|---|
-| `sdm632-fairphone-fp3.dts` | 925 | 23 | Luca Weiss' upstream FP3 board file (since 2022-02-20) **+ three commits of ours** ([`ca289613`](https://github.com/llg179/linux/commit/6749bae07da1) +358, the watchdog node +41, the framer-poke revert −3) |
-| `pmi632.dtsi` | 240 | 7 | upstream PMI632 PMIC description ([`a1f0f2eb`](https://github.com/torvalds/linux/commit/a1f0f2ebb044c7248c3f30b98de0f151505bd4bd)) **+ two commits of ours** ([`ca289613`](https://github.com/llg179/linux/commit/6749bae07da1) +21 — the charger node; [`1f5b95d9`](https://github.com/llg179/linux/commit/1f5b95d9d62adb7b31644903d14bc3b8aa8c0f8c) +10 — the `BAT_THERM` channel) |
+| `sdm632-fairphone-fp3.dts` | 925 | 23 | Luca Weiss' upstream FP3 board file (since 2022-02-20) **+ three commits of ours** ([`ca289613`](https://github.com/llg179org/linux/commit/6749bae07da1) +358, the watchdog node +41, the framer-poke revert −3) |
+| `pmi632.dtsi` | 240 | 7 | upstream PMI632 PMIC description ([`a1f0f2eb`](https://github.com/torvalds/linux/commit/a1f0f2ebb044c7248c3f30b98de0f151505bd4bd)) **+ two commits of ours** ([`ca289613`](https://github.com/llg179org/linux/commit/6749bae07da1) +21 — the charger node; [`1f5b95d9`](https://github.com/llg179org/linux/commit/1f5b95d9d62adb7b31644903d14bc3b8aa8c0f8c) +10 — the `BAT_THERM` channel) |
 | `sdm632.dtsi` | 142 | 8 | upstream only — `msm8953.dtsi` plus the SDM632 CPU/rpmpd overrides; untouched |
 | `msm8953.dtsi` | 3435 | 84 | upstream msm8953-mainline SoC file; untouched |
 | `pm8953.dtsi` | 200 | 10 | upstream PM8953 PMIC file; untouched |
@@ -179,23 +179,23 @@ msm8953-mainline.
 | [`6d9a666d49bf`](https://github.com/torvalds/linux/commit/6d9a666d49bf57c6a176e5fcf1b39046ee6a728f) touchscreen · [`29dcf3c1a815`](https://github.com/torvalds/linux/commit/29dcf3c1a8159acdf56905c377a214381eda5a24) NFC · [`0c4f10917d22`](https://github.com/torvalds/linux/commit/0c4f10917d22e6f36080617bfe71de1ae854ee58) notification LED · [`5b006a82a2bb`](https://github.com/torvalds/linux/commit/5b006a82a2bbc0ce18bc6b084fc8d8d9cc110001) WiFi/BT · [`2dee68e77cb5`](https://github.com/torvalds/linux/commit/2dee68e77cb5322d7cfe44f3c84ff8ae2eaf4aee) **LPASS** · [`90053b1574f8`](https://github.com/torvalds/linux/commit/90053b1574f8cff3a3b53accc496246ad2e0aec3) USB-C · [`ffaa4b5d5d07`](https://github.com/torvalds/linux/commit/ffaa4b5d5d07aed600d82929d8862263ce341a71) vibrator | Luca Weiss, one commit per feature | ✅ v6.2-rc1 … v6.11-rc1 (LPASS + WiFi/BT in v6.8-rc1) |
 | [`09a3840bcb72`](https://github.com/torvalds/linux/commit/09a3840bcb72bcd9b43cbffbb7dedccf85e6d558) status properties last · [`a4600b160eca`](https://github.com/torvalds/linux/commit/a4600b160eca7f889c4b4a370d42e4619fa5162a) newlines between regulators | pure style commits, no functional change | ✅ v6.16-rc1 |
 | [`9ab813d5191f`](https://github.com/torvalds/linux/commit/9ab813d5191f61301dbaeaf8e82d21e689b080f4) adsp+wcnss firmware-name · [`d0c38cbe3556`](https://github.com/torvalds/linux/commit/d0c38cbe3556fea446b9350ec597a8e9c2cdaf36) modem · [`4ea55ecb4990`](https://github.com/torvalds/linux/commit/4ea55ecb4990aa4142ddae5f713289f4101f046f) display+GPU · [`9e834e768d0b`](https://github.com/torvalds/linux/commit/9e834e768d0b2e9007cd6a5c778d2d8e3674e78f) camera fixed regulators · [`cfc22c2121cb`](https://github.com/torvalds/linux/commit/cfc22c2121cbf8bb75cb9a9993f13c17587ed55e) CCI + EEPROM | Luca Weiss | ✅ v6.16-rc1 (first two), v6.18-rc1, v7.0-rc1 (last two) |
-| [`4fd8c23afa2e`](https://github.com/llg179/linux/commit/4fd8c23afa2e1d907fd981c29dd35278c53c9ea5) **AW8898 amplifier** | Luca Weiss, 2025-04-06 — the `FROMLIST v2` subject prefix says it plainly | ❌ **fork-only** — still not in Linus' tree, and no equivalent landed under another hash |
-| [`4335b0ae1eb6`](https://github.com/llg179/linux/commit/4335b0ae1eb6e9da37e2078f5affebb937b8e18d) enable speaker | Luca Weiss, 2023-04-18 — builds on the AW8898 node | ❌ **fork-only**, carried along with it |
-| [`60f6f604cf3c`](https://github.com/llg179/linux/commit/60f6f604cf3cda9d50364804317538b26162c747) enable venus | Luca Weiss, 2026-05-06 — already present in the 7.0.9 base too, *not* something the 7.1.3 bump brought in | ❌ **fork-only** |
-| **[`6749bae07da1`](https://github.com/llg179/linux/commit/6749bae07da1)** integrated DT (audio + charger + camera) | **ours**, 2026-07-25 | ❌ ours, see `submit/<base>/*` |
-| **[`b7a6d32eb9b9`](https://github.com/llg179/linux/commit/b7a6d32eb9b954ce45d5630ba653b85d081b4ea8)** `&watchdog` with `qcom,start-at-probe` | **ours**, 2026-07-28 | ❌ ours, and deliberately not upstream-bound — it is the `debug` category |
-| **[`3b3043feab7c`](https://github.com/llg179/linux/commit/3b3043feab7c)** revert the SLIMbus framer pokes | **ours**, 2026-07-29 | ❌ ours — drops the `qcom,slim-framer-quirk-reg` property `ca289613` had put on `slim_msm`, after measurement showed the codec comes up without the poke |
+| [`4fd8c23afa2e`](https://github.com/llg179org/linux/commit/4fd8c23afa2e1d907fd981c29dd35278c53c9ea5) **AW8898 amplifier** | Luca Weiss, 2025-04-06 — the `FROMLIST v2` subject prefix says it plainly | ❌ **fork-only** — still not in Linus' tree, and no equivalent landed under another hash |
+| [`4335b0ae1eb6`](https://github.com/llg179org/linux/commit/4335b0ae1eb6e9da37e2078f5affebb937b8e18d) enable speaker | Luca Weiss, 2023-04-18 — builds on the AW8898 node | ❌ **fork-only**, carried along with it |
+| [`60f6f604cf3c`](https://github.com/llg179org/linux/commit/60f6f604cf3cda9d50364804317538b26162c747) enable venus | Luca Weiss, 2026-05-06 — already present in the 7.0.9 base too, *not* something the 7.1.3 bump brought in | ❌ **fork-only** |
+| **[`6749bae07da1`](https://github.com/llg179org/linux/commit/6749bae07da1)** integrated DT (audio + charger + camera) | **ours**, 2026-07-25 | ❌ ours, see `submit/<base>/*` |
+| **[`b7a6d32eb9b9`](https://github.com/llg179org/linux/commit/b7a6d32eb9b954ce45d5630ba653b85d081b4ea8)** `&watchdog` with `qcom,start-at-probe` | **ours**, 2026-07-28 | ❌ ours, and deliberately not upstream-bound — it is the `debug` category |
+| **[`3b3043feab7c`](https://github.com/llg179org/linux/commit/3b3043feab7c)** revert the SLIMbus framer pokes | **ours**, 2026-07-29 | ❌ ours — drops the `qcom,slim-framer-quirk-reg` property `ca289613` had put on `slim_msm`, after measurement showed the codec comes up without the poke |
 
 ### What our commit adds, and what it was derived from
 
-[`ca289613`](https://github.com/llg179/linux/commit/6749bae07da1) adds 375 of the board file's 925 lines, in four separable blocks:
+[`ca289613`](https://github.com/llg179org/linux/commit/6749bae07da1) adds 375 of the board file's 925 lines, in four separable blocks:
 
 | block | nodes | derived from |
 |---|---|---|
 | **audio** | `slimbam: dma-controller@c104000`, `slim_msm: slim-ngd@c140000`, `tasha_ifd: ifd@0,0`, `wcd9335: codec@1,0` (`slim217,1a0`), `divclk1_cdc` (gpio-gate-clock), `wcd_vout_1p8`, three pin-mux nodes, and the `slim-playback`/`slim-capture` DAI links inside `&sound_card` | addresses and wiring from the downstream 4.9 tree (`msm8953.dtsi`, `msm8953-audio.dtsi`, `msm8953-ext-codec-mtp.dts`); the **node shape and the `slim217,1a0` compatible follow the existing mainline WCD9335 boards** (DragonBoard 820c, OnePlus 3), not the downstream `qcom,tasha-slim-pgd` scheme |
 | **camera** | `camera@1a` (`sony,imx363`) plus the `&camss` `port@0` / `csiphy0_ep` graph | downstream `msm8953-camera-sensor-*.dtsi` data, translated to the mainline camss graph binding; sits on top of Luca's [`9e834e76`](https://github.com/torvalds/linux/commit/9e834e768d0b2e9007cd6a5c778d2d8e3674e78f) + [`cfc22c21`](https://github.com/torvalds/linux/commit/cfc22c2121cbf8bb75cb9a9993f13c17587ed55e) regulator/CCI groundwork |
 | **charger** | `&pmi632_charger` and `fp3_battery` (`simple-battery`) | the counterpart of the new charger node added to `pmi632.dtsi` |
-| **sound card** | extends `&sound_card` rather than rewriting it | the base already carries the AW8898/MI2S speaker path ([`4fd8c23a`](https://github.com/llg179/linux/commit/4fd8c23afa2e1d907fd981c29dd35278c53c9ea5) + [`4335b0ae`](https://github.com/llg179/linux/commit/4335b0ae1eb6e9da37e2078f5affebb937b8e18d)) |
+| **sound card** | extends `&sound_card` rather than rewriting it | the base already carries the AW8898/MI2S speaker path ([`4fd8c23a`](https://github.com/llg179org/linux/commit/4fd8c23afa2e1d907fd981c29dd35278c53c9ea5) + [`4335b0ae`](https://github.com/llg179org/linux/commit/4335b0ae1eb6e9da37e2078f5affebb937b8e18d)) |
 
 This one commit is **integration-only** — its own message says so, and the
 per-subsystem split for upstream lives on the `submit/<base>/<category>`
@@ -203,9 +203,9 @@ branches, as of 2026-07-30:
 
 | branch | its device-tree commit(s) |
 |---|---|
-| `submit/7.1.3/audio` | [`f74f401d2cdc`](https://github.com/llg179/linux/commit/f74f401d2cdc) *wire up WCD9335 audio* |
-| `submit/7.1.3/camera` | [`0c7ea33fa5c5`](https://github.com/llg179/linux/commit/0c7ea33fa5c5) *add the rear IMX363 camera* |
-| `submit/7.1.3/charger` | [`0b4b054b6d81`](https://github.com/llg179/linux/commit/0b4b054b6d81) *pmi632: add the SMB5 charger* + [`a800c7ec823a`](https://github.com/llg179/linux/commit/a800c7ec823a) *enable charging* |
+| `submit/7.1.3/audio` | [`f74f401d2cdc`](https://github.com/llg179org/linux/commit/f74f401d2cdc) *wire up WCD9335 audio* |
+| `submit/7.1.3/camera` | [`0c7ea33fa5c5`](https://github.com/llg179org/linux/commit/0c7ea33fa5c5) *add the rear IMX363 camera* |
+| `submit/7.1.3/charger` | [`0b4b054b6d81`](https://github.com/llg179org/linux/commit/0b4b054b6d81) *pmi632: add the SMB5 charger* + [`a800c7ec823a`](https://github.com/llg179org/linux/commit/a800c7ec823a) *enable charging* |
 | `submit/7.1.3/voice` | none — pure driver routing, which is correct |
 | `submit/7.1.3/sensor` | none — and only one patch in total, for [these reasons](../sensors/README.md#why-the-submit-series-is-one-patch) |
 
@@ -301,15 +301,15 @@ torvalds/master`:
 | `pm8953.dtsi` | 10 | 6 | 4 | +72 |
 
 So the FP3 **board** file is almost entirely upstream — the three exceptions are
-[`4fd8c23afa2e`](https://github.com/llg179/linux/commit/4fd8c23afa2e1d907fd981c29dd35278c53c9ea5) (AW8898 amplifier), [`4335b0ae1eb6`](https://github.com/llg179/linux/commit/4335b0ae1eb6e9da37e2078f5affebb937b8e18d) (enable speaker) and
-[`60f6f604cf3c`](https://github.com/llg179/linux/commit/60f6f604cf3cda9d50364804317538b26162c747) (enable venus), and a subject search over `torvalds/master`
+[`4fd8c23afa2e`](https://github.com/llg179org/linux/commit/4fd8c23afa2e1d907fd981c29dd35278c53c9ea5) (AW8898 amplifier), [`4335b0ae1eb6`](https://github.com/llg179org/linux/commit/4335b0ae1eb6e9da37e2078f5affebb937b8e18d) (enable speaker) and
+[`60f6f604cf3c`](https://github.com/llg179org/linux/commit/60f6f604cf3cda9d50364804317538b26162c747) (enable venus), and a subject search over `torvalds/master`
 confirms none of them landed under a different hash either. The `FROMLIST v2`
-prefix on [`4fd8c23afa2e`](https://github.com/llg179/linux/commit/4fd8c23afa2e1d907fd981c29dd35278c53c9ea5) was therefore the correct signal, just not the only one.
+prefix on [`4fd8c23afa2e`](https://github.com/llg179org/linux/commit/4fd8c23afa2e1d907fd981c29dd35278c53c9ea5) was therefore the correct signal, just not the only one.
 
 The **SoC** file is a different story: 22 of the 84 `msm8953.dtsi` commits and 5
 of the 8 `sdm632.dtsi` ones exist only in msm8953-mainline — including things our
-work sits directly on top of, notably [`5f0487e5a374`](https://github.com/llg179/linux/commit/5f0487e5a3748855721652afced36b2d1fe2bb25) "add sound card" (we extend
-`&sound_card`), [`e54a56452736`](https://github.com/llg179/linux/commit/e54a564527364e0f40cd71753dd68fe5baa3829d) hardware codec, [`ccf0e0d540ba`](https://github.com/llg179/linux/commit/ccf0e0d540baf309e3dd6a4ff4f661773b871196) camss, and
-[`de3e8dc98213`](https://github.com/llg179/linux/commit/de3e8dc98213e4fcbd3d1ae30b1b1e8b71320143) "replace CS-Voice with VoiceMMode1" (the voice path). That is
+work sits directly on top of, notably [`5f0487e5a374`](https://github.com/llg179org/linux/commit/5f0487e5a3748855721652afced36b2d1fe2bb25) "add sound card" (we extend
+`&sound_card`), [`e54a56452736`](https://github.com/llg179org/linux/commit/e54a564527364e0f40cd71753dd68fe5baa3829d) hardware codec, [`ccf0e0d540ba`](https://github.com/llg179org/linux/commit/ccf0e0d540baf309e3dd6a4ff4f661773b871196) camss, and
+[`de3e8dc98213`](https://github.com/llg179org/linux/commit/de3e8dc98213e4fcbd3d1ae30b1b1e8b71320143) "replace CS-Voice with VoiceMMode1" (the voice path). That is
 worth keeping in mind when writing a `submit/<base>/*` series: an LKML patch may
 not assume any of those nodes exist.

@@ -29,9 +29,9 @@ is often not within arm's reach.
 The branch layout itself (`wip/<base>/<category>` → `integration/<base>` →
 `submit/<base>/<category>`, and the rule that a change must land on both its wip
 branch and its integration) is defined in
-[`fp3-pmaports/README.md`](https://github.com/llg179/fp3-pmaports#the-branch-model);
+[`fp3-pmaports/README.md`](https://github.com/llg179org/fp3-pmaports#the-branch-model);
 the base-bump procedure is in
-[`docs/rolling-a-new-base.md`](https://github.com/llg179/fp3-pmaports/blob/main/docs/rolling-a-new-base.md).
+[`docs/rolling-a-new-base.md`](https://github.com/llg179org/fp3-pmaports/blob/main/docs/rolling-a-new-base.md).
 
 Hashes are deliberately absent except where a commit is being *cited* rather than
 *tracked* — a head written into a file is wrong by the next push. Re-derive with:
@@ -86,7 +86,7 @@ Redo this after every base bump; it is the only thing that answers the question.
 ## Before anything is submitted
 
 Cross-cutting, mostly `dtbs_check` fallout. Detail:
-[`docs/TODO.md`](https://github.com/llg179/fp3-pmaports/blob/main/docs/TODO.md).
+[`docs/TODO.md`](https://github.com/llg179org/fp3-pmaports/blob/main/docs/TODO.md).
 
 1. **The camera needs `sony,imx363.yaml` and a MAINTAINERS entry.** A new sensor
    driver without a binding is refused on sight; `imx258` has both. In the same
@@ -107,7 +107,7 @@ Cross-cutting, mostly `dtbs_check` fallout. Detail:
    `additionalProperties: false` and zero vendor properties; the one JEITA
    precedent (`qcom,jeita-extended-temp-range`) sits on the *charger* node. There
    is a layering argument against the current placement too — see
-   [`docs/charger/README.md`](https://github.com/llg179/fp3-pmaports/blob/main/docs/charger/README.md#where-these-properties-belong).
+   [`docs/charger/README.md`](https://github.com/llg179org/fp3-pmaports/blob/main/docs/charger/README.md#where-these-properties-belong).
 6. **`-ohm` → `-ohms`.** The canonical suffix is plural; `-microamp`/`-percent`
    are already right. Same cycle as 5, same properties.
 7. **The camera driver's two-line `Kconfig` conflict** — the neighbouring IMX355
@@ -150,7 +150,7 @@ Cross-cutting, mostly `dtbs_check` fallout. Detail:
 Fast charge, hardware JEITA, battery ID + thermistor, cooling device. All nine
 commits of `submit/7.1.3/charger` apply clean, though to three different trees —
 six to `psy/for-next`, two dts and one `adc5` channel to mainline. Gaps, in
-[`docs/charger/README.md`](https://github.com/llg179/fp3-pmaports/blob/main/docs/charger/README.md#known-gaps):
+[`docs/charger/README.md`](https://github.com/llg179org/fp3-pmaports/blob/main/docs/charger/README.md#known-gaps):
 
 11. **No high-voltage negotiation on the input side** — the port settles near
     1.9 A, just under the programmed 2 A. This is the next real feature here, and
@@ -185,12 +185,12 @@ six to `psy/for-next`, two dts and one `adc5` channel to mainline. Gaps, in
 
 Playback, microphone, MBHC and the call path all work on the device. Blocked
 upstream on item 8. Gaps, in
-[`docs/audio/bringup/README.md`](https://github.com/llg179/fp3-pmaports/blob/main/docs/audio/bringup/README.md#what-is-still-open):
+[`docs/audio/bringup/README.md`](https://github.com/llg179org/fp3-pmaports/blob/main/docs/audio/bringup/README.md#what-is-still-open):
 
 20. **The intermittent first-use failure needs a new lead, not another
     workaround.** The QDSP6SS framer-poke suspicion was closed by measurement
     (A/B, 8 cold boots each side, no difference) and the pokes were reverted; see
-    [`docs/audio/bringup/qdsp6ss-framer-poke.md`](https://github.com/llg179/fp3-pmaports/blob/main/docs/audio/bringup/qdsp6ss-framer-poke.md).
+    [`docs/audio/bringup/qdsp6ss-framer-poke.md`](https://github.com/llg179org/fp3-pmaports/blob/main/docs/audio/bringup/qdsp6ss-framer-poke.md).
 21. **The `21`/`22` acoustic selftest checks fail** at −12 dB and at 0 dB while the
     speaker path itself measures clean (999.76 Hz at 31.77 dB). Unexplained, and
     deliberately not filed as environmental.
@@ -221,7 +221,7 @@ has been distilled so far — `soc: qcom: qmi: read QMI_DATA_LEN at its declared
 width`, which applies clean to mainline. The SMGR driver itself, 2778 lines across
 30 files on the wip branch including the QRTR-bus prerequisites, has no series
 yet. Gaps, in
-[`docs/sensors/README.md`](https://github.com/llg179/fp3-pmaports/blob/main/docs/sensors/README.md#known-gaps):
+[`docs/sensors/README.md`](https://github.com/llg179org/fp3-pmaports/blob/main/docs/sensors/README.md#known-gaps):
 
 26. **The magnetometer is uncalibrated and its scale unverified** — a full-sphere
     fit is needed; the two cannot be solved from each other.
@@ -308,7 +308,7 @@ payloads onto a fresh branch off `integration/7.1.3`: same tree object as
 
     ```sh
     curl -sI -o /dev/null -w '%{http_code}\n' \
-      "https://github.com/llg179/linux/archive/<_commit>.tar.gz"   # 302, not 404
+      "https://github.com/llg179org/linux/archive/<_commit>.tar.gz"   # 302, not 404
     ```
 
 ## The `vendor/*` and `archive/*` namespaces

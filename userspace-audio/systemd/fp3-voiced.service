@@ -1,6 +1,6 @@
 [Unit]
 Description=FP3 call audio (UCM Voice Call verb + VoiceMMode1 PCM)
-Documentation=https://github.com/llg179/fp3-pmaports
+Documentation=https://github.com/llg179org/fp3-pmaports
 After=ModemManager.service
 Wants=ModemManager.service
 # Replaces q6voiced on this device: q6voiced neither applies the routing nor

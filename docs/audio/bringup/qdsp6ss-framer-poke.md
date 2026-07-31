@@ -31,8 +31,8 @@ matched the symptom exactly, so two commits were written:
 
 | commit | what it did |
 |---|---|
-| [`6cd150e`](https://github.com/llg179/linux/commit/6cd150e75fb7f8d93cbc0f1fe6ca9cc23c33171e) | a msm8953 ADSP descriptor in `qcom_q6v5_pas.c` carrying `slim_framer_quirk_reg = 0x0c20002c`; after `AUTH_AND_RESET` it `ioremap`s the register and clears bit 3 |
-| [`36c9399`](https://github.com/llg179/linux/commit/36c939972197288de5b5e690fd8740d8a8b9eb90) / [`dab21aa`](https://github.com/llg179/linux/commit/dab21aa7077d8493f4d658f4f1bfdf54e849e7f5) | the same clear again in `qcom-ngd-ctrl.c`, immediately before triggering the capability exchange, on the theory that the ADSP re-sets the bit during its own init |
+| [`6cd150e`](https://github.com/llg179org/linux/commit/6cd150e75fb7f8d93cbc0f1fe6ca9cc23c33171e) | a msm8953 ADSP descriptor in `qcom_q6v5_pas.c` carrying `slim_framer_quirk_reg = 0x0c20002c`; after `AUTH_AND_RESET` it `ioremap`s the register and clears bit 3 |
+| [`36c9399`](https://github.com/llg179org/linux/commit/36c939972197288de5b5e690fd8740d8a8b9eb90) / [`dab21aa`](https://github.com/llg179org/linux/commit/dab21aa7077d8493f4d658f4f1bfdf54e849e7f5) | the same clear again in `qcom-ngd-ctrl.c`, immediately before triggering the capability exchange, on the theory that the ADSP re-sets the bit during its own init |
 
 plus a device tree property that armed the second one:
 
