@@ -248,6 +248,28 @@ the power path.
 25. **Parked: the PMI632 flash LED.** The node exists, but
     `leds-qcom-flash.c` subtype detection is unverified on this hardware and
     risks a probe failure until it is. Kept out of the tree for now.
+33. **The focus actuator has a driver, but its direction is unverified.**
+    `lc898217.c` plus its binding, MAINTAINERS entry and DT node landed
+    2026-08-01 (four commits, `wip/7.1.3/camera` `163a5db06996`). The register
+    interface is not a guess: it was read out of the board's own vendor library
+    `libactuator_lc898217xc.so`, and the struct layout that reading depends on
+    was validated against `libactuator_dw9714.so`, whose answer mainline's
+    `dw9714.c` already states — slave 0x0c, 10-bit code, no register address,
+    data shift 4, hardware mask 0x0f, field for field, plus that part's
+    documented power-up writes recovered as a second check. What came out for
+    this part: I2C **0x72** on CCI master 0, 8-bit register address, 16-bit
+    data, position at register **0x84**, 10-bit code right-aligned, power-up
+    write **`0xe0 = 0x01`** then ~10 ms. Qualcomm's downstream kernel holds
+    none of this — its node is a bare `qcom,actuator` and the whole map arrives
+    from userspace over an ioctl; grepping the downstream tree for the part
+    number returns a single unrelated hit in `patch_realtek.c`.
+    ☠️ **Open: which physical direction a rising DAC code moves the lens.**
+    Neither source states it. The driver currently mirrors the control, which
+    is what V4L2's "larger value is closer" plus the vendor's own
+    `value = 1023 - position` inversion in `msm_actuator.c` imply, but that is
+    an inference. `userspace-camera/focus-sweep.py` settles it with a sharpness
+    metric across the range; it has not been run yet, because the phone still
+    runs r30 and the driver first ships in **r31**.
 
 ## `wip/7.1.3/sensor` — SMGR over QMI/QRTR
 

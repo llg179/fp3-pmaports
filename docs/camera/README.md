@@ -31,8 +31,9 @@ CAMSS  csiphy0 -> csid0 -> ispif0 -> vfe0_rdi0 -> /dev/video0
 ```
 
 Alongside the sensor on the same CCI bus sit a `belling,bl24s64` EEPROM at 0x50
-holding the module's calibration, and an ON Semi LC898217 voice-coil focus motor
-at 0x72 that **has no driver here** — so the lens sits wherever it was left.
+holding the module's calibration, and an ON Semi LC898217XC voice-coil focus
+motor at 0x72, which since 2026-08-01 has a driver — see
+[The focus actuator](#the-focus-actuator) below.
 
 The sensor is strapped to I²C address **0x1a** (SLASEL high on this board), is
 mounted rotated 270°, and is described with `orientation = <1>` (world-facing).
@@ -88,8 +89,10 @@ was that frames came out.
   in the imported file reads `// NOT SURE HOW TO FIND THIS VALUE`. Streaming
   works anyway, which means something is tolerating the mismatch rather than
   that the mismatch is harmless.
-- **The focus motor and the EEPROM.** Both are described in the device tree;
-  neither has a driver bound.
+- **The EEPROM.** Described in the device tree, no driver bound, calibration
+  unread.
+- **Which way the focus motor travels.** See below — the driver exists, the
+  direction is an inference.
 
 ## The four things that made it probe
 
@@ -135,6 +138,86 @@ the sensor node vanished, and the driver simply never probed — with no dmesg
 lines to find, which is what makes it confusing.
 
 The check stops at "bound and linked" and does not attempt a capture.
+
+## The focus actuator
+
+`lc898217.c`, its binding, its MAINTAINERS entry and the DT node landed
+2026-08-01 and first ship in `linux-fp3-7.1.3-r31`.
+
+### Where the register map came from, and why it is not a guess
+
+☠️ **Qualcomm's downstream kernel does not contain the register map, and that is
+the architecture rather than an omission.** Its device tree node is bare —
+`compatible = "qcom,actuator"` plus a CCI master number, no slave address and no
+registers — and `msm_actuator.c` is a generic engine that is *fed* the map from
+userspace over `CFG_SET_ACTUATOR_INFO`. Grepping the whole downstream FP3 tree
+for the part number returns exactly one hit, and it is an unrelated string in
+`sound/pci/hda/patch_realtek.c`. Anyone looking for this in the kernel will find
+nothing and conclude the wrong thing.
+
+The map lives in the board's own Android vendor library,
+`vendor/lib/libactuator_lc898217xc.so`, as a C structure in its `.data` section.
+Reading that means asserting a struct layout, so the assertion was **checked
+against a known answer** rather than assumed: the same decode applied to the
+sibling `libactuator_dw9714.so` yields
+
+| decoded from the blob | what mainline `dw9714.c` does |
+|---|---|
+| slave 7-bit 0x0c | 0x0c |
+| 10-bit code | 10-bit DAC |
+| register address 0xFFFF = none | raw two-byte write, no register |
+| data shift 4 | `(data << 4) \| s` |
+| hardware mask 0x0f | the low four bits are the slew-rate field |
+
+— field for field. As a second, independent check the same decode recovers that
+part's documented power-up sequence (`0xEC=0xA3`, `0xA1=0x05`, `0xF2=0x08`,
+`0xDC=0x51`). Two known answers reproduced, so the layout holds.
+
+### What it says about this part
+
+| | |
+|---|---|
+| I²C address | **0x72** 7-bit (`0xE4` in the blob's 8-bit form) |
+| bus | CCI master 0, shared with the IMX363 |
+| speed | 400 kHz (`I2C_FAST_MODE`) |
+| register address / data | 8-bit / 16-bit |
+| position register | **0x84** |
+| code | **10 bit**, right-aligned, shift 0 |
+| power-up | **`0xE0 = 0x01`**, then ~10 ms |
+| supply | `vreg_cam_af_2p85`, the GPIO-switched 2.85 V rail on TLMM 128 |
+
+The 0x72 is worth noting twice: it was already written as a comment in our
+device tree, and the blob confirms it from a completely separate direction.
+
+One Fairphone-specific fact that exists in no datasheet — the board vendor's own
+edit to `msm_actuator.c` rewrites the code as `1023 - position` for every
+actuator except two others it names, so it applies to this one. It corroborates
+the 10-bit width read out of the library.
+
+### ☠️ What is not established
+
+**Which physical direction a rising DAC code moves the lens.** Neither source
+states it and neither can be made to. `lc898217_position_to_code()` is the single
+place in the driver that decides it, and is marked as such. It currently mirrors
+the control, which is what V4L2's "larger value is a closer focus" plus the
+vendor's inversion together imply — an inference, not a measurement.
+
+[`userspace-camera/focus-sweep.py`](../../userspace-camera/focus-sweep.py)
+settles it without judgement: it steps the control across its range, captures a
+frame at each position and scores the mean squared same-colour gradient over a
+centred crop. A working actuator gives a single interior peak; a flat curve means
+the lens never moved. Point the camera at something with detail, then
+
+```sh
+focus-sweep.py --steps 9
+```
+
+☠️ The gradient is taken between pixel *x* and *x+2*, never adjacent pixels: the
+frames are raw Bayer, so neighbours are different colour planes and an adjacent
+difference measures the scene's colour rather than the focus.
+
+[`tests/checks/41-camera-focus.sh`](../../tests/checks/41-camera-focus.sh) covers
+the half that needs no scene — node present, driver bound, control exposed.
 
 ## The device tree binding
 
