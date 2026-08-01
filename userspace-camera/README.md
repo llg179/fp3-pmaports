@@ -7,8 +7,29 @@
 What the kernel side does and what is measured live in
 [`../docs/camera/README.md`](../docs/camera/README.md); how it was found out is
 in [`../docs/camera/bringup/README.md`](../docs/camera/bringup/README.md). This
-directory holds the two tools that need a scene in front of the lens, which is
-why they are not part of the `fp3-selftest` battery.
+directory holds the two tools that need a scene in front of the lens — which is
+why they are not part of the `fp3-selftest` battery — and the patches that make
+a camera app usable on this phone.
+
+## The patches
+
+Neither is a device quirk: both fix something missing for every device of their
+kind, and both are written to be offered upstream.
+
+| patch | what it adds |
+|---|---|
+| [`libcamera/0101-simple-autofocus.patch`](libcamera/0101-simple-autofocus.patch) | contrast-detection **autofocus** for libcamera's `simple` pipeline: a sharpness statistic in the software ISP's existing stats pass, accumulated into a 5×5 zone grid; an `Af` algorithm in the simple IPA; and the focus lens plumbed through the way the IPU3 handler does it. Publishes `AfMode`, `AfTrigger`, `AfMetering`, `AfWindows` |
+| [`libcamera/imx363.yaml`](libcamera/imx363.yaml) | the tuning file that turns `Af` on for this sensor |
+| [`snapshot/0001-camera-inhibit-idle-while-viewfinder-active.patch`](snapshot/0001-camera-inhibit-idle-while-viewfinder-active.patch) | keeps the screen from blanking while the viewfinder is open, not only while recording ([GNOME/snapshot!461](https://gitlab.gnome.org/GNOME/snapshot/-/merge_requests/461)) |
+| [`snapshot/0002-camera-zoom.patch`](snapshot/0002-camera-zoom.patch) | **zoom** by pinch, scroll wheel or double tap, on `camerabin`'s own `zoom` property, so the saved picture is zoomed exactly as it was framed |
+
+They are applied by the `libcamera` and `snapshot` aports in the pmaports
+checkout; the copies here are the source of truth for this port.
+
+☠️ **After upgrading libcamera, restart the PipeWire stack.** A running
+`wireplumber` holds the old library while the new IPA is loaded from disk, and
+the mismatch shows up as *"no camera found"* in every app —
+`systemctl --user restart wireplumber pipewire` fixes it.
 
 | tool | what it answers |
 |---|---|

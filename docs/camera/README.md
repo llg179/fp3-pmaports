@@ -132,15 +132,31 @@ Measured 2026-08-01 on `linux-fp3-7.1.3-r32` (`#33-fp3`) with libcamera 0.7.1,
 |---|---|
 | enumeration | `cam -l` → `Internal back camera (/base/soc@0/cci@1b0c000/i2c-bus@0/camera@1a)` |
 | pipeline handler | **`simple`**, with the **software ISP** — there is no qcom-camss handler and none is needed for the RDI-only path |
-| tuning | `/usr/share/libcamera/ipa/simple/imx363.yaml`, shipped by libcamera: `BlackLevel 4096`, `Awb`, `Adjust`, `Agc` |
-| capture | 4032×3024 packed RGB, 48 771 072 bytes per frame, ~30 fps sustained |
-| PipeWire | device `imx363 [libcamera]`, source *Built-in Back Camera* — so an app such as Snapshot has a camera |
-| controls offered | **`Contrast` and `Gamma`, and nothing else** — no `AfMode`, no `LensPosition`, no exposure controls |
+| tuning | [`imx363.yaml`](../../userspace-camera/libcamera/imx363.yaml): `BlackLevel 4096`, `Awb`, **`Af`**, `Adjust`, `Agc` |
+| frame rate | **~6 fps at 4032×3024, ~30 fps at 2016×1512 and at 1920×1080** — the software ISP is the limit, and it scales, so the size an app asks for decides the preview's smoothness |
+| PipeWire | device `imx363 [libcamera]`, source *Built-in Back Camera*, offering a ladder of sizes from 160×120 up |
+| controls offered | `Contrast`, `Gamma`, **`AfMode`, `AfTrigger`, `AfMetering`, `AfWindows`** |
 
-So the focus motor is fully driven from the kernel side and completely
-unreachable from an app: `ipa_simple.so` contains no focus symbols at all, and
-`imx363.yaml` lists no `Af` algorithm. What autofocus would take is
-[FP3-TODO item 33e](../FP3-TODO.md).
+Autofocus is ours: libcamera's `simple` IPA had no AF algorithm at all, so one
+was written and is carried as [a patch](../../userspace-camera/libcamera/) on the
+package. What it does, and how to check it, is in
+[`bringup/`](bringup/README.md#autofocus-in-libcamera).
+
+☠️ **Only `AfMode` and `AfTrigger` reach an application.** PipeWire's libcamera
+plugin maps controls to properties only for `bool`, `int32` and `float`, and
+returns early for any array control (`if (cid.isArray()) return nullptr;` in
+`spa/plugins/libcamera/libcamera-source.cpp`). `AfWindows` is an array of
+rectangles, so tap-to-focus needs a PipeWire change as well — see
+[FP3-TODO 33g](../FP3-TODO.md).
+
+☠️ **Two libcamera clients at once can wedge the focus lens until reboot.**
+Opening the lens subdevice runtime-resumes the actuator, and if that happens
+while another client is tearing the camera down, the CCI transfer times out
+(`ak7375 0-000c: ak7375_vcm_resume I2C failure: -110`). Runtime PM then latches
+the error, so every later open returns `EINVAL`, libcamera logs *"Lens
+initialisation failed, lens disabled"* and autofocus silently disappears while
+the camera still streams. Sequential use is unaffected — measured
+across two clean boots, four runs each. See [FP3-TODO 33f](../FP3-TODO.md).
 
 ☠️ **Unbinding and rebinding the lens driver breaks libcamera until the next
 reboot.** Each bind leaves the previous ancillary media link behind, one of them

@@ -1,0 +1,280 @@
+From 095b3ed5db60b72681d6fb75fd65b8920b491a33 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Lajosh=C3=A1zi=2C=20L=C3=A1szl=C3=B3=20Gergely?=
+ <lajoshazilg@gmail.com>
+Date: Sat, 1 Aug 2026 19:05:29 +0200
+Subject: [PATCH] camera: zoom the viewfinder by pinch, scroll or double tap
+
+The viewfinder had no zoom at all, which on a phone is the control people
+reach for first: the rear sensor is far wider than the screen, so framing
+anything at a distance meant walking closer.
+
+Add digital zoom on camerabin's own `zoom` property rather than magnifying
+the displayed paintable. camerabin crops in the source, through the
+wrappercamerabinsrc that Aperture already installs, so the pictures and
+videos that are saved are zoomed exactly as they were framed - a preview-only
+zoom would quietly save a wider picture than the one the user composed.
+
+Three ways in, because the app runs on both phones and desktops: a pinch
+gesture, the scroll wheel, and a double tap that toggles between 1x and 2x.
+The factor appears briefly over the viewfinder while it changes, and resets
+to 1x when the camera is switched, since a zoom belongs to the sensor you
+were pointing rather than to the app.
+
+The range is camerabin's own: 1x to its max-zoom, which it reports as 10.
+---
+ aperture/src/viewfinder.rs  |  38 +++++++++++++
+ data/resources/ui/camera.ui |  19 +++++++
+ src/widgets/camera.rs       | 109 ++++++++++++++++++++++++++++++++++++
+ 3 files changed, 166 insertions(+)
+
+diff --git a/aperture/src/viewfinder.rs b/aperture/src/viewfinder.rs
+index 0cdc0f5..b3247a1 100644
+--- a/aperture/src/viewfinder.rs
++++ b/aperture/src/viewfinder.rs
+@@ -31,6 +31,7 @@ mod imp {
+     use std::cell::Cell;
+     use std::cell::OnceCell;
+     use std::cell::RefCell;
++    use std::marker::PhantomData;
+ 
+     use glib::Properties;
+ 
+@@ -53,6 +54,10 @@ mod imp {
+         video_format: Cell<VideoFormat>,
+         #[property(get, set = Self::set_enable_hw_encoding, explicit_notify)]
+         enable_hw_encoding: Cell<bool>,
++        #[property(get, set = Self::set_zoom, explicit_notify, default = 1.0)]
++        zoom: Cell<f64>,
++        #[property(get = Self::max_zoom, type = f64)]
++        max_zoom: PhantomData<f64>,
+ 
+         pub qrcode_branch: RefCell<Option<gst::Element>>,
+         pub devices: OnceCell<crate::DeviceProvider>,
+@@ -79,6 +84,36 @@ mod imp {
+             self.camerabin.get().unwrap()
+         }
+ 
++        /// The largest zoom factor `camerabin` will accept.
++        fn max_zoom(&self) -> f64 {
++            self.camerabin
++                .get()
++                .map(|c| c.property::<f32>("max-zoom") as f64)
++                .unwrap_or(1.0)
++        }
++
++        /// Digital zoom, applied by `camerabin` itself.
++        ///
++        /// This crops in the source rather than magnifying the displayed
++        /// paintable, so the pictures and videos that are saved are zoomed
++        /// too, and the preview keeps the sensor's resolution instead of
++        /// showing an upscaled thumbnail.
++        fn set_zoom(&self, zoom: f64) {
++            let zoom = zoom.clamp(1.0, self.max_zoom());
++
++            if (zoom - self.zoom.get()).abs() < f64::EPSILON {
++                return;
++            }
++
++            self.zoom.replace(zoom);
++
++            if let Some(camerabin) = self.camerabin.get() {
++                camerabin.set_property("zoom", zoom as f32);
++            }
++
++            self.obj().notify_zoom();
++        }
++
+         pub(crate) fn set_state(&self, state: ViewfinderState) {
+             if state != self.state.replace(state) {
+                 self.obj().notify_state();
+@@ -235,6 +270,9 @@ mod imp {
+                 .expect("Missing GStreamer Bad Plug-ins");
+             self.camerabin.set(camerabin.clone()).unwrap();
+ 
++            // Cell<f64> starts at 0.0, while the property's default is 1.0.
++            self.zoom.set(1.0);
++
+             let bus = self.camerabin().bus().unwrap();
+             let watch = bus
+                 .add_watch_local(glib::clone!(
+diff --git a/data/resources/ui/camera.ui b/data/resources/ui/camera.ui
+index accf906..fcaf293 100644
+--- a/data/resources/ui/camera.ui
++++ b/data/resources/ui/camera.ui
+@@ -99,6 +99,25 @@
+                   <object class="GtkWindowHandle">
+                     <child>
+                       <object class="GtkOverlay">
++                        <child type="overlay">
++                          <object class="GtkRevealer" id="zoom_revealer">
++                            <property name="halign">center</property>
++                            <property name="valign">start</property>
++                            <property name="can-target">False</property>
++                            <property name="transition-type">crossfade</property>
++                            <child>
++                              <object class="GtkLabel" id="zoom_label">
++                                <property name="margin-top">48</property>
++                                <style>
++                                  <class name="recording-label"/>
++                                  <class name="heading"/>
++                                  <class name="numeric"/>
++                                  <class name="osd"/>
++                                </style>
++                              </object>
++                            </child>
++                          </object>
++                        </child>
+                         <child type="overlay">
+                           <object class="GtkRevealer" id="recording_revealer">
+                             <property name="halign">center</property>
+diff --git a/src/widgets/camera.rs b/src/widgets/camera.rs
+index 5108426..6ee17c0 100644
+--- a/src/widgets/camera.rs
++++ b/src/widgets/camera.rs
+@@ -34,6 +34,7 @@ mod imp {
+ 
+         pub recording_duration: Cell<u32>,
+         pub recording_source: RefCell<Option<glib::source::SourceId>>,
++        pub zoom_source: RefCell<Option<glib::source::SourceId>>,
+ 
+         #[property(get, set = Self::set_capture_mode, explicit_notify, default)]
+         capture_mode: Cell<crate::CaptureMode>,
+@@ -45,6 +46,11 @@ mod imp {
+         #[template_child]
+         pub dual_portrait_bp: TemplateChild<adw::Breakpoint>,
+ 
++        #[template_child]
++        pub zoom_revealer: TemplateChild<gtk::Revealer>,
++        #[template_child]
++        pub zoom_label: TemplateChild<gtk::Label>,
++
+         #[template_child]
+         pub recording_revealer: TemplateChild<gtk::Revealer>,
+         #[template_child]
+@@ -160,6 +166,74 @@ mod imp {
+ 
+             obj.add_controller(controller);
+ 
++            // Zoom: pinch on a touchscreen, ctrl-less scroll wheel on a
++            // desktop, double tap to toggle between 1x and 2x. All three end
++            // up on camerabin's own `zoom` property, so what is framed is
++            // what gets saved.
++            let zoom_gesture = gtk::GestureZoom::new();
++            zoom_gesture.set_propagation_phase(gtk::PropagationPhase::Capture);
++            let zoom_start = std::rc::Rc::new(std::cell::Cell::new(1.0_f64));
++            zoom_gesture.connect_begin(glib::clone!(
++                #[weak]
++                obj,
++                #[strong]
++                zoom_start,
++                move |_, _| {
++                    zoom_start.set(obj.imp().viewfinder.zoom());
++                }
++            ));
++            zoom_gesture.connect_scale_changed(glib::clone!(
++                #[weak]
++                obj,
++                #[strong]
++                zoom_start,
++                move |_, scale| {
++                    obj.imp().viewfinder.set_zoom(zoom_start.get() * scale);
++                }
++            ));
++            self.viewfinder.add_controller(zoom_gesture);
++
++            let scroll = gtk::EventControllerScroll::new(
++                gtk::EventControllerScrollFlags::VERTICAL,
++            );
++            scroll.connect_scroll(glib::clone!(
++                #[weak]
++                obj,
++                #[upgrade_or]
++                glib::Propagation::Proceed,
++                move |_, _dx, dy| {
++                    let viewfinder = &obj.imp().viewfinder;
++                    viewfinder.set_zoom(viewfinder.zoom() * (1.0 - dy * 0.1));
++                    glib::Propagation::Stop
++                }
++            ));
++            self.viewfinder.add_controller(scroll);
++
++            let double_tap = gtk::GestureClick::new();
++            double_tap.set_button(gtk::gdk::BUTTON_PRIMARY);
++            double_tap.connect_pressed(glib::clone!(
++                #[weak]
++                obj,
++                move |_, n_press, _, _| {
++                    if n_press != 2 {
++                        return;
++                    }
++
++                    let viewfinder = &obj.imp().viewfinder;
++                    let zoom = if viewfinder.zoom() > 1.0 { 1.0 } else { 2.0 };
++                    viewfinder.set_zoom(zoom);
++                }
++            ));
++            self.viewfinder.add_controller(double_tap);
++
++            self.viewfinder.connect_zoom_notify(glib::clone!(
++                #[weak]
++                obj,
++                move |viewfinder| {
++                    obj.show_zoom_level(viewfinder.zoom());
++                }
++            ));
++
+             provider.connect_camera_added(glib::clone!(
+                 #[weak]
+                 obj,
+@@ -464,6 +538,11 @@ impl Camera {
+             self.stop_recording();
+         }
+ 
++        // A zoom factor is a property of the camera you were pointing, not of
++        // the app; carrying it over to a different sensor is never what the
++        // user meant.
++        imp.viewfinder.set_zoom(1.0);
++
+         imp.viewfinder.set_camera(camera);
+     }
+ 
+@@ -615,6 +694,36 @@ impl Camera {
+         }
+     }
+ 
++    /// Shows the zoom factor over the viewfinder, briefly.
++    fn show_zoom_level(&self, zoom: f64) {
++        let imp = self.imp();
++
++        if let Some(source) = imp.zoom_source.take() {
++            source.remove();
++        }
++
++        imp.zoom_label.set_label(&format!("{zoom:.1}\u{00d7}"));
++        imp.zoom_revealer.set_reveal_child(zoom > 1.0);
++
++        if zoom <= 1.0 {
++            return;
++        }
++
++        let source = glib::timeout_add_seconds_local_once(
++            2,
++            glib::clone!(
++                #[weak(rename_to = obj)]
++                self,
++                move || {
++                    let imp = obj.imp();
++                    imp.zoom_source.replace(None);
++                    imp.zoom_revealer.set_reveal_child(false);
++                }
++            ),
++        );
++        imp.zoom_source.replace(Some(source));
++    }
++
+     fn show_recording_label(&self) {
+         let imp = self.imp();
+ 
+-- 
+2.53.0
+

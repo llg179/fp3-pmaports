@@ -356,24 +356,27 @@ the power path.
     `focus-sweep.py` itself and written into
     [`docs/camera/README.md`](https://github.com/llg179org/fp3-pmaports/blob/main/docs/camera/README.md).
 
-33e. **Autofocus needs an AF algorithm in libcamera's software ISP; the kernel
-    side is finished.** Measured 2026-08-01 with libcamera 0.7.1 on a freshly
-    booted phone: the camera enumerates through the `simple` pipeline handler
-    with the software ISP, streams 4032x3024 RGB at ~30 fps, is exported to
-    PipeWire as *Built-in Back Camera*, and offers exactly two controls -
-    `Contrast` and `Gamma`. No `AfMode`, no `LensPosition`; `ipa_simple.so`
-    contains no focus symbols and the shipped `imx363.yaml` tuning lists only
-    `BlackLevel`, `Awb`, `Adjust` and `Agc`. So nothing an app can do reaches the
-    actuator, however well it works over V4L2. What is missing, in order: (1) the
-    `simple` pipeline handler has to expose the lens it already has through the
-    ancillary media link, (2) the simple IPA needs an AF algorithm - a per-frame
-    focus metric plus a hill climb - and (3) the `AfMode`/`AfTrigger`/`AfState`
-    controls have to be published so an app can ask for continuous AF. The
-    algorithm itself is the one this repository already runs in
-    `userspace-camera/focus-sweep.py`, and the measured curve says how to shape
-    the search: the peak is roughly 50 counts wide out of 1024, with flat tails,
-    so a coarse pass of ~16 steps followed by a fine pass of +/-40 around the
-    best is enough. Upstream work, in libcamera rather than in the kernel.
+33e. **SETTLED 2026-08-01 - autofocus is written and works.** libcamera's
+    `simple` pipeline handler had no autofocus at all: `ipa_soft_simple.so`
+    contained no focus symbol, the tuning file listed only
+    `BlackLevel`/`Awb`/`Adjust`/`Agc`, and an app saw `Contrast` and `Gamma` and
+    nothing else. It now carries a contrast-detection AF, kept as
+    [`userspace-camera/libcamera/0101-simple-autofocus.patch`](https://github.com/llg179org/fp3-pmaports/blob/main/userspace-camera/libcamera/):
+    a sharpness statistic in the software ISP's existing stats pass, accumulated
+    into a 5x5 grid of zones; an `Af` algorithm in the simple IPA doing a coarse
+    ladder of twelve positions then a fine ladder of seven; and the lens plumbed
+    through the way the IPU3 handler does it. `AfMode`, `AfTrigger`, `AfMetering`
+    and `AfWindows` are published. Verified live: a scan settles on **372**
+    against the **380** that `focus-sweep.py` measures independently, and takes
+    about 3.5 s at 1920x1080 (14 s at 4032x3024, because statistics come once
+    every four frames and the software ISP sustains only ~6 fps there). Still
+    open underneath it: the metric is not a proper contrast measure of a
+    band-limited image, the search does not interpolate between the two best fine
+    positions, and `LensPosition` is deliberately **not** advertised because it
+    is defined in dioptres and no lens position on this phone has been related to
+    a subject distance (see 33c-2). Whether the patch is worth offering upstream
+    is a separate question - it is written to their conventions and carries
+    `Assisted-by:`, but it has been measured on exactly one sensor.
 33f. **Unbinding the ak7375 driver leaves a dangling ancillary media link and
     warns in the regulator core.** Each unbind/rebind adds another
     sensor-to-lens ancillary link instead of replacing it, and one of them ends
@@ -385,6 +388,35 @@ the power path.
     still enabled when the driver is released. Both look like upstream bugs
     rather than integration mistakes, but neither has been reduced to a minimal
     reproducer yet, and neither is on any path the phone takes in normal use.
+33f-2. **Two libcamera clients at once wedge the focus lens until reboot**, and
+    this one *is* on a path normal use takes. Opening the lens subdevice
+    runtime-resumes the actuator over the CCI bus; do that while another client
+    is tearing the camera down and the transfer times out
+    (`i2c-qcom-cci 1b0c000.cci: master 0 queue 0 timeout`, then
+    `ak7375 0-000c: ak7375_vcm_resume I2C failure: -110`). Runtime PM latches the
+    failure, so every later open returns `EINVAL`, libcamera logs *"Lens
+    initialisation failed, lens disabled"*, and autofocus disappears for the rest
+    of the boot while the camera still streams. Reproduced 2026-08-01 by
+    restarting the PipeWire stack on top of a running camera client; **not**
+    reproducible sequentially - two clean boots, four camera creations each,
+    including one after a streaming run, all fine, and a PipeWire restart with
+    nothing else touching the camera is also fine. Unclear yet whether the fault
+    is the CCI driver's arbitration, the actuator's resume ordering, or a shared
+    regulator dropping mid-transfer; each is a separate measurement.
+33g. **Tap-to-focus stops in PipeWire, not in libcamera.** The zones and the
+    `AfWindows`/`AfMetering` controls that a tap needs are implemented, but
+    PipeWire's libcamera plugin maps a control to a node property only for
+    `bool`, `int32` and `float`, and returns early for any array control
+    (`if (cid.isArray()) return nullptr;` in
+    `spa/plugins/libcamera/libcamera-source.cpp`, read from the source on
+    2026-08-01). `AfWindows` is an array of rectangles, so it never reaches an
+    application, while `AfMode` and `AfTrigger` do - both appear in `pw-dump` as
+    node properties. Finishing tap-to-focus therefore needs three more things:
+    the SPA plugin has to carry rectangles (SPA's own rectangle type is a size,
+    with no origin, so it would have to be an array of four ints); GStreamer's
+    `pipewiresrc`, which is what Aperture builds the source from, has to offer a
+    way to set node properties; and Snapshot needs the tap gesture that turns a
+    point into a window. None of it is on this phone's side of the fence.
 ## `wip/7.1.3/sensor` — SMGR over QMI/QRTR
 
 Accelerometer, gyroscope, magnetometer, proximity, ambient light. Only one commit

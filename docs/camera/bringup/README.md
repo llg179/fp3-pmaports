@@ -296,3 +296,103 @@ makes it confusing. The guard for it is
 [`tests/checks/06-dtb-test.sh`](../../../tests/checks/06-dtb-test.sh), which
 compares the booted device tree against the *installed package* rather than
 against the tree it was built from.
+
+## Autofocus in libcamera
+
+The kernel half of focus was finished on 2026-08-01: the actuator moves, and a
+sweep finds the peak. What no application could do with that is *ask* for focus,
+because libcamera's `simple` pipeline — the one this camera runs on — has no
+autofocus at all. Measured before writing any of it: `ipa_soft_simple.so`
+contained no focus symbol, the shipped `imx363.yaml` listed only
+`BlackLevel`/`Awb`/`Adjust`/`Agc`, and `cam --list-controls` offered `Contrast`
+and `Gamma`. Three pieces were missing, and each one is a different kind of
+thing.
+
+**A focus measure the ISP does not have.** The software ISP's statistics pass
+already walks every fourth pixel of every other line, summing the colour
+channels and filling a luminance histogram. Sharpness rides along in that pass —
+the sum of squared differences between successive samples — so it costs no
+extra memory traffic on a 15 MB frame. Two properties are load-bearing and both
+were learned the expensive way on this phone: the difference is taken between
+samples of the **same Bayer colour** (adjacent raw pixels differ by colour, not
+by detail), and the value is **normalised by the square of the total luminance**,
+because the AGC moves exposure and gain throughout a scan and an unnormalised
+sum of squares scales with brightness.
+
+**A search whose shape comes from the measurement.** The sweep says the response
+is a single interior peak with long flat tails, about 12% of contrast between
+peak and tail and 0.8% of spread within a position. That rules out the obvious
+implementations: a hill climb that stops when the score falls settles on the
+first wobble, and an A/B of the two ends of the range cannot see the peak
+between them — that exact comparison had already produced a confident *"the lens
+does not move"* the day before. So the scan is a fixed coarse ladder of twelve
+positions across the whole range, then a finer ladder of seven around the best
+of them, with no early exit.
+
+**A way to reach the lens.** The IPU3 pipeline handler already had the shape:
+the IPA emits the lens subdevice's controls and the pipeline handler applies
+`V4L2_CID_FOCUS_ABSOLUTE`. The one deliberate difference is that the lens's
+control range is passed to the IPA at `init()` rather than at `configure()`, so
+that the AF controls are advertised only for a camera that has a lens — a camera
+without one should not show an `AfMode` that cannot do anything.
+
+The acceptance test was decided before the code ran: a scan must land near the
+position the sweep found *independently*. It settles on **372** against the
+sweep's **380**, from a coarse pass whose maximum is at 372 and a fine pass that
+walks 279…465 around it.
+
+### What it cost in time, and where that time goes
+
+A scan is 19 measurements, and a measurement is one statistics frame. The
+software ISP produces statistics once every four frames, so the scan takes as
+long as 76 frames — **14 s at 4032×3024, 3.5 s at 1920×1080**. The frame rate is
+the whole story: the software ISP sustains ~6 fps at full sensor resolution and
+~30 fps at half. It is worth knowing which one an application is asking for
+before blaming the search.
+
+### Focus zones, and why a tap cannot reach them yet
+
+Sharpness is accumulated into a 5×5 grid rather than one number, so that
+`AfMetering`/`AfWindows` can point the score at the part of the frame a user
+tapped. The grid is nearly free: every one of the five per-format line functions
+takes one sample per two Bayer blocks, so the sample-index → zone-column mapping
+is identical for all of them and is computed once in `setWindow()`.
+
+☠️ **The control cannot reach an application, and libcamera is not where it
+stops.** PipeWire's libcamera plugin maps a control to a property only for
+`bool`, `int32` and `float`, and bails out of arrays first:
+
+```cpp
+	if (cid.isArray())
+		return nullptr;
+```
+[`spa/plugins/libcamera/libcamera-source.cpp`]
+
+`AfWindows` is an array of rectangles, so it is dropped before an app ever sees
+it, while `AfMode` and `AfTrigger` — plain integers — come through and show up in
+`pw-dump` as node properties. Tap-to-focus therefore needs a PipeWire change as
+well as this one, and that is why the libcamera side was written to be ready for
+it rather than waiting for it.
+
+### Two clients at once wedge the lens until reboot
+
+☠️ Opening the lens subdevice runtime-resumes the actuator over the CCI bus. Do
+that while another libcamera client is tearing the camera down and the transfer
+times out:
+
+```
+i2c-qcom-cci 1b0c000.cci: master 0 queue 0 timeout
+ak7375 0-000c: ak7375_vcm_resume I2C failure: -110
+```
+
+Runtime PM then latches the failure, so **every later open returns `EINVAL`** for
+the rest of the boot, libcamera logs *"Lens initialisation failed, lens
+disabled"*, and autofocus quietly disappears while the camera goes on streaming
+perfectly. It is not caused by autofocus — libcamera has always opened the lens
+when it creates the camera — but autofocus is what makes its absence visible.
+
+The characterisation that matters for anyone chasing it: sequential use never
+reproduced it. Across two clean boots, four camera creations each, including one
+after a streaming run, the lens came up every time; restarting the PipeWire stack
+*while nothing else touched the camera* was also harmless. It took an overlap to
+break it.
