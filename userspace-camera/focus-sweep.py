@@ -22,9 +22,12 @@ costs two bits of precision and buys a tenfold speed-up, which matters because a
 frame is 15 MB and this runs on the phone.
 
 A working actuator gives a curve with a single interior peak. A flat curve means
-the lens is not moving - which is a real possible outcome here, since the
-direction and the usable range of this actuator were read out of a vendor blob
-and have never been confirmed against hardware.
+the lens is not moving - which is a real possible outcome here, because the
+register map driving it was read out of a vendor blob and, while the decode was
+validated against two parts whose answers mainline already states, nothing has
+yet confirmed that writing those registers moves this board's lens. That is the
+question this script exists to answer, so treat a flat curve as an answer and
+not as a broken measurement.
 """
 
 import argparse

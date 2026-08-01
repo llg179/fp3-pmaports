@@ -31,10 +31,10 @@ CAMSS  csiphy0 -> csid0 -> ispif0 -> vfe0_rdi0 -> /dev/video0
 ```
 
 Alongside the sensor on the same CCI bus sit a `belling,bl24s64` EEPROM at 0x50
-holding the module's calibration, and a voice-coil focus motor at **0x0c** whose
-exact part is not yet identified — see [The focus actuator](#the-focus-actuator)
-below, and note that a comment in this repository and in the device tree claimed
-0x72 until the bus was actually scanned.
+holding the module's calibration, and an **AK7374** voice-coil focus motor at
+**0x0c** — see [The focus actuator](#the-focus-actuator) below. Note that this
+repository and the device tree both claimed 0x72 until the bus was actually
+scanned, and that the phone ships with two camera modules whose actuators differ.
 
 The sensor is strapped to I²C address **0x1a** (SLASEL high on this board), is
 mounted rotated 270°, and is described with `orientation = <1>` (world-facing).
@@ -92,9 +92,10 @@ was that frames came out.
   that the mismatch is harmless.
 - **The EEPROM.** Described in the device tree, no driver bound, calibration
   unread.
-- **Which focus actuator this board carries.** Measured to be at 0x0c, which
-  rules out the LC898217 the device tree used to claim; `ak7374` and `dw9800`
-  are the leading candidates. See below.
+- **Whether the focus actuator moves the lens.** The part is settled (an AK7374
+  at 0x0c, see below) and the driver is written, but no capture has yet been
+  scored at two different focus positions, so nothing here claims the lens
+  actually moves.
 
 ## The four things that made it probe
 
@@ -143,12 +144,16 @@ The check stops at "bound and linked" and does not attempt a capture.
 
 ## The focus actuator
 
-☠️ **Corrected the same day it was written: this phone's actuator is at 0x0c,
-and it is not an LC898217.** The driver, its binding and its MAINTAINERS entry
-landed 2026-08-01 and ship in `linux-fp3-7.1.3-r31`; the **board DT node was
-removed again** once the device was measured. Read the correction below before
-the register table, which is accurate about the LC898217XC and irrelevant to
-this board.
+☠️ **This phone's actuator is at 0x0c and it is an AK7374, not an LC898217 —
+but the LC898217 is not a mistake either: Fairphone ships two different camera
+modules and the other one has it.** Both drivers are therefore kept. The
+LC898217XC driver, binding and MAINTAINERS entry landed 2026-08-01 in
+`linux-fp3-7.1.3-r31` with its board DT node removed again once the device was
+measured; AK7374 support followed as a chipdef in mainline's existing
+`ak7375.c`, with the board node pointing at it. Read
+[Which part is it, then?](#which-part-is-it-then--an-ak7374-and-the-phone-comes-both-ways)
+before the LC898217 register table further down, which is accurate about that
+part and does not describe this board.
 
 ### What the device actually answers
 
@@ -183,30 +188,66 @@ bugs:
   failed with `-EINVAL`, several steps removed from the real `-110`. Unbind and
   rebind the driver to clear it.
 
-### Which part is it, then?
+### Which part is it, then? — an AK7374, and the phone comes both ways
 
-Not settled. What the vendor libraries say, decoded the same way as below:
-**every `LC898*` actuator sits at 0x72 and every other family sits at 0x0c**
-(`dw9714`, `dw9800`, `dw9716`, `ak7345`, `ak7371`, `ak7374`, `bu642*`,
-`ad5823` …). So the address alone rules the LC898 family out.
+Settled 2026-08-01, and the answer explains why the first attempt went wrong:
+**Fairphone ships this phone with two different rear camera modules, and they do
+not carry the same actuator.** The vendor's own camera configuration,
+`/vendor/etc/camera/camera_config.xml`, pairs them by module:
 
-The board vendor's own kernel narrows it further: `msm_actuator.c` special-cases
-exactly two parts by name — **`ak7374` and `dw9800`** — which is only worth
-doing for parts that ship. They differ in a way that is easy to test once
-streaming is set up: `ak7374` keeps its position at register 0x00, MSB-aligned
-(shift 6); `dw9800` keeps it at register 0x03, right-aligned.
+| `SensorName` | `EepromName` | `ActuatorName` |
+|---|---|---|
+| `imx363` (added 2019-04) | `ofilm_imx363_bl24s64` | `lc898217xc` — 0x72 |
+| `imx363_2nd` (added 2019-12) | `ofilm_imx363_bl24s64` | **`ak7374` — 0x0c** |
+| `imx363pv_2nd` (added 2020-05) | `ofilm_imx363pv_bl24s64` | **`ak7374` — 0x0c** |
 
-A register probe at 0x0c returns a continuous byte stream that ignores the
-register address under a write-then-read with a STOP between, so it confirms a
-live device but does not discriminate the two. The module EEPROM reads fine (in
-short chunks — the CCI adapter refuses a long read with `EOPNOTSUPP`) but its
-first 128 bytes are calibration tables with no readable part name.
+This phone answers at 0x0c and not at 0x72, so it carries a **second-source
+module with an AK7374**. The LC898217XC work below is not wrong, it describes
+the *other* variant — the same shape as the battery, where the FP3 ships two
+pack types and this one has the Fuji.
 
-☠️ And a consequence worth carrying forward: the downstream inversion
-`value = 1023 - position` applies to every actuator **except** `ak7374` and
-`dw9800`. If the part here is one of those two, the inversion does not apply —
-so the polarity argument in the driver, which was built on that inversion,
-would be wrong for this board.
+That also disposes of the `ak7374` vs `dw9800` question the earlier text left
+open: `dw9800` appears in `camera_config.xml` against a different module
+entirely, so it was never a candidate for this board. And the downstream
+inversion `value = 1023 - position`, which excludes exactly `ak7374` and
+`dw9800`, does not apply here — the AK7374 takes the position straight.
+
+### The AK7374 register map, and how it was validated
+
+Read out of `libactuator_ak7374.so` on the phone's own vendor partition, where
+the map is a plain structure in `.data`:
+
+| | |
+|---|---|
+| I²C address | **0x0c** (stored 8-bit as 0x18) |
+| position register | **0x00** |
+| position width | **10 bits**, so 0…1023 |
+| alignment | left in the 16-bit word, **shift 6** |
+| standby | none in the vendor's sequence |
+
+☠️ **The decoder was wrong before it was right, and only a known-answer control
+caught it.** The structure starts at `.data + 0x04`, not at `.data`, and with
+that four-byte error every field decoded to a plausible-looking wrong value.
+What exposed it was running the identical decode against parts whose answers
+mainline already states — and the fix is confirmed the same way:
+
+| field | `dw9714` mainline / decoded | `ak7345` mainline / decoded |
+|---|---|---|
+| I²C address | 0x0c / **0x0c** | 0x0c / **0x0c** |
+| position width | 10 bits / **10** | 9 bits / **9** |
+| position register | none / **0xffff** | 0x00 / **0x00** |
+| shift | 4 / **4** | 7 / **7** |
+
+Seven fields across two parts, all matching. The AK7374's own numbers then
+satisfy the invariant the whole family obeys: position width plus shift makes a
+full 16-bit word (9+7, 10+6, 12+4).
+
+The one number no control covers is the power-on delay. The AK7345's 20 ms is
+used rather than the AK7375's 10 ms, because over-waiting costs 10 ms once per
+power-on and under-waiting is a failed first transfer.
+
+Mainline's `ak7375.c` is already a chip-definition table, so supporting this
+part is a chipdef and a compatible rather than a new driver.
 
 ### The LC898217XC, for the record
 

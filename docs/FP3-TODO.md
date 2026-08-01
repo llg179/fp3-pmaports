@@ -260,12 +260,21 @@ the power path.
     answers `0x0c 0x1a 0x50` and **nothing at 0x72**. ☠️ The scan must be forced
     (`I2C_SLAVE_FORCE`) or it silently skips every driver-claimed address —
     exactly the ones under investigation. Every `LC898*` in the vendor tree is at
-    0x72 and every other family at 0x0c, and the vendor kernel special-cases two
-    0x0c parts by name, **`ak7374` and `dw9800`**, so one of those is the likely
-    fit. They are distinguishable: ak7374 keeps position at register 0x00
-    MSB-aligned, dw9800 at register 0x03 right-aligned. ☠️ The downstream
-    `value = 1023 - position` inversion excludes exactly those two, so the
-    polarity argument built on it does not apply here. Two side findings, both of
+    0x72 and every other family at 0x0c. ☠️ **Resolved later the same day, and
+    the resolution is that both parts are real:** the vendor's
+    `/vendor/etc/camera/camera_config.xml` pairs module `imx363` with
+    `lc898217xc` and both second-source modules (`imx363_2nd`, `imx363pv_2nd`)
+    with **`ak7374`** — Fairphone ships this phone two ways, exactly as it does
+    with the battery pack. This phone has a second-source module, so `ak7374` it
+    is; `dw9800` was never a candidate here, it belongs to a different module in
+    the same file. Support is a chipdef plus a compatible in mainline's existing
+    `ak7375.c` (register 0x00, 10 bits, shift 6, no standby), with the board node
+    restored to point at it. The decode was re-validated against **two** known
+    answers, `dw9714` and `ak7345`, after a four-byte base-offset error made
+    every field decode to a plausible wrong value — see item 33b. ☠️ The
+    downstream `value = 1023 - position` inversion excludes exactly `ak7374` and
+    `dw9800`, so the polarity argument built on it does not apply to this board.
+    Two side findings, both of
     which had looked like driver bugs: **the CCI bus does not work until the
     sensor's IO rail is up** (timeout `-110` versus `-ENXIO` tells "bus dead"
     from "nobody home"), and **a failed runtime-PM resume latches** into
@@ -280,6 +289,23 @@ the power path.
     `lens-focus`; adding the reference put the lens in the graph immediately. The
     `lens-focus: true` line stays in `sony,imx363.yaml` for whatever part turns
     out to be fitted.
+33b. **A vendor-blob decode is only worth what its known-answer control is
+    worth.** The actuator parameter structure starts at `.data + 0x04`, not at
+    `.data`, and with that four-byte error every field still decoded to a
+    plausible value — an I²C address, a bit width, a register number, none of
+    them right. Nothing in the output looked wrong. What caught it was running
+    the identical decode against parts mainline already documents: `dw9714`
+    (0x0c, 10 bits, no register address, shift 4) and `ak7345` (0x0c, 9 bits,
+    register 0x00, shift 7). Seven fields across two parts now agree, and the
+    AK7374's own numbers satisfy the family invariant that position width plus
+    shift fills a 16-bit word (9+7, 10+6, 12+4). **Do not accept a struct decode
+    without at least one control whose answer is known independently**, and
+    prefer two — the first control is what made the earlier LC898217 decode
+    trustworthy, and it is what made this one repairable.
+33c. **Still unmeasured: whether writing those registers moves the lens.** The
+    part is identified and the driver written, but no capture has been scored at
+    two focus positions yet. `userspace-camera/focus-sweep.py` is the instrument;
+    a flat curve is an answer, not a broken run.
 
 ## `wip/7.1.3/sensor` — SMGR over QMI/QRTR
 
