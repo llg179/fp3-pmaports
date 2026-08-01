@@ -1,0 +1,319 @@
+From f54d3e6ba3edf9634be1e3058d9d519a1fd3de1b Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Lajosh=C3=A1zi=2C=20L=C3=A1szl=C3=B3=20Gergely?=
+ <lajoshazilg@gmail.com>
+Date: Sat, 1 Aug 2026 21:15:10 +0200
+Subject: [PATCH] camera: give the viewfinder its own resolution, and lower it
+ when it is slow
+
+The source's capsfilter is shared by the viewfinder and by still capture, so
+the two have always had one resolution between them: whatever is smooth enough
+to preview is also what gets saved, and whatever is worth saving makes the
+preview crawl. On a phone with a 12 MP sensor and a software ISP the two
+numbers are nowhere near each other - measured on a Fairphone 3, the pipeline
+sustains about 6 fps at the sensor's full 4032x3024 and about 30 fps at
+1920x1080.
+
+Separate them. Still capture is pinned to the sensor's largest resolution
+through camerabin's image-capture-caps, and the viewfinder gets its own
+viewfinder-caps, starting at the largest resolution that is not more than
+1920x1080 - a phone screen cannot show more, and every pixel above that is
+debayered in software for nothing.
+
+Then measure rather than assume: a pad probe counts the buffers that actually
+reach the video sink, and if fewer than 20 frames per second arrive for two
+consecutive two-second windows, the viewfinder drops to the next smaller
+resolution the camera offers and the pipeline restarts. It never drops below
+640x480 and never raises the resolution again, so it settles instead of
+oscillating, and it says what it did in the log either way.
+
+The saved picture is unaffected by all of it, which is the point.
+---
+ aperture/src/camera.rs     |  23 +++++
+ aperture/src/utils.rs      |   2 +-
+ aperture/src/viewfinder.rs | 187 +++++++++++++++++++++++++++++++++++++
+ 3 files changed, 211 insertions(+), 1 deletion(-)
+
+diff --git a/aperture/src/camera.rs b/aperture/src/camera.rs
+index 6aa9e75..b2d85d1 100644
+--- a/aperture/src/camera.rs
++++ b/aperture/src/camera.rs
+@@ -159,4 +159,27 @@ impl Camera {
+ 
+         highest_res_caps
+     }
++
++    /// Every raw resolution the camera offers, largest first.
++    ///
++    /// Used to pick a viewfinder size, and to pin still capture to the
++    /// largest size the sensor has.
++    pub(crate) fn resolutions(&self) -> Vec<crate::utils::Size> {
++        let Some(caps) = self.caps() else {
++            return Vec::new();
++        };
++
++        let mut sizes: Vec<crate::utils::Size> = caps
++            .iter()
++            .filter_map(|s| {
++                let width = s.get::<i32>("width").ok()?;
++                let height = s.get::<i32>("height").ok()?;
++                Some(crate::utils::Size { width, height })
++            })
++            .collect();
++
++        sizes.sort_by_key(|s| std::cmp::Reverse(s.width as i64 * s.height as i64));
++        sizes.dedup_by(|a, b| a.width == b.width && a.height == b.height);
++        sizes
++    }
+ }
+diff --git a/aperture/src/utils.rs b/aperture/src/utils.rs
+index 72ab13b..9f3948e 100644
+--- a/aperture/src/utils.rs
++++ b/aperture/src/utils.rs
+@@ -1,4 +1,4 @@
+-#[derive(Debug, PartialEq)]
++#[derive(Debug, Clone, Copy, PartialEq)]
+ pub(crate) struct Size {
+     pub width: i32,
+     pub height: i32,
+diff --git a/aperture/src/viewfinder.rs b/aperture/src/viewfinder.rs
+index b3247a1..8d449d4 100644
+--- a/aperture/src/viewfinder.rs
++++ b/aperture/src/viewfinder.rs
+@@ -75,6 +75,15 @@ mod imp {
+ 
+         pub timeout_handler: RefCell<Option<glib::SourceId>>,
+ 
++        /// Resolutions the current camera offers, largest first.
++        pub(crate) resolutions: RefCell<Vec<crate::utils::Size>>,
++        /// Index into `resolutions` the viewfinder is currently asking for.
++        pub viewfinder_res: Cell<usize>,
++        /// Buffers seen by the video sink since the last measurement.
++        pub frame_count: std::sync::Arc<std::sync::atomic::AtomicU32>,
++        pub fps_source: RefCell<Option<glib::SourceId>>,
++        pub slow_windows: Cell<u32>,
++
+         pub picture: gtk::Picture,
+         pub offload: gtk::GraphicsOffload,
+     }
+@@ -365,6 +374,14 @@ mod imp {
+                 .expect("Missing GStreamer Base Plug-ins");
+             camerabin.set_property("image-filter", &videoconvert_image);
+ 
++            if let Some(pad) = paintablesink.static_pad("sink") {
++                let counter = self.frame_count.clone();
++                pad.add_probe(gst::PadProbeType::BUFFER, move |_, _| {
++                    counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
++                    gst::PadProbeReturn::Ok
++                });
++            }
++
+             self.sink_paintable.set(paintablesink).unwrap();
+ 
+             self.picture
+@@ -585,6 +602,19 @@ impl Default for Viewfinder {
+ }
+ 
+ impl Viewfinder {
++    /// Largest viewfinder resolution to start from. A phone screen is far
++    /// smaller than the sensor, and every pixel above this is debayered in
++    /// software for nothing.
++    const MAX_VIEWFINDER_PIXELS: i64 = 1920 * 1080;
++    /// Never drop the viewfinder below this.
++    const MIN_VIEWFINDER_PIXELS: i64 = 640 * 480;
++    /// Frames per second below which the viewfinder is too slow to use.
++    const SLOW_FPS: f64 = 20.0;
++    /// Consecutive slow windows before giving up a resolution step.
++    const SLOW_WINDOWS: u32 = 2;
++    /// Length of one measurement window, in seconds.
++    const FPS_WINDOW: u32 = 2;
++
+     /// Creates a new [`Viewfinder`][crate::Viewfinder]
+     ///
+     /// # Returns
+@@ -753,6 +783,8 @@ impl Viewfinder {
+ 
+     /// Starts the viewfinder.
+     pub fn start_stream(&self) {
++        self.start_fps_monitor();
++
+         glib::spawn_future_local(glib::clone!(
+             #[weak(rename_to = obj)]
+             self,
+@@ -825,6 +857,8 @@ impl Viewfinder {
+     ///
+     /// A black frame will be shown after this methods has been called.
+     pub fn stop_stream(&self) {
++        self.stop_fps_monitor();
++
+         if let Err(err) = self.imp().camerabin().set_state(gst::State::Null) {
+             log::error!("Could not pause camerabin: {err}");
+             self.imp().set_state(ViewfinderState::Error);
+@@ -1254,12 +1288,165 @@ impl Viewfinder {
+             capsfilter.set_property("caps", &caps);
+         }
+ 
++        self.setup_capture_sizes(camera);
++
+         let is_front_camera = !matches!(camera.location(), crate::CameraLocation::Back);
+         imp.is_front_camera.set(is_front_camera);
+ 
+         Ok(())
+     }
+ 
++    /// Pins still capture to the sensor's largest resolution, and starts the
++    /// viewfinder at one small enough to be smooth.
++    ///
++    /// The two are deliberately separate. The source's capsfilter is shared by
++    /// both paths, so without an explicit `image-capture-caps` a smaller
++    /// viewfinder would quietly shrink the saved picture as well.
++    fn setup_capture_sizes(&self, camera: &crate::Camera) {
++        let imp = self.imp();
++
++        let resolutions = camera.resolutions();
++        if resolutions.is_empty() {
++            log::warn!("Camera reports no resolutions; leaving capture sizes alone");
++            return;
++        }
++
++        let largest = resolutions[0];
++        imp.camerabin()
++            .set_property("image-capture-caps", &Self::size_caps(largest));
++        log::info!(
++            "Still capture pinned to {}x{}",
++            largest.width,
++            largest.height
++        );
++
++        // Start at the largest resolution that is not obviously too much to
++        // debayer and paint in software: the viewfinder only has to fill a
++        // phone screen.
++        let start = resolutions
++            .iter()
++            .position(|s| (s.width as i64) * (s.height as i64) <= Self::MAX_VIEWFINDER_PIXELS)
++            .unwrap_or(resolutions.len() - 1);
++
++        imp.resolutions.replace(resolutions);
++        imp.slow_windows.set(0);
++        self.set_viewfinder_resolution(start);
++    }
++
++    fn size_caps(size: crate::utils::Size) -> gst::Caps {
++        gst::Caps::builder("video/x-raw")
++            .field("width", size.width)
++            .field("height", size.height)
++            .build()
++    }
++
++    fn set_viewfinder_resolution(&self, index: usize) {
++        let imp = self.imp();
++        let resolutions = imp.resolutions.borrow();
++
++        let Some(size) = resolutions.get(index).copied() else {
++            return;
++        };
++        drop(resolutions);
++
++        imp.viewfinder_res.set(index);
++        imp.camerabin()
++            .set_property("viewfinder-caps", &Self::size_caps(size));
++        log::info!("Viewfinder at {}x{}", size.width, size.height);
++    }
++
++    /// Drops the viewfinder to the next smaller resolution, if there is one
++    /// worth dropping to. Returns whether anything changed.
++    fn lower_viewfinder_resolution(&self) -> bool {
++        let imp = self.imp();
++        let next = imp.viewfinder_res.get() + 1;
++
++        let size = {
++            let resolutions = imp.resolutions.borrow();
++            match resolutions.get(next).copied() {
++                Some(size) => size,
++                None => return false,
++            }
++        };
++
++        if (size.width as i64) * (size.height as i64) < Self::MIN_VIEWFINDER_PIXELS {
++            return false;
++        }
++
++        self.set_viewfinder_resolution(next);
++        true
++    }
++
++    /// Watches how fast frames actually arrive, and gives up resolution when
++    /// they do not.
++    fn start_fps_monitor(&self) {
++        let imp = self.imp();
++
++        if imp.fps_source.borrow().is_some() {
++            return;
++        }
++
++        imp.frame_count.store(0, std::sync::atomic::Ordering::Relaxed);
++
++        let source = glib::timeout_add_seconds_local(
++            Self::FPS_WINDOW,
++            glib::clone!(
++                #[weak(rename_to = obj)]
++                self,
++                #[upgrade_or]
++                glib::ControlFlow::Break,
++                move || {
++                    obj.check_fps();
++                    glib::ControlFlow::Continue
++                }
++            ),
++        );
++
++        imp.fps_source.replace(Some(source));
++    }
++
++    fn stop_fps_monitor(&self) {
++        if let Some(source) = self.imp().fps_source.take() {
++            source.remove();
++        }
++    }
++
++    fn check_fps(&self) {
++        let imp = self.imp();
++
++        let frames = imp
++            .frame_count
++            .swap(0, std::sync::atomic::Ordering::Relaxed);
++        let fps = f64::from(frames) / f64::from(Self::FPS_WINDOW);
++
++        // A stream that has just started, or one that is not running at all,
++        // says nothing about how fast the pipeline can go.
++        if !matches!(self.state(), ViewfinderState::Ready) || frames == 0 {
++            imp.slow_windows.set(0);
++            return;
++        }
++
++        if fps >= Self::SLOW_FPS {
++            imp.slow_windows.set(0);
++            return;
++        }
++
++        let slow = imp.slow_windows.get() + 1;
++        imp.slow_windows.set(slow);
++        log::debug!("Viewfinder at {fps:.1} fps ({slow} slow windows)");
++
++        if slow < Self::SLOW_WINDOWS {
++            return;
++        }
++
++        imp.slow_windows.set(0);
++
++        if self.lower_viewfinder_resolution() {
++            log::info!("Only {fps:.1} fps; lowering the viewfinder resolution");
++            self.reset_pipeline();
++        }
++    }
++
+     fn reset_pipeline(&self) {
+         if matches!(
+             self.imp().camerabin().current_state(),
+-- 
+2.53.0
+

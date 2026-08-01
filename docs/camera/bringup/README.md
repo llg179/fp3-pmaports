@@ -396,3 +396,48 @@ reproduced it. Across two clean boots, four camera creations each, including one
 after a streaming run, the lens came up every time; restarting the PipeWire stack
 *while nothing else touched the camera* was also harmless. It took an overlap to
 break it.
+
+### What a shipped autofocus does differently
+
+The first version of this algorithm was written from our own measurements. Two
+in-tree implementations and the focus-measure literature were then read to check
+it, and three of their ideas were worth taking. libcamera itself carries a
+mature CDAF+PDAF algorithm for the Raspberry Pi
+([`src/ipa/rpi/controller/rpi/af.cpp`](https://github.com/raspberrypi/libcamera/blob/main/src/ipa/rpi/controller/rpi/af.cpp),
+970 lines, in the field for years), and its thresholds are the ones adopted here
+rather than numbers of our own invention.
+
+**Interpolate the peak, do not just take the best sample.** Fitting a parabola
+through the best sample and its two neighbours puts the answer between the
+positions actually visited, so the result is no longer quantised to the step of
+the scan. Taken from their `findPeak()`.
+
+**Do not detect a scene change from the focus score.** The first version
+re-scanned when the score moved by more than 30%, which cannot work: the score
+is exactly what focusing changes, so a scan that succeeded looks the same as a
+scene that moved. The Raspberry Pi algorithm watches the **colour averages**
+instead, with a ratio test per channel and a delay of several frames, and only
+treats the contrast collapsing as a second, independent trigger. Their
+`retriggerRatio` of 0.75 and `retriggerDelay` of 10 are used unchanged.
+
+**Skip frames at the start.** They skip 5 statistics frames after a mode change
+because the AGC has not converged; a scan run underneath a moving exposure
+measures the exposure. This was visible here before the change: the first scan
+of a session scored an order of magnitude differently from the second.
+
+Two of their ideas were deliberately **not** taken, and the reason is a property
+of our measurement rather than a preference. They stop a scan early when the
+contrast falls to 75% of the maximum seen so far, and they reverse direction
+when the peak was not bracketed. Our metric does not have the dynamic range for
+that: the peak-to-tail ratio of a scene with detail is about 1.13, so contrast
+never falls to 0.75 of the peak and the test would never fire. The fixed ladder
+stays.
+
+On the focus measure itself, the literature agrees with what was found here the
+hard way. Gradient-based measures — Tenengrad, and the squared-difference family
+this one belongs to — score best for accuracy and unimodality, and are **the
+most sensitive to noise and low light** ([Pertuz et al., *Analysis of focus
+measure operators in shape from focus*](http://isp-utb.github.io/seminario/papers/Pattern_Recognition_Pertuz_2013.pdf);
+[OpenCV, *A comparative study of focus measures*](https://opencv.org/autofocus-using-opencv-a-comparative-study-of-focus-measures-for-sharpness-assessment/)).
+That is precisely the failure the darkness and flatness gates exist to catch,
+and it is why they were kept rather than replaced by a different metric.

@@ -1,4 +1,4 @@
-From a9dfaa9dc52ef022eeece1f4eb662b062911b5d1 Mon Sep 17 00:00:00 2001
+From fe4deff632913d8991bdb58a4936efd277454657 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Lajosh=C3=A1zi=2C=20L=C3=A1szl=C3=B3=20Gergely?=
  <lajoshazilg@gmail.com>
 Date: Sat, 1 Aug 2026 18:47:04 +0200
@@ -55,18 +55,18 @@ Assisted-by: Claude:claude-opus-5
  .../internal/software_isp/swisp_stats.h       |  20 +
  .../internal/software_isp/swstats_cpu.h       |  39 +-
  include/libcamera/ipa/soft.mojom              |   4 +-
- src/ipa/simple/algorithms/af.cpp              | 411 ++++++++++++++++++
- src/ipa/simple/algorithms/af.h                |  78 ++++
+ src/ipa/simple/algorithms/af.cpp              | 591 ++++++++++++++++++
+ src/ipa/simple/algorithms/af.h                |  91 +++
  src/ipa/simple/algorithms/meson.build         |   1 +
  src/ipa/simple/data/uncalibrated.yaml         |   1 +
  src/ipa/simple/ipa_context.h                  |  24 +
- src/ipa/simple/soft_simple.cpp                |  28 ++
+ src/ipa/simple/soft_simple.cpp                |  28 +
  src/libcamera/pipeline/simple/simple.cpp      |  18 +
  src/libcamera/sensor/camera_sensor_legacy.cpp |   2 +-
  src/libcamera/sensor/camera_sensor_raw.cpp    |   2 +-
  src/libcamera/software_isp/software_isp.cpp   |  18 +
- src/libcamera/software_isp/swstats_cpu.cpp    |  61 ++-
- 16 files changed, 690 insertions(+), 21 deletions(-)
+ src/libcamera/software_isp/swstats_cpu.cpp    |  61 +-
+ 16 files changed, 883 insertions(+), 21 deletions(-)
  create mode 100644 src/ipa/simple/algorithms/af.cpp
  create mode 100644 src/ipa/simple/algorithms/af.h
 
@@ -238,10 +238,10 @@ index 77328c5..b391335 100644
  };
 diff --git a/src/ipa/simple/algorithms/af.cpp b/src/ipa/simple/algorithms/af.cpp
 new file mode 100644
-index 0000000..4fb95f3
+index 0000000..90b6828
 --- /dev/null
 +++ b/src/ipa/simple/algorithms/af.cpp
-@@ -0,0 +1,411 @@
+@@ -0,0 +1,591 @@
 +/* SPDX-License-Identifier: LGPL-2.1-or-later */
 +/*
 + * Copyright (C) 2026, Lajosházi, László Gergely
@@ -304,9 +304,45 @@ index 0000000..4fb95f3
 +constexpr unsigned int kSettleFrames = 0;
 +constexpr unsigned int kInitialSettleFrames = 1;
 +/* Relative change in score that counts as the scene having changed */
-+constexpr double kRescanThreshold = 0.3;
-+/* Consecutive disagreeing measurements before a continuous rescan */
-+constexpr unsigned int kRescanSamples = 3;
++constexpr double kRescanThreshold = 0.5;
++/*
++ * How far the best position of a scan has to stand above the worst for the
++ * scan to be believed.
++ *
++ * A scene with no detail at the scale the metric measures - a blank wall, or
++ * anything in the dark - gives a flat response, and the maximum of a flat
++ * response is wherever the noise happened to peak. Measured on a Fairphone 3:
++ * a scene with detail spans 12% to 23% between the best and the worst position
++ * of a coarse pass, while a featureless one spans under 4%.
++ */
++constexpr double kMinContrast = 0.08;
++/*
++ * Mean sample luminance, 0..255, below which a scan is not attempted at all.
++ *
++ * The score divides sharpness by the square of the luminance, which is right
++ * for signal - the differences scale with brightness - but wrong for noise,
++ * which does not. In a dark frame the quotient therefore grows large and is
++ * entirely noise.
++ */
++constexpr double kMinLuminance = 12.0;
++/*
++ * Consecutive disagreeing measurements before a continuous rescan, and how far
++ * a value has to move to disagree.
++ *
++ * Both the thresholds and the shape of this test are taken from the Raspberry
++ * Pi AF algorithm (src/ipa/rpi/controller/rpi/af.cpp, retriggerRatio 0.75 and
++ * retriggerDelay 10), which has been in the field far longer than this one.
++ */
++constexpr unsigned int kRescanSamples = 10;
++constexpr double kRetriggerRatio = 0.75;
++/*
++ * Statistics frames to ignore after a session starts.
++ *
++ * The AGC needs several of them to converge, and a scan run underneath a
++ * moving exposure measures the exposure rather than the focus. The Raspberry
++ * Pi algorithm skips 5 frames for the same reason.
++ */
++constexpr unsigned int kStartupSkip = 6;
 +
 +} /* namespace */
 +
@@ -320,6 +356,7 @@ index 0000000..4fb95f3
 +
 +	settleFrames_ = tuningData["settle-frames"].get<uint32_t>(kSettleFrames);
 +	rescanThreshold_ = tuningData["rescan-threshold"].get<double>(kRescanThreshold);
++	minContrast_ = tuningData["min-contrast"].get<double>(kMinContrast);
 +
 +	static const std::array<ControlValue, 3> kAfModes = {
 +		ControlValue(static_cast<int32_t>(controls::AfModeManual)),
@@ -423,7 +460,9 @@ index 0000000..4fb95f3
 +	bestScore_ = 0.0;
 +	bestPosition_ = context.lens.def;
 +	focusedScore_ = 0.0;
++	sceneAverage_ = RGB<double>({ 0.0, 0.0, 0.0 });
 +	disagreed_ = 0;
++	startupSkip_ = kStartupSkip;
 +
 +	return 0;
 +}
@@ -507,6 +546,56 @@ index 0000000..4fb95f3
 +	return static_cast<double>(sharpness) / (luma * luma) * 1e12;
 +}
 +
++RGB<double> Af::average(const SwIspStats *stats)
++{
++	uint64_t samples = 0;
++
++	for (unsigned int i = 0; i < SwIspStats::kYHistogramSize; i++)
++		samples += stats->yHistogram[i];
++
++	if (!samples)
++		return RGB<double>({ 0.0, 0.0, 0.0 });
++
++	return RGB<double>({ static_cast<double>(stats->sum_.r()) / samples,
++			     static_cast<double>(stats->sum_.g()) / samples,
++			     static_cast<double>(stats->sum_.b()) / samples });
++}
++
++/**
++ * \brief Whether two frame averages are far enough apart to be a new scene
++ *
++ * The test is the Raspberry Pi algorithm's: a ratio rather than a difference,
++ * applied per channel, with a +1 that keeps it meaningful near black.
++ */
++bool Af::sceneChanged(const RGB<double> &a, const RGB<double> &b) const
++{
++	for (unsigned int i = 0; i < 3; i++) {
++		if (a[i] + 1.0 < kRetriggerRatio * b[i] ||
++		    b[i] + 1.0 < kRetriggerRatio * a[i])
++			return true;
++	}
++
++	return false;
++}
++
++double Af::luminance(const SwIspStats *stats)
++{
++	uint64_t samples = 0;
++	uint64_t weighted = 0;
++
++	for (unsigned int i = 0; i < SwIspStats::kYHistogramSize; i++) {
++		samples += stats->yHistogram[i];
++		weighted += static_cast<uint64_t>(stats->yHistogram[i]) *
++			    (i * 256 / SwIspStats::kYHistogramSize +
++			     128 / SwIspStats::kYHistogramSize);
++	}
++
++	if (!samples)
++		return 0.0;
++
++	return static_cast<double>(weighted) / samples;
++}
++
 +void Af::planScan(int32_t centre, int32_t span, unsigned int steps)
 +{
 +	positions_.clear();
@@ -525,6 +614,41 @@ index 0000000..4fb95f3
 +		if (positions_.empty() || positions_.back() != pos)
 +			positions_.push_back(pos);
 +	}
++}
++
++/**
++ * \brief Interpolate the peak between the best sample and its neighbours
++ *
++ * Fitting a parabola through the best sample and the one either side puts the
++ * peak between the positions actually visited, so the result is not limited to
++ * the step of the scan. Adapted from the Raspberry Pi AF algorithm's
++ * findPeak(), which in turn adapts interpolateQuadratic() from its AWB.
++ */
++int32_t Af::interpolatePeak() const
++{
++	unsigned int i = bestIndex_;
++
++	if (positions_.size() < 3)
++		return positions_[i];
++
++	if (i == 0)
++		i++;
++	else if (i + 1 >= positions_.size())
++		i--;
++
++	double abx = positions_[i - 1] - positions_[i];
++	double aby = scores_[i - 1] - scores_[i];
++	double cbx = positions_[i + 1] - positions_[i];
++	double cby = scores_[i + 1] - scores_[i];
++
++	double denom = 2.0 * (aby * cbx - cby * abx);
++	if (std::abs(denom) < 1e-9 || denom * abx <= 0.0)
++		return positions_[bestIndex_];
++
++	double f = (aby * cbx * cbx - cby * abx * abx) / denom;
++	f = std::clamp(f, std::min(abx, cbx), std::max(abx, cbx));
++
++	return static_cast<int32_t>(std::lround(positions_[i] + f));
 +}
 +
 +void Af::moveTo(IPAContext &context, int32_t position)
@@ -546,7 +670,11 @@ index 0000000..4fb95f3
 +	phase_ = ScanPhase::Coarse;
 +	planScan((min_ + max_) / 2, (max_ - min_ + 1) / 2, kCoarseSteps);
 +	index_ = 0;
++	scores_.clear();
++	bestIndex_ = 0;
 +	bestScore_ = 0.0;
++	worstScore_ = 0.0;
++	startPosition_ = context.activeState.af.position;
 +	bestPosition_ = positions_.front();
 +
 +	context.activeState.af.state = controls::AfStateScanning;
@@ -575,6 +703,11 @@ index 0000000..4fb95f3
 +	if (af.mode == controls::AfModeManual || !stats->valid)
 +		return;
 +
++	if (startupSkip_) {
++		startupSkip_--;
++		return;
++	}
++
 +	double value = score(stats);
 +
 +	if (phase_ == ScanPhase::Idle) {
@@ -586,6 +719,12 @@ index 0000000..4fb95f3
 +			return;
 +
 +		if (af.state == controls::AfStateIdle) {
++			if (luminance(stats) < kMinLuminance) {
++				LOG(IPASoftAf, Debug)
++					<< "Too dark to focus, waiting";
++				return;
++			}
++
 +			startScan(context);
 +			metadata.set(controls::AfState, af.state);
 +			return;
@@ -594,11 +733,21 @@ index 0000000..4fb95f3
 +		if (focusedScore_ <= 0.0)
 +			return;
 +
-+		if (std::abs(value - focusedScore_) > rescanThreshold_ * focusedScore_) {
++		/*
++		 * Deciding that the scene changed from the focus score alone
++		 * cannot work: the score is what focusing changes, so a scan
++		 * that succeeded looks exactly like a scene that moved. Watch
++		 * the colour averages for the scene, and the score only for it
++		 * collapsing.
++		 */
++		RGB<double> now = average(stats);
++		bool changed = sceneChanged(now, sceneAverage_) ||
++			       value + 1.0 < rescanThreshold_ * focusedScore_;
++
++		if (changed) {
 +			if (++disagreed_ >= kRescanSamples) {
 +				LOG(IPASoftAf, Debug)
-+					<< "Scene changed (" << focusedScore_
-+					<< " -> " << value << "), rescanning";
++					<< "Scene changed, rescanning";
 +				startScan(context);
 +				metadata.set(controls::AfState, af.state);
 +			}
@@ -617,10 +766,17 @@ index 0000000..4fb95f3
 +	LOG(IPASoftAf, Debug)
 +		<< "Position " << positions_[index_] << " scores " << value;
 +
++	scores_.push_back(value);
++
 +	if (value > bestScore_) {
 +		bestScore_ = value;
++		bestIndex_ = index_;
 +		bestPosition_ = positions_[index_];
 +	}
++
++	if (phase_ == ScanPhase::Coarse &&
++	    (worstScore_ == 0.0 || value < worstScore_))
++		worstScore_ = value;
 +
 +	if (++index_ < positions_.size()) {
 +		moveTo(context, positions_[index_]);
@@ -631,21 +787,45 @@ index 0000000..4fb95f3
 +		phase_ = ScanPhase::Fine;
 +		planScan(bestPosition_, coarseStep_, kFineSteps);
 +		index_ = 0;
++		scores_.clear();
++		bestIndex_ = 0;
 +		bestScore_ = 0.0;
 +		moveTo(context, positions_.front());
 +		return;
 +	}
 +
 +	phase_ = ScanPhase::Idle;
-+	moveTo(context, bestPosition_);
-+	focusedScore_ = bestScore_;
 +	disagreed_ = 0;
-+	af.state = bestScore_ > 0.0 ? controls::AfStateFocused
-+				    : controls::AfStateFailed;
++
++	/*
++	 * Believe the scan only if the response actually has a peak. Without
++	 * this the lens is driven to wherever the noise of a featureless scene
++	 * happened to be highest, which is worse than not moving at all.
++	 */
++	if (worstScore_ > 0.0 &&
++	    bestScore_ < worstScore_ * (1.0 + minContrast_)) {
++		LOG(IPASoftAf, Info)
++			<< "No focus peak (" << worstScore_ << ".." << bestScore_
++			<< "), staying at " << startPosition_;
++
++		moveTo(context, startPosition_);
++		focusedScore_ = value;
++		af.state = controls::AfStateFailed;
++		metadata.set(controls::AfState, af.state);
++		return;
++	}
++
++	int32_t peak = interpolatePeak();
++
++	moveTo(context, peak);
++	focusedScore_ = bestScore_;
++	sceneAverage_ = average(stats);
++	af.state = controls::AfStateFocused;
 +	metadata.set(controls::AfState, af.state);
 +
 +	LOG(IPASoftAf, Info)
-+		<< "Focused at " << bestPosition_ << " (score " << bestScore_ << ")";
++		<< "Focused at " << peak << " (best sample " << bestPosition_
++		<< ", score " << bestScore_ << ")";
 +}
 +
 +REGISTER_IPA_ALGORITHM(Af, "Af")
@@ -655,10 +835,10 @@ index 0000000..4fb95f3
 +} /* namespace libcamera */
 diff --git a/src/ipa/simple/algorithms/af.h b/src/ipa/simple/algorithms/af.h
 new file mode 100644
-index 0000000..904024c
+index 0000000..031acad
 --- /dev/null
 +++ b/src/ipa/simple/algorithms/af.h
-@@ -0,0 +1,78 @@
+@@ -0,0 +1,91 @@
 +/* SPDX-License-Identifier: LGPL-2.1-or-later */
 +/*
 + * Copyright (C) 2026, Lajosházi, László Gergely
@@ -672,6 +852,8 @@ index 0000000..904024c
 +#include <vector>
 +
 +#include <libcamera/geometry.h>
++
++#include "libcamera/internal/vector.h"
 +
 +#include "libcamera/internal/software_isp/swisp_stats.h"
 +
@@ -705,6 +887,10 @@ index 0000000..904024c
 +	};
 +
 +	double score(const SwIspStats *stats) const;
++	static double luminance(const SwIspStats *stats);
++	static RGB<double> average(const SwIspStats *stats);
++	bool sceneChanged(const RGB<double> &a, const RGB<double> &b) const;
++	int32_t interpolatePeak() const;
 +	void selectZones(IPAContext &context, Span<const Rectangle> windows);
 +
 +	void startScan(IPAContext &context);
@@ -716,21 +902,28 @@ index 0000000..904024c
 +
 +	ScanPhase phase_ = ScanPhase::Idle;
 +	std::vector<int32_t> positions_;
++	std::vector<double> scores_;
++	unsigned int bestIndex_ = 0;
 +	unsigned int index_ = 0;
 +	unsigned int settle_ = 0;
 +
 +	/* Tuning-file overrides */
 +	unsigned int settleFrames_ = 0;
 +	double rescanThreshold_ = 0.3;
++	double minContrast_ = 0.08;
 +
 +	int32_t min_ = 0;
 +	int32_t max_ = 0;
 +	double bestScore_ = 0.0;
++	double worstScore_ = 0.0;
 +	int32_t bestPosition_ = 0;
++	int32_t startPosition_ = 0;
 +	int32_t coarseStep_ = 0;
 +
 +	/* The score the scan settled on, and how long it has disagreed */
 +	double focusedScore_ = 0.0;
++	RGB<double> sceneAverage_;
++	unsigned int startupSkip_ = 0;
 +	unsigned int disagreed_ = 0;
 +};
 +
