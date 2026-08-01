@@ -105,10 +105,10 @@ was that frames came out.
   that the mismatch is harmless.
 - **The EEPROM.** Described in the device tree, no driver bound, calibration
   unread.
-- **That the focus actuator moves the lens at all.** The driver is written and
-  bound, the part is powered and takes its writes without error, and every
-  measurement of the resulting image - machine and human, at three subject
-  distances - shows no change. See [The focus actuator](#the-focus-actuator).
+- **Which physical direction a rising code moves the lens.** The actuator itself
+  works - the sweep finds a clean interior peak, see
+  [The focus actuator](#the-focus-actuator) - but nothing here has yet related a
+  position to a subject *distance*, which takes two targets at known distances.
 
 ## The four things that made it probe
 
@@ -262,47 +262,69 @@ power-on and under-waiting is a failed first transfer.
 Mainline's `ak7375.c` is already a chip-definition table, so supporting this
 part is a chipdef and a compatible rather than a new driver.
 
-### It does not move — measured 2026-08-01 on `linux-fp3-7.1.3-r32` (`#33-fp3`)
-
-☠️ **This section said the opposite for part of a day.** The claim rested on one
-measurement, and that measurement was confounded. Read the retraction before the
-evidence.
+### It moves — measured 2026-08-01 on `linux-fp3-7.1.3-r32` (`#33-fp3`)
 
 Structurally everything is in place: the node is in the live tree, a lens entity
 is in the media graph, `focus_absolute` appears on a subdev with
 `min=0 max=1023 step=1`, writes produce no I²C error, and the device stays
-`active`.
+`active`. And the image follows the control.
 
-**But writing the control does not change the image**, by machine or by eye.
+Two sweeps, both with **one capture held open for the whole run** and the
+positions visited in **interleaved passes** of alternating direction. The scene
+was ordinary indoor detail (mean 104, stddev 75, all 256 levels present).
 
-#### The retraction
+Full range, 11 positions × 3 passes:
 
-The first result was position 0 scoring 250.06 against position 1023 scoring
-206.09, with spreads of about 2 — a 20:1 signal, three times over, which looked
-conclusive. It was not, because **position was confounded with capture order**:
-every round measured 0 first and 1023 second, and each capture restarts the
-stream, so anything that settles between the first and second capture of a round
-appears as a position effect.
+| position | 0 | 102 | 204 | 306 | **409** | 511 | 613 | 716 | 818 | 920 | 1023 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| sharpness | 387.3 | 388.1 | 390.4 | 398.4 | **428.7** | 393.9 | 390.4 | 387.5 | 387.6 | 384.3 | 380.6 |
 
-Balancing the order — `0,1023 / 1023,0 / 0,1023 / 1023,0` — separates them:
+A single interior peak with shoulders, flat tails either side, and the numbers to
+say how much of that is real: **between positions 48.1, worst spread within one
+position 3.4** — a 14:1 signal — and the pass means differ by only **1.3**, so
+essentially none of it is drift.
 
-| grouping | means | difference |
-|---|---|---|
-| by **position** | 0 → 405.65, 1023 → 404.72 | **0.93** |
-| by **capture order** | first → 405.57, second → 404.81 | **0.76** |
+Zooming in, 280…480 in nine steps × 4 passes:
 
-The two are the same size. There is no position effect, and the earlier 44.0
-was an artifact of the design. Every measurement made since, at three subject
-distances including macro, agrees: differences under 1 against within-position
-spreads of 2 to 13.
+| position | 280 | 305 | 330 | 355 | **380** | 405 | 430 | 455 | 480 |
+|---|---|---|---|---|---|---|---|---|---|
+| sharpness | 394.1 | 397.8 | 406.7 | 421.6 | **437.6** | 431.4 | 414.1 | 402.9 | 398.3 |
 
-A human check agrees too. A slider driving the control live, watched in the
-camera app with printed text held close to the lens, produces no visible change
-at any position.
+Peak at **380** (between 43.4, within 3.5, drift 0.9), which is where the phone's
+operator independently reported the picture looking sharp on the viewfinder. The
+control works, the register map read out of the vendor blob is right, and the
+AK7374 chipdef drives this part correctly.
 
-#### What has been eliminated
+#### ☠️ Why this page said the opposite twice in one day
 
-Everything on the software side, each measured rather than assumed:
+Both wrong answers came from the *design* of the measurement, not from the
+hardware, and they failed in opposite directions:
+
+1. **"It moves" (wrong).** Position was confounded with capture order — every
+   round measured 0 first and 1023 second, so anything settling between the two
+   captures of a round read as a position effect. Order-balancing collapsed the
+   44.0 difference to 0.93, against a 0.76 order effect.
+2. **"It does not move" (wrong).** Two independent defects, and the second is the
+   one worth remembering:
+   - **every capture restarted the stream** (`v4l2-ctl` launches, takes four
+     frames, exits), which resets auto-exposure and injects a settling transient
+     as large as the effect;
+   - ☠️ **the A/B pair was 0 against 1023 — the two positions with the least
+     contrast between them.** Read the table above: 0 scores 387.3 and 1023
+     scores 380.6, a difference of 6.7, while the peak stands 48 above both. The
+     response to this control is a *peak*, not a ramp, so the ends of travel are
+     equally out of focus. An extremes-vs-extremes test cannot see a peak, and it
+     is exactly the test that "compare the two extremes" instinct produces.
+
+The general rule the second one earns: **choose the contrast pair from the shape
+of the response you expect, not from the ends of the input range.** If the
+expected response has an interior optimum, a two-point test must bracket it or
+sweep it.
+
+#### What was eliminated along the way
+
+All still true, and all measured rather than assumed — kept because it is the
+list that says the driver side is complete:
 
 | | |
 |---|---|
@@ -318,23 +340,20 @@ and 1023 and reading register 0x00 returns exactly `value << 6` every time. But 
 dump of registers 0x00–0x0f shows each read starting with the *second byte of the
 previous one* (`ffc0`, `c040`, `400e`, `0e60` …): the part ignores the
 register-address write and streams bytes, so the reply cannot be told from an
-echo of the last write. It shows the bytes arrive, not where they land.
+echo of the last write. It shows the bytes arrive, not where they land. The sweep
+above is what actually confirms the map, and it does it through the lens.
 
-#### What is left
+#### What is still open
 
-Three possibilities, none of them settled here:
-
-1. **The part is not an AK7374.** Its identity is inferred from the *absence* of
-   anything at 0x72 plus the vendor configuration, not from asking the device.
-   The module EEPROM at 0x50 should carry a module and VCM identifier; reading it
-   needs the layout, which lives in
-   `libmmcamera_ofilm_imx363_bl24s64_eeprom.so` and can be decoded the same way
-   the actuator parameters were.
-2. **Something outside this chip gates the coil** — a separate enable, or an OIS
-   controller in the path.
-3. **This unit's actuator is simply not working.** Possible, and the hardest to
-   distinguish from the other two.
-
+- **The direction.** A position is not yet related to a subject *distance*, so
+  which way a rising code moves the lens is still an inference. Settling it takes
+  two targets at known distances and one sweep each: the peak moving one way or
+  the other answers it in a single comparison.
+- **The name.** That the part is an AK7374 is inferred from the absence of
+  anything at 0x72 plus the vendor configuration, not from asking the device. The
+  sweep raises the confidence a long way — a wrong register map would not produce
+  a clean focus curve — but the module EEPROM at 0x50 is where an identifier
+  would actually be read, and it is still unread.
 ### The LC898217XC, for the record
 
 The rest of this section is what the vendor blob says about the LC898217XC. It
@@ -401,22 +420,38 @@ vendor's inversion together imply. That was always an inference rather than a
 measurement, and the inversion it rests on does not even apply to the two parts
 this board is now most likely to carry.
 
-[`userspace-camera/focus-sweep.py`](../../userspace-camera/focus-sweep.py)
-settles it without judgement: it steps the control across its range, captures a
-frame at each position and scores the mean squared same-colour gradient over a
-centred crop. A working actuator gives a single interior peak; a flat curve means
-the lens never moved. Point the camera at something with detail, then
+## Two instruments for the focus
+
+[`userspace-camera/focus-sweep.py`](../../userspace-camera/focus-sweep.py) is the
+measurement. It holds **one** capture open for the whole run, steps the control
+across a range in **interleaved passes of alternating direction**, and scores the
+mean squared same-colour gradient over a centred crop. It prints every pass, the
+spread within each position and the pass-to-pass drift, so the verdict can be
+checked rather than taken. Point the camera at something with detail, then
 
 ```sh
-focus-sweep.py --steps 9
+focus-sweep.py                          # full range, 9 positions, 4 passes
+focus-sweep.py --lo 280 --hi 480 --passes 6   # zoom in on the peak
 ```
+
+Both properties are load-bearing rather than tidy: a per-position capture and an
+extremes-only A/B each produced a *confidently wrong* verdict on this phone —
+see [It moves](#it-moves--measured-2026-08-01-on-linux-fp3-713-r32-33-fp3).
 
 ☠️ The gradient is taken between pixel *x* and *x+2*, never adjacent pixels: the
 frames are raw Bayer, so neighbours are different colour planes and an adjacent
 difference measures the scene's colour rather than the focus.
 
-[`tests/checks/41-camera-focus.sh`](../../tests/checks/41-camera-focus.sh) covers
-the half that needs no scene — node present, driver bound, control exposed.
+`focus-view.py` (in the `fp3-porting-debug` skill's `scripts/`) is the human half:
+a live viewfinder that owns `/dev/video0` itself, with a focus slider, a live
+sharpness number using the same metric, a 1–16× zoom and a cheap demosaic. It
+exists because a focus change is invisible in a scaled-down preview — the
+operator confirmed the peak only after zooming in — and because a null result
+from a headless script is hard to trust when nothing can be seen.
+
+[`tests/checks/41-camera-focus-test.sh`](../../tests/checks/41-camera-focus-test.sh)
+covers the half that needs no scene — node present, driver bound, control
+exposed.
 
 ## The device tree binding
 

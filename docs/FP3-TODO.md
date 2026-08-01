@@ -302,20 +302,26 @@ the power path.
     without at least one control whose answer is known independently**, and
     prefer two — the first control is what made the earlier LC898217 decode
     trustworthy, and it is what made this one repairable.
-33c. ☠️ **RETRACTED: the lens is NOT confirmed to move, and the measurement that
-    said it did was confounded.** The claim rested on position 0 scoring 250.06
-    against position 1023 scoring 206.09 with spreads near 2 - a 20:1 signal,
-    three times over. But **every round measured 0 first and 1023 second**, and
-    each capture restarts the stream, so anything settling between the first and
-    second capture of a round appears as a position effect. Balancing the order
-    (`0,1023 / 1023,0 / 0,1023 / 1023,0`) separates them: by position 0.93, by
-    capture order 0.76 - the same size, so there is no position effect. Every
-    measurement since agrees, at three subject distances including macro, and a
-    human driving a live slider while watching the camera sees no change either.
-    ☠️ Second script bug found on the way: on a flat curve the retry compared the
-    sweep's best and worst positions, which are wherever the noise fell (once 511
-    and 716), so it tested the smallest movement available instead of the
-    largest; it now always uses the extremes of travel.
+33c. ✅ **SETTLED: the lens moves, and the two earlier verdicts were both wrong -
+    in opposite directions - for reasons of measurement design.** Measured
+    2026-08-01 on `linux-fp3-7.1.3-r32` (`#33-fp3`) with one capture held open
+    for the whole run and the positions visited in interleaved passes of
+    alternating direction. Full range, 11 positions x 3 passes: a single interior
+    peak at 409 (428.7) with flat tails (0 -> 387.3, 1023 -> 380.6), between
+    positions 48.1 against a worst within-position spread of 3.4, and only 1.3 of
+    pass-to-pass drift. Zoomed in, 280..480 in 9 steps x 4 passes: peak at **380**
+    (437.6), between 43.4, within 3.5, drift 0.9 - and 380 is where the operator
+    independently reported the viewfinder looking sharp. ☠️ The two failure modes,
+    both worth carrying: (1) the first "it moves" confounded position with capture
+    order (0 always first, 1023 always second; order-balancing collapsed 44.0 to
+    0.93 against a 0.76 order effect); (2) the "it does not move" restarted the
+    stream for every capture - resetting auto-exposure and injecting a transient
+    as large as the signal - **and compared 0 against 1023, the pair with the
+    least contrast available**: they differ by 6.7 while the peak stands 48 above
+    both. The response to this control is a peak, not a ramp, so an
+    extremes-vs-extremes test is structurally blind to it. **Choose the contrast
+    pair from the shape of the expected response, not from the ends of the input
+    range.**
 33c-1. **What is eliminated, all measured.** Writes reach the part (no i2c
     error); it is powered (`cam_af_2p85` and `cam_io_1p8` enabled, TLMM 128 and
     130 read `out high`); runtime PM keeps it `active`; the active-mode write
@@ -327,13 +333,15 @@ the power path.
     its parameter block is fully decoded, ten register descriptors of which only
     the first is filled plus a single init write of `0x02 = 0x00`, which is
     exactly what the driver does.
-33c-2. **What is left**, none of it settled: the part may not be an AK7374 (its
-    identity is inferred from the absence of anything at 0x72 plus the vendor
-    configuration, not from asking the device - the module EEPROM at 0x50 should
-    carry a VCM identifier, and its layout is in
+33c-2. **What is still open on the actuator**: the *direction* (no position has
+    yet been related to a subject distance - two targets at known distances and
+    one sweep each settle it), and the *name* (that it is an AK7374 is inferred
+    from the absence of anything at 0x72 plus the vendor configuration, not from
+    asking the device; the sweep raises the confidence a long way, since a wrong
+    register map would not produce a clean focus curve, but the module EEPROM at
+    0x50 is where an identifier would actually be read - its layout is in
     `libmmcamera_ofilm_imx363_bl24s64_eeprom.so`, decodable the same way the
-    actuator parameters were); something outside the chip may gate the coil; or
-    this unit's actuator may simply not work.
+    actuator parameters were).
 33d. **The recorded capture command did not work from a cold boot**, and the
     failure looked like a driver bug. The CAMSS pads default to
     `UYVY8_1X16/1920x1080` while the sensor is at `SRGGB10_1X10/4032x3024`, so
