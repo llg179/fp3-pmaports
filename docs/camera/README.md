@@ -31,9 +31,10 @@ CAMSS  csiphy0 -> csid0 -> ispif0 -> vfe0_rdi0 -> /dev/video0
 ```
 
 Alongside the sensor on the same CCI bus sit a `belling,bl24s64` EEPROM at 0x50
-holding the module's calibration, and an ON Semi LC898217XC voice-coil focus
-motor at 0x72, which since 2026-08-01 has a driver — see
-[The focus actuator](#the-focus-actuator) below.
+holding the module's calibration, and a voice-coil focus motor at **0x0c** whose
+exact part is not yet identified — see [The focus actuator](#the-focus-actuator)
+below, and note that a comment in this repository and in the device tree claimed
+0x72 until the bus was actually scanned.
 
 The sensor is strapped to I²C address **0x1a** (SLASEL high on this board), is
 mounted rotated 270°, and is described with `orientation = <1>` (world-facing).
@@ -91,8 +92,9 @@ was that frames came out.
   that the mismatch is harmless.
 - **The EEPROM.** Described in the device tree, no driver bound, calibration
   unread.
-- **Which way the focus motor travels.** See below — the driver exists, the
-  direction is an inference.
+- **Which focus actuator this board carries.** Measured to be at 0x0c, which
+  rules out the LC898217 the device tree used to claim; `ak7374` and `dw9800`
+  are the leading candidates. See below.
 
 ## The four things that made it probe
 
@@ -141,8 +143,76 @@ The check stops at "bound and linked" and does not attempt a capture.
 
 ## The focus actuator
 
-`lc898217.c`, its binding, its MAINTAINERS entry and the DT node landed
-2026-08-01 and first ship in `linux-fp3-7.1.3-r31`.
+☠️ **Corrected the same day it was written: this phone's actuator is at 0x0c,
+and it is not an LC898217.** The driver, its binding and its MAINTAINERS entry
+landed 2026-08-01 and ship in `linux-fp3-7.1.3-r31`; the **board DT node was
+removed again** once the device was measured. Read the correction below before
+the register table, which is accurate about the LC898217XC and irrelevant to
+this board.
+
+### What the device actually answers
+
+Measured on hardware, with the actuator rail forced on by a throwaway
+`regulator-always-on` DTB and the sensor resumed through
+`/sys/bus/i2c/devices/0-001a/power/control` so the camera IO rail was up:
+
+```
+/dev/i2c-0: 0x0c 0x1a 0x50
+```
+
+0x1a is the sensor and 0x50 the module EEPROM. **Nothing acknowledges 0x72.**
+
+☠️ **The scan has to be forced (`I2C_SLAVE_FORCE`).** A plain `I2C_SLAVE` scan
+is refused with `EBUSY` for every address a driver has already claimed — which
+is exactly the addresses under investigation. The first scan run this way
+listed only `0x0c 0x50`, silently omitting both the sensor and the actuator
+address, and that absence looks exactly like a result.
+
+Two other things the measurement settled, both of which had looked like driver
+bugs:
+
+- **The CCI bus does not work until the sensor's IO rail is up.** With the
+  sensor suspended, every transfer ends `i2c-qcom-cci: master 0 queue 0
+  timeout` (`-110`). Resume the sensor and the same transfer to an empty
+  address returns `-ENXIO` instead. Timeout versus NACK is the difference
+  between "the bus is dead" and "nobody is home", and only the second is a
+  statement about the actuator.
+- **A failed runtime-PM resume latches.** Once `lc898217_runtime_resume()`
+  failed, the device sat in `power/runtime_status: error` and every later
+  `pm_runtime_resume_and_get()` returned `-EINVAL` — so opening the subdev
+  failed with `-EINVAL`, several steps removed from the real `-110`. Unbind and
+  rebind the driver to clear it.
+
+### Which part is it, then?
+
+Not settled. What the vendor libraries say, decoded the same way as below:
+**every `LC898*` actuator sits at 0x72 and every other family sits at 0x0c**
+(`dw9714`, `dw9800`, `dw9716`, `ak7345`, `ak7371`, `ak7374`, `bu642*`,
+`ad5823` …). So the address alone rules the LC898 family out.
+
+The board vendor's own kernel narrows it further: `msm_actuator.c` special-cases
+exactly two parts by name — **`ak7374` and `dw9800`** — which is only worth
+doing for parts that ship. They differ in a way that is easy to test once
+streaming is set up: `ak7374` keeps its position at register 0x00, MSB-aligned
+(shift 6); `dw9800` keeps it at register 0x03, right-aligned.
+
+A register probe at 0x0c returns a continuous byte stream that ignores the
+register address under a write-then-read with a STOP between, so it confirms a
+live device but does not discriminate the two. The module EEPROM reads fine (in
+short chunks — the CCI adapter refuses a long read with `EOPNOTSUPP`) but its
+first 128 bytes are calibration tables with no readable part name.
+
+☠️ And a consequence worth carrying forward: the downstream inversion
+`value = 1023 - position` applies to every actuator **except** `ak7374` and
+`dw9800`. If the part here is one of those two, the inversion does not apply —
+so the polarity argument in the driver, which was built on that inversion,
+would be wrong for this board.
+
+### The LC898217XC, for the record
+
+The rest of this section is what the vendor blob says about the LC898217XC. It
+is correct about that part, and the driver written from it is worth keeping —
+but it describes hardware this phone does not have.
 
 ### Where the register map came from, and why it is not a guess
 
@@ -196,11 +266,13 @@ the 10-bit width read out of the library.
 
 ### ☠️ What is not established
 
-**Which physical direction a rising DAC code moves the lens.** Neither source
-states it and neither can be made to. `lc898217_position_to_code()` is the single
-place in the driver that decides it, and is marked as such. It currently mirrors
+**Which physical direction a rising DAC code moves the lens** — and now, more
+fundamentally, **which part it is**. `lc898217_position_to_code()` is the single
+place in the driver that decides direction, and is marked as such; it mirrors
 the control, which is what V4L2's "larger value is a closer focus" plus the
-vendor's inversion together imply — an inference, not a measurement.
+vendor's inversion together imply. That was always an inference rather than a
+measurement, and the inversion it rests on does not even apply to the two parts
+this board is now most likely to carry.
 
 [`userspace-camera/focus-sweep.py`](../../userspace-camera/focus-sweep.py)
 settles it without judgement: it steps the control across its range, captures a

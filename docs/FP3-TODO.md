@@ -248,28 +248,38 @@ the power path.
 25. **Parked: the PMI632 flash LED.** The node exists, but
     `leds-qcom-flash.c` subtype detection is unverified on this hardware and
     risks a probe failure until it is. Kept out of the tree for now.
-33. **The focus actuator has a driver, but its direction is unverified.**
-    `lc898217.c` plus its binding, MAINTAINERS entry and DT node landed
-    2026-08-01 (four commits, `wip/7.1.3/camera` `163a5db06996`). The register
-    interface is not a guess: it was read out of the board's own vendor library
-    `libactuator_lc898217xc.so`, and the struct layout that reading depends on
-    was validated against `libactuator_dw9714.so`, whose answer mainline's
-    `dw9714.c` already states — slave 0x0c, 10-bit code, no register address,
-    data shift 4, hardware mask 0x0f, field for field, plus that part's
-    documented power-up writes recovered as a second check. What came out for
-    this part: I2C **0x72** on CCI master 0, 8-bit register address, 16-bit
-    data, position at register **0x84**, 10-bit code right-aligned, power-up
-    write **`0xe0 = 0x01`** then ~10 ms. Qualcomm's downstream kernel holds
-    none of this — its node is a bare `qcom,actuator` and the whole map arrives
-    from userspace over an ioctl; grepping the downstream tree for the part
-    number returns a single unrelated hit in `patch_realtek.c`.
-    ☠️ **Open: which physical direction a rising DAC code moves the lens.**
-    Neither source states it. The driver currently mirrors the control, which
-    is what V4L2's "larger value is closer" plus the vendor's own
-    `value = 1023 - position` inversion in `msm_actuator.c` imply, but that is
-    an inference. `userspace-camera/focus-sweep.py` settles it with a sharpness
-    metric across the range; it has not been run yet, because the phone still
-    runs r30 and the driver first ships in **r31**.
+33. **The focus actuator is at 0x0c and is not an LC898217.** ☠️ **This
+    corrects the same item written earlier the same day.** `lc898217.c` plus its
+    binding and MAINTAINERS entry landed 2026-08-01 and are worth keeping — the
+    register map was read out of the board's vendor library
+    `libactuator_lc898217xc.so` and validated against `libactuator_dw9714.so`,
+    whose answer mainline's `dw9714.c` already states — but **the board DT node
+    was removed again** (`wip/7.1.3/camera`), because it described hardware this
+    phone does not have. Measured: with the actuator rail forced on and the
+    sensor resumed so the camera IO rail is up, a **forced** scan of the CCI bus
+    answers `0x0c 0x1a 0x50` and **nothing at 0x72**. ☠️ The scan must be forced
+    (`I2C_SLAVE_FORCE`) or it silently skips every driver-claimed address —
+    exactly the ones under investigation. Every `LC898*` in the vendor tree is at
+    0x72 and every other family at 0x0c, and the vendor kernel special-cases two
+    0x0c parts by name, **`ak7374` and `dw9800`**, so one of those is the likely
+    fit. They are distinguishable: ak7374 keeps position at register 0x00
+    MSB-aligned, dw9800 at register 0x03 right-aligned. ☠️ The downstream
+    `value = 1023 - position` inversion excludes exactly those two, so the
+    polarity argument built on it does not apply here. Two side findings, both of
+    which had looked like driver bugs: **the CCI bus does not work until the
+    sensor's IO rail is up** (timeout `-110` versus `-ENXIO` tells "bus dead"
+    from "nobody home"), and **a failed runtime-PM resume latches** into
+    `runtime_status: error`, after which every resume returns `-EINVAL` and the
+    subdev open fails several steps away from the real error — unbind/rebind
+    clears it. Detail in
+    [`docs/camera/README.md`](https://github.com/llg179org/fp3-pmaports/blob/main/docs/camera/README.md#the-focus-actuator).
+33a. **`lens-focus` is how a lens subdev joins the graph**, and it worked:
+    `v4l2_async_register_subdev()` alone leaves the subdev unclaimed, with no
+    devnode and no media entity, so the driver is bound and invisible at once.
+    `imx363` registers via `v4l2_async_register_subdev_sensor()`, which parses
+    `lens-focus`; adding the reference put the lens in the graph immediately. The
+    `lens-focus: true` line stays in `sony,imx363.yaml` for whatever part turns
+    out to be fitted.
 
 ## `wip/7.1.3/sensor` — SMGR over QMI/QRTR
 
