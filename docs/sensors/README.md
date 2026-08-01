@@ -62,7 +62,7 @@ Gergely with Claude.
 |---|---|---|
 | Proximity + light driver | `drivers/iio/proximity/smgr_prox.c` | working, measured |
 | Gyroscope driver | `drivers/iio/gyro/smgr_gyro.c` | working, scale measured |
-| Magnetometer driver | `drivers/iio/magnetometer/smgr_mag.c` | responds; scale and hard-iron offset both unknown |
+| Magnetometer driver | `drivers/iio/magnetometer/smgr_mag.c` | responds; scale verified and hard-iron measured, but the driver exposes no `calibbias` to carry it |
 | Registry server | [`../../userspace-sensors/snsregd.py`](../../userspace-sensors/snsregd.py) | Python stand-in for upstream's C `sns-reg`; should become an aport |
 | Near-level udev rule | [`../../userspace-sensors/`](../../userspace-sensors/) | required before `iio-sensor-proxy` will use the sensor |
 | Measurement tools | [`bringup/tools/`](bringup/tools/) | see [what ships, and what was only used to find it](#what-ships-and-what-was-only-used-to-find-it) |
@@ -137,7 +137,7 @@ warning-free at `W=1` and `checkpatch --strict` is clean.
 |---|---|---|---|
 | accelerometer | `qcom-smgr-accel` | yes | \|v\| = 9.70 m/s²; every axis reaches ±1 g |
 | gyroscope | `qcom-smgr-gyro` | yes | scale verified: a quarter turn integrates to 86.5° |
-| magnetometer | `qcom-smgr-mag` | partly | follows rotation, but hard-iron offset and scale are both unknown |
+| magnetometer | `qcom-smgr-mag` | partly | follows rotation; scale verified and hard-iron measured, but nothing applies the offset yet |
 | proximity | `qcom-smgr-prox-light` | yes | blanks the screen during a call through phosh |
 | ambient light | `qcom-smgr-prox-light` | yes | same device, second data type; `in_illuminance_input` in lux |
 
@@ -219,19 +219,153 @@ known size into a scale check: a quarter circle has to come out near 90°.
 
 ## Known gaps
 
-* **The magnetometer is uncalibrated and its scale unverified** — hard-iron
-  offset and scale are both unknown, and one cannot be solved from the other
-  without a full-sphere fit.
-* **The mount matrix is probably wrong.** `smgr_accel.c` carries an msm8996
-  matrix with a `TODO` next to it, and on the FP3 `iio-sensor-proxy` reports
-  `AccelerometerTilt: face-down` for a phone reading `z = -9.69`. Whether that
-  matches the physical orientation needs one deliberate check with the phone
-  held screen-up; if it does not, the matrix needs an FP3 value.
-* **Groups 20, 2691 and 3050 are zero-filled, not real.** The stack initialises,
-  but whatever those groups configure is wrong. They need their real offsets in
-  `sns.reg`, or their key lists.
+* ~~**The magnetometer is uncalibrated and its scale unverified.**~~ **Measured
+  2026-08-01**, and the two did come out together — the sphere's radius *is* the
+  field strength, so a full-sphere fit settles the scale as a by-product rather
+  than needing it as an input. See [the calibration](#the-magnetometer-calibration)
+  below. What is still open is that the driver exposes no
+  `in_magn_*_calibbias`, so nothing can carry the offset yet.
+* ~~**The mount matrix is probably wrong.**~~ **Fixed 2026-08-01**, and it was
+  worse than "probably wrong": the msm8996 value has determinant −1, so it was a
+  reflection and not a rotation at all. Measured from three orientations and
+  confirmed against the phone's own factory calibration; see
+  [the mount matrix](#the-mount-matrix).
+* **The gyroscope and the magnetometer have no mount matrix at all** — only the
+  accelerometer ever had one. The magnetometer's does not follow from the
+  accelerometer's, since it is a separate part that can be placed differently.
+* **Groups 2691 and 3050 have no key list**, so `snsregd` answers them with
+  zeros. ☠️ **Group 20 is not one of them any more:** its bytes in this phone's
+  own factory `sns.reg` are zero too, so serving zeros is serving the truth. The
+  factory calibrates the accelerometer, the proximity sensor and the ambient
+  light sensor — and nothing else. See
+  [what the factory registry holds](#what-the-factory-registry-holds).
 * **`snsregd.py` is still the Python stand-in** for upstream's C `sns-reg`,
   which should be packaged as an aport.
+
+## The mount matrix
+
+Measured 2026-08-01 on `linux-fp3-7.1.3-r30`. Three orientations, each held
+still for at least eight seconds, read from the buffer in the **sensor** frame:
+
+| held | x | y | z |
+|---|---|---|---|
+| flat, screen up | −0.247 | +0.304 | −9.705 |
+| upright, top of the screen up | +9.669 | +0.649 | −0.417 |
+| left edge down, right edge up | −0.332 | +10.129 | +0.890 |
+
+Each has a different dominant axis, so the three of them fix the matrix. The
+readings alone still allow two assignments, and the one that survives is the one
+that is a **proper rotation** — the other has determinant −1:
+
+```
+	 0   1   0          the value now in smgr_accel.c
+	 1   0   0
+	 0   0  -1
+```
+
+The old msm8996 value was every one of those signs flipped, which is what made
+it a reflection. The visible symptom was `iio-sensor-proxy` calling a
+face-up phone `face-down`.
+
+**It is confirmed independently**, and that is worth more than the measurement.
+`/persist/sensors/` holds the factory line calibration as plain text, and the
+registry holds the same three numbers in the Sensor Manager's frame:
+
+| persist file | value | registry key | Q16 value |
+|---|---|---|---|
+| `accel_x` | 0.22 | 0 | −0.09 |
+| `accel_y` | −0.09 | 1 | +0.22 |
+| `accel_z` | −0.29 | 2 | +0.29 |
+
+Key 0 is `accel_y`, key 1 is `accel_x`, key 2 is `−accel_z`. **That permutation
+and sign change are exactly the matrix above**, arrived at with no reference to
+the measurement.
+
+☠️ Subtracting those factory biases also shrinks the disagreement between the
+three orientations' magnitudes from 4.9 to 2.1 percentage points, so the
+apparent "per-axis scale error" they show is mostly **offset**. The driver does
+not apply them; `in_accel_*_calibbias` would be where they belong.
+
+## The magnetometer calibration
+
+Measured 2026-08-01, 10 426 samples over 210 s, 74 distinct orientations:
+
+```
+hard-iron offset (subtract):   -0.63494  -0.69576  +0.71721   Gauss
+semi-axes:                      0.49599   0.47702   0.48673
+                               +1.95%    -1.95%    +0.04%     about the mean
+residual after correction:      rms 2.25%
+```
+
+Three results at once, which is the whole reason to do a full sphere rather
+than a set of poses:
+
+- **the hard-iron offset**, which is what the fit is for;
+- **soft-iron is negligible** — the semi-axes agree to ±2%, so this is a sphere.
+  A 3×3 correction is not needed, an offset is enough;
+- **the scale is right.** The radius is 0.4865 Gauss = 48.65 µT, and the
+  geomagnetic total field at this latitude is about 48–50 µT, so
+  `in_magn_scale` is correct and does report Gauss as the IIO ABI requires. This
+  is the point the old gap note said "cannot be solved from the other": true one
+  at a time, but the sphere's radius *is* the field strength, so a full fit gives
+  both. An exact figure would need the IGRF value for the measurement site.
+
+☠️ **The offset is per-unit and drifts; it must not be hardcoded in the driver.**
+Every FP3 would then be corrected for this one phone. It belongs in
+`in_magn_*_calibbias` or in userspace.
+
+### Getting a valid sphere is the hard part
+
+The first attempt was done at a desk and produced a 24% residual, which the
+ellipsoid fit did not improve on — the tell that the distortion was **not fixed
+in the phone frame**, since a real hard/soft-iron model would have fitted it.
+
+The probe that settles it is heading-free. Hold the phone flat: its z axis is
+then vertical, so `mz` reads the *vertical* field component, which does not
+change when the phone is spun on the spot. Same orientation, different times:
+
+```
+at a desk        mz = 0.786 .. 2.658    spread 1.872     a factor of 3.4
+in a clear room  mz = 1.056 .. 1.185    spread 0.129
+```
+
+Do not use `|m|` in a fixed *gravity* cell for this — gravity pins the tilt but
+not the heading, and the raw magnitude legitimately varies with heading because
+of the very offset being solved for.
+
+☠️ **Log the accelerometer at the same time.** Without it there is no way to ask
+"same orientation?" at all, and a contaminated run looks exactly like a
+badly-calibrated sensor. The tooling is `userspace-sensors/iiolog.py`.
+
+## What the factory registry holds
+
+`/persist/sensors/sns.reg` is 25 468 bytes; the group map taken from msm8996's
+`sns-reg` accounts for 4051 of them, and the offsets drift because this phone
+has groups the map does not list. That drift is measurable and locates them:
+`ps_near` sits at byte 272 where the map predicts 73, so **199 unmapped bytes**
+sit between group 10 and group 1040 — which is where group 20 must be.
+
+Those bytes, and everything from byte 40 to byte 271, are **zero**. So the
+factory data contains:
+
+| | |
+|---|---|
+| accelerometer bias | `accel_x/y/z`, and registry group 0 keys 0–2 |
+| proximity thresholds | `ps_near` = 1570, `ps_far` = 0 |
+| ambient light factor | `als_factor` = 1297 |
+| **magnetometer calibration** | **none** |
+| **gyroscope calibration** | **none** |
+
+Which is consistent with how Android treats them: the magnetometer's hard-iron
+is estimated continuously at runtime and never written back, and gyro bias
+likewise. **So the sphere measurement above cannot be replaced by downstream
+data** — there is no downstream data to take.
+
+Mount the partition read-only to look:
+
+```sh
+sudo mount -o ro /dev/disk/by-partlabel/persist /mnt/persist
+```
 
 ## Will this bring up *all* the sensors?
 

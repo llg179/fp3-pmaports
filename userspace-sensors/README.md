@@ -20,6 +20,8 @@ proximity sensor in silence.
 | `groups.txt` | 68 groups / 1516 keys, from upstream `sns-reg`'s `map.c` |
 | `90-fp3-proximity.rules` | `PROXIMITY_NEAR_LEVEL=1570` for `iio-sensor-proxy` |
 | `sensortest.py` | reads any of the sensors (`accel`, `gyro`, `mag`, `prox`, `light`) and reports whether the numbers are physically plausible |
+| `iiolog.py` | dumps timestamped samples from one buffer-only device to a CSV, so the analysis happens on the host. Log the accelerometer alongside whatever you are calibrating — it is the only way to ask "was the phone in the same orientation?" afterwards |
+| `magfit.py` | fits the magnetometer's hard-iron offset and per-axis gain from an `iiolog.py` run, and reports the residual, which is what says whether the run was valid |
 | `proxcal.sh` | prints `in_proximity_raw` once a second, for calibrating the near level on another unit |
 
 ## Install

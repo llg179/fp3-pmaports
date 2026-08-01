@@ -258,13 +258,31 @@ width`, which applies clean to mainline. The SMGR driver itself, 2778 lines acro
 yet. Gaps, in
 [`docs/sensors/README.md`](https://github.com/llg179org/fp3-pmaports/blob/main/docs/sensors/README.md#known-gaps):
 
-26. **The magnetometer is uncalibrated and its scale unverified** — a full-sphere
-    fit is needed; the two cannot be solved from each other.
-27. **The mount matrix is probably wrong** — it is the msm8996 matrix with a
-    `TODO` on it, and `iio-sensor-proxy` reports face-down at `z = −9.69`. One
-    deliberate screen-up reading settles it.
-28. **Registry groups 20, 2691 and 3050 are zero-filled**, not real. The actual
-    offsets, or the key lists, need to go into `sns.reg`.
+26. ~~**The magnetometer is uncalibrated and its scale unverified**~~ — **both
+    measured 2026-08-01.** Hard-iron `−0.63494 −0.69576 +0.71721` Gauss;
+    soft-iron negligible (semi-axes within ±2%); and the scale is **correct** —
+    the sphere's radius is 0.4865 G = 48.65 µT against an expected 48–50 µT for
+    this latitude. The gap note said the two cannot be solved from each other,
+    which is true one at a time and false for a full sphere, whose radius *is*
+    the field strength. What is left is narrower: the driver exposes no
+    `in_magn_*_calibbias`, so nothing can carry the offset, and it must not be
+    hardcoded — it is per-unit and drifts.
+27. ~~**The mount matrix is probably wrong**~~ — **fixed 2026-08-01**, and it was
+    not merely wrong: the msm8996 value has **determinant −1**, so it was a
+    reflection rather than a rotation and could not have suited any device. The
+    new value is every one of those signs flipped. Measured from three
+    orientations, and confirmed independently by the phone's own factory
+    calibration, where the permutation between `/persist/sensors/accel_[xyz]`
+    and registry keys 0–2 *is* this matrix.
+28. ~~**Registry groups 20, 2691 and 3050 are zero-filled**, not real.~~
+    **Corrected 2026-08-01 for group 20:** it is zero in this phone's own
+    factory `sns.reg` as well, so `snsregd` serving zeros is serving the truth,
+    not a stand-in. The factory calibrates the accelerometer, the proximity
+    sensor and the ambient light sensor, and nothing else. **2691 and 3050 are
+    still unmapped** and remain open.
+28a. **The gyroscope and the magnetometer have no mount matrix at all** — only
+    the accelerometer ever had one, and the magnetometer's does not follow from
+    it, being a separate part.
 29. **`snsregd.py` is still a Python stand-in** for upstream's C `sns-reg`; it
     should become an aport. (Userspace, tracked here because the driver depends on
     it.)
