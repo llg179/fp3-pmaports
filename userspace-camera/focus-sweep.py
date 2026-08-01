@@ -87,6 +87,24 @@ def set_focus(subdev, value):
                     '--set-ctrl', 'focus_absolute=%d' % value], check=True)
 
 
+CAMSS_SINKS = ('msm_csiphy0', 'msm_csid0', 'msm_ispif0', 'msm_vfe0_rdi0')
+
+
+def setup_pipeline(media='/dev/media0'):
+    """Propagate the sensor's format along the CAMSS chain.
+
+    From a cold boot the CAMSS pads sit at their default UYVY8_1X16/1920x1080
+    while the sensor is at SRGGB10_1X10/4032x3024, so pipeline validation
+    rejects STREAMON with -EPIPE. The failure logs nothing, mentions no format,
+    and reads as a broken driver - it is worth doing this unconditionally
+    rather than documenting the symptom.
+    """
+    fmt = '[fmt:SRGGB10_1X10/%dx%d]' % (WIDTH, HEIGHT)
+    for entity in CAMSS_SINKS:
+        subprocess.run(['media-ctl', '-d', media, '-V', "'%s':0 %s" % (entity, fmt)],
+                       check=True, capture_output=True)
+
+
 def capture(path, video):
     """Grab frames, keeping the last one.
 
@@ -136,11 +154,99 @@ def sharpness(path):
     return total / count if count else 0.0
 
 
+def scene_stats(path):
+    """Brightness spread of a centred crop: (mean, stddev, distinct values).
+
+    A sharpness number is meaningless without this. Pointed at a dark desk the
+    metric still wanders by a fifth from frame to frame, purely from sensor
+    noise, and a threshold set below that reports a focus curve where there is
+    none. Measured 2026-08-01 with the phone lying lens-down: mean 16.6,
+    stddev 1.1, 13 distinct values out of 256 - and a peak-to-trough ratio of
+    1.23x that had nothing to do with the lens.
+    """
+    with open(path, 'rb') as f:
+        f.seek(os.path.getsize(path) - FRAME_BYTES)
+        frame = f.read(FRAME_BYTES)
+
+    row_bytes = WIDTH * 10 // 8
+    x0 = (WIDTH - CROP_W) // 2
+    y0 = (HEIGHT - CROP_H) // 2
+
+    pixels = bytearray()
+    for y in range(y0, y0 + CROP_H, 4):
+        base = y * row_bytes
+        chunk = frame[base + (x0 // 4) * 5: base + ((x0 + CROP_W) // 4) * 5]
+        for i in range(0, len(chunk) - 4, 5):
+            pixels += chunk[i:i + 4]
+
+    if not pixels:
+        return 0.0, 0.0, 0
+    mean = sum(pixels) / len(pixels)
+    var = sum((p - mean) ** 2 for p in pixels) / len(pixels)
+    return mean, var ** 0.5, len(set(pixels))
+
+
+def confirm_by_repetition(subdev, args, best, worst, outdir, rounds=3):
+    """Alternate between two positions several times and see if the metric follows.
+
+    A magnitude threshold cannot tell a weak real effect from noise, because
+    both are small. Repetition can: if the difference between two positions is
+    large compared to the spread *within* each position, and it survives being
+    revisited, then it is caused by the position and not by anything drifting.
+
+    This also disposes of the trap that made the plain sweep ambiguous. The
+    sweep walks the positions in time order, so a lens that never moves while
+    the exposure settles produces a smooth monotone curve that looks exactly
+    like one side of a focus peak. Interleaving separates the two: drift stays
+    monotone in time, a real effect flips back and forth with the position.
+    """
+    a, b = best[0], worst[0]
+    print('%10s  %14s' % ('position', 'sharpness'))
+    scores = {a: [], b: []}
+    path = os.path.join(outdir, 'ab.raw')
+    for _ in range(rounds):
+        for pos in (a, b):
+            set_focus(subdev, pos)
+            capture(path, args.video)
+            s = sharpness(path)
+            scores[pos].append(s)
+            print('%10d  %14.2f' % (pos, s))
+            sys.stdout.flush()
+    if not args.keep and os.path.exists(path):
+        os.unlink(path)
+
+    print()
+    spread = 0.0
+    for pos in (a, b):
+        v = scores[pos]
+        r = max(v) - min(v)
+        spread = max(spread, r)
+        print('position %4d: mean %.2f, spread %.2f over %d visits'
+              % (pos, sum(v) / len(v), r, len(v)))
+    gap = abs(sum(scores[a]) / rounds - sum(scores[b]) / rounds)
+    print('difference between positions %.2f, worst spread within one %.2f'
+          % (gap, spread))
+
+    print()
+    if spread > 0 and gap > 5 * spread:
+        print('PASS: the metric follows the position and returns to the same')
+        print('      value each time it comes back, so writing the control does')
+        print('      move the lens. The sweep is shallow because the subject is')
+        print('      near the end of travel - point the camera further away to')
+        print('      see an actual peak.')
+        return 0
+    print('FLAT: the difference between positions is not large compared to the')
+    print('      spread within one, so this does not show the lens moving.')
+    print('      Check the actuator supply and look for i2c errors in dmesg.')
+    return 1
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--steps', type=int, default=9,
                     help='number of focus positions to try (default 9)')
     ap.add_argument('--video', default='/dev/video0')
+    ap.add_argument('--media', default='/dev/media0')
     ap.add_argument('--subdev', help='lens subdev; found automatically if omitted')
     ap.add_argument('--keep', help='directory to keep the captured frames in')
     args = ap.parse_args()
@@ -151,11 +257,35 @@ def main():
 
     lo, hi = focus_range(subdev)
     print('lens subdev %s, focus range %d..%d' % (subdev, lo, hi))
-    print()
-    print('%10s  %14s' % ('position', 'sharpness'))
+
+    setup_pipeline(args.media)
 
     outdir = args.keep or tempfile.mkdtemp(prefix='focus-sweep.')
     os.makedirs(outdir, exist_ok=True)
+
+    # Is there anything to focus on? Ask before sweeping, not after: every
+    # number below is a comparison between frames of this scene, so a scene
+    # with no detail produces a full table of meaningless numbers that still
+    # look like data.
+    probe = os.path.join(outdir, 'probe.raw')
+    capture(probe, args.video)
+    mean, std, distinct = scene_stats(probe)
+    print('scene: mean %.1f, stddev %.1f, %d distinct levels' % (mean, std, distinct))
+    if not args.keep:
+        os.unlink(probe)
+    if std < 8.0 or distinct < 32:
+        print()
+        print('NO SCENE: the frame is nearly featureless, so nothing here can')
+        print('          measure focus. Point the camera at something with')
+        print('          detail and contrast - printed text at arm\'s length is')
+        print('          ideal - in decent light, and run this again.')
+        print('          (A dark desk measured mean 16.6, stddev 1.1,')
+        print('          13 levels; that run still produced a plausible-looking')
+        print('          table and a 1.23x "peak".)')
+        return 2
+
+    print()
+    print('%10s  %14s' % ('position', 'sharpness'))
 
     results = []
     for i in range(args.steps):
@@ -184,20 +314,38 @@ def main():
     ratio = best[1] / worst[1]
     print('peak-to-trough ratio %.2fx' % ratio)
 
-    # A lens that does not move still varies a little between frames, from
-    # sensor noise and from the scene. The threshold separates that from an
-    # actuator that is actually sweeping through focus.
-    if ratio < 1.2:
+    # A lens that does not move still varies from frame to frame. Measured on a
+    # featureless dark scene: 1.23x, entirely from sensor noise. The bar is set
+    # well clear of that rather than just above it, because a verdict that a
+    # noisy run can reach is worse than no verdict.
+    if ratio < 2.0:
         print()
-        print('FLAT: the metric barely changes across the range, so the lens is')
-        print('      probably not moving. Check that the actuator supply is on')
-        print('      and that the writes reach it (i2c errors in dmesg).')
+        print('The sweep alone is inconclusive: it changes less across the')
+        print('whole range than a still scene changes on its own (a featureless')
+        print('frame measured 1.23x). Repeating the two extremes instead.')
+        print()
+        return confirm_by_repetition(subdev, args, best, worst, outdir)
+
+    # A real focus curve has shoulders: the positions either side of the peak
+    # are also sharper than most. A noise spike stands alone. Without this a
+    # single outlier anywhere in the sweep passes as "focus".
+    order = sorted(r[1] for r in results)
+    median = order[len(order) // 2]
+    idx = results.index(best)
+    shoulders = [results[i][1] for i in (idx - 1, idx + 1) if 0 <= i < len(results)]
+    if not all(s > median for s in shoulders):
+        print()
+        print('SPIKE: the sharpest position has no shoulders - its neighbours')
+        print('       are no better than the middle of the run - so the peak is')
+        print('       one odd frame, not a focus curve. Re-run before believing')
+        print('       it; if it repeats at the same position, it is real.')
         return 1
 
     interior = best[0] not in (lo, hi)
     print()
     if interior:
-        print('PASS: the peak is inside the range, so the sweep crossed focus.')
+        print('PASS: the peak is inside the range and has shoulders, so the')
+        print('      sweep crossed focus.')
     else:
         print('PARTIAL: the metric rises but peaks at the end of the range, so')
         print('         the scene is at or beyond the limit of travel. Repeat')

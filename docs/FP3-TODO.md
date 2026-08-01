@@ -302,10 +302,29 @@ the power path.
     without at least one control whose answer is known independently**, and
     prefer two — the first control is what made the earlier LC898217 decode
     trustworthy, and it is what made this one repairable.
-33c. **Still unmeasured: whether writing those registers moves the lens.** The
-    part is identified and the driver written, but no capture has been scored at
-    two focus positions yet. `userspace-camera/focus-sweep.py` is the instrument;
-    a flat curve is an answer, not a broken run.
+33c. **The lens moves — measured, `linux-fp3-7.1.3-r32` (`#33-fp3`).** Position 0
+    scores 250.06 (spread 2.22 over three visits), position 1023 scores 206.09
+    (spread 1.76), so 44.0 between positions against 2.2 within one, returning to
+    the same value every revisit. ☠️ The plain sweep was **ambiguous** and its
+    first verdict was wrong twice over: it returned `PASS` on a black frame,
+    where sensor noise alone gave 1.23x against a 1.2 threshold; and once the
+    scene had detail, the sweep produced a smooth monotone decline that is
+    equally the shape of a drift, because a sweep walks its positions in time
+    order. **Interleaving the two extremes is what separates them.** Both fixes
+    are in `focus-sweep.py`: a scene-content gate before scoring anything, and a
+    repetition fallback instead of a magnitude threshold — a threshold cannot
+    tell a weak real effect (1.24x here) from noise (1.23x), repetition can.
+    Remaining: no sweep has crossed an actual peak, because every subject so far
+    sat at the near end of travel.
+33d. **The recorded capture command did not work from a cold boot**, and the
+    failure looked like a driver bug. The CAMSS pads default to
+    `UYVY8_1X16/1920x1080` while the sensor is at `SRGGB10_1X10/4032x3024`, so
+    `STREAMON` fails `-EPIPE` from pipeline validation with nothing in dmesg —
+    the same symptom the pixel-format trap produces, from a different cause. The
+    fix is to propagate the sensor format down `msm_csiphy0`, `msm_csid0`,
+    `msm_ispif0`, `msm_vfe0_rdi0` with `media-ctl -V` first. Now done by
+    `focus-sweep.py` itself and written into
+    [`docs/camera/README.md`](https://github.com/llg179org/fp3-pmaports/blob/main/docs/camera/README.md).
 
 ## `wip/7.1.3/sensor` — SMGR over QMI/QRTR
 

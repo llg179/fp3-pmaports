@@ -57,13 +57,26 @@ Measured 2026-08-01 on `linux-fp3-7.1.3-r30` (`#31-fp3`).
 | the data is live | two consecutive frames **differ**, so it is sensor output and not a canned pattern or a stale buffer |
 | the data is an image | over a 200 kB sample: mean 46.3, min 0, max 255, 142 distinct byte values — a dark scene with real dynamic range, not a constant |
 
-The capture, in full:
+The capture, in full — **and it needs the pipeline set up first**:
 
 ```sh
+# From a cold boot the CAMSS pads sit at UYVY8_1X16/1920x1080 while the sensor
+# is at SRGGB10_1X10/4032x3024, and STREAMON then fails -EPIPE. Propagate the
+# sensor format down the chain before capturing anything.
+for e in msm_csiphy0 msm_csid0 msm_ispif0 msm_vfe0_rdi0; do
+  media-ctl -d /dev/media0 -V "'$e':0 [fmt:SRGGB10_1X10/4032x3024]"
+done
+
 v4l2-ctl -d /dev/video0 \
   --set-fmt-video=width=4032,height=3024,pixelformat=pRAA \
   --stream-mmap=4 --stream-count=2 --stream-to=/tmp/f.raw
 ```
+
+☠️ **The `media-ctl` step was missing from this page until 2026-08-01**, so the
+recorded command reproduced `VIDIOC_STREAMON returned -1 (Broken pipe)` on a
+freshly booted phone — the *same* symptom the pixel-format note below warns
+about, from a different cause, with the same empty dmesg. `focus-sweep.py` now
+does the propagation itself rather than relying on anyone reading this.
 
 ☠️ **The pixel format is `pRAA`, not `RG10`.** The video node offers only the
 *packed* 10-bit Bayer formats; `RG10` (unpacked) is not in its list, and asking
@@ -92,10 +105,12 @@ was that frames came out.
   that the mismatch is harmless.
 - **The EEPROM.** Described in the device tree, no driver bound, calibration
   unread.
-- **Whether the focus actuator moves the lens.** The part is settled (an AK7374
-  at 0x0c, see below) and the driver is written, but no capture has yet been
-  scored at two different focus positions, so nothing here claims the lens
-  actually moves.
+- **Whether the image is correct.** Frames arrive and carry a real scene, but
+  nothing has checked the colour order, the row order or the geometry against a
+  known target.
+- **Where best focus lies, and in which direction.** The lens is confirmed to
+  move (below), but every measurement so far has had the subject at the near
+  end of travel, so no sweep has crossed an actual peak.
 
 ## The four things that made it probe
 
@@ -248,6 +263,46 @@ power-on and under-waiting is a failed first transfer.
 
 Mainline's `ak7375.c` is already a chip-definition table, so supporting this
 part is a chipdef and a compatible rather than a new driver.
+
+### It moves — measured 2026-08-01 on `linux-fp3-7.1.3-r32` (`#33-fp3`)
+
+Structurally: the node is in the live tree, a lens entity is in the media graph,
+and `focus_absolute` appears on `/dev/v4l-subdev17` with `min=0 max=1023 step=1`.
+Writing it produces no I²C error and leaves the device `active`.
+
+That the lens actually *moves* took a second measurement, because the first one
+was ambiguous in a way worth recording. A plain sweep from 0 to 1023 gave a
+smooth monotone decline, 250.9 → 216.9, a 1.24x spread:
+
+☠️ **A sweep walks its positions in time order, so a lens that never moves while
+something else settles produces exactly that curve.** A monotone trend along the
+swept parameter is also the shape of a drift. Interleaving the two extremes
+separates them — a drift stays monotone in time, a real effect flips back with
+the position:
+
+| position | visits | mean | spread |
+|---|---|---|---|
+| 0 | 3 | **250.06** | 2.22 |
+| 1023 | 3 | **206.09** | 1.76 |
+
+44.0 between the positions against a worst-case 2.2 within one, and each
+position returns to its own value every time it is revisited. **Writing the
+control moves the lens.**
+
+The sweep is shallow because the subject sat directly under the phone, at or
+past the near limit of travel, so position 0 is simply the best available and no
+peak is crossed. Finding the peak needs a subject at a moderate distance.
+
+☠️ Two things this cost, both now in `focus-sweep.py`:
+
+- **Its first verdict was `PASS` on a black frame.** Pointed at a dark desk the
+  metric wandered 1.23x from sensor noise alone, and the threshold was 1.2. The
+  script now measures the scene before sweeping (that frame: mean 16.6, stddev
+  1.1, 13 distinct levels) and refuses to score a featureless one.
+- **A magnitude threshold cannot separate a weak real effect from noise**, since
+  both are small — the real effect here is 1.24x and the noise was 1.23x.
+  Repetition can, and the script now falls back to it instead of returning
+  `FLAT`.
 
 ### The LC898217XC, for the record
 
