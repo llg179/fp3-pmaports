@@ -441,3 +441,55 @@ measure operators in shape from focus*](http://isp-utb.github.io/seminario/paper
 [OpenCV, *A comparative study of focus measures*](https://opencv.org/autofocus-using-opencv-a-comparative-study-of-focus-measures-for-sharpness-assessment/)).
 That is precisely the failure the darkness and flatness gates exist to catch,
 and it is why they were kept rather than replaced by a different metric.
+
+### The scan measured time, not focus
+
+The first build of the algorithm was run in a dim room and settled on 1023, the
+far end of the range, twice. The log said why, and it is worth reading carefully
+because the numbers look like a clean result:
+
+```
+Position 930 scores 3517.94      <- coarse pass
+Position 1023 scores 3678.80
+Position 930 scores 3992.45      <- fine pass, same position, 0.9 s later
+Position 1023 scores 7867.48
+```
+
+The same lens position scored 3517 and then 3992; by the end of the fine pass a
+position scored twice what it had at the start. The score was rising **with
+time**, and a scan is a walk through the positions in order, so a monotone drift
+in time is indistinguishable from a monotone response to the lens. The peak then
+lands on whichever end the scan finished on. This is the same trap that produced
+two wrong verdicts from `focus-sweep.py` before it was rewritten — and the
+lesson had not been carried into the algorithm.
+
+☠️ **Waiting for the brightness to settle does not fix it, and the reason is
+worth remembering: holding the brightness still is exactly what the AGC is for.**
+The first attempt gated the scan on the mean luminance being stable, and it
+passed — 15.42, then 15.44 — while the score went on doubling. In a dim scene
+the AGC reaches its brightness target by raising *gain*, and the noise that gain
+amplifies has no focus in it, so the focus measure climbs while the luminance
+sits still. The gate has to watch the exposure and the gain themselves, which
+the IPA already has in its frame context.
+
+Two more defences were added on top, because a gate can only ever be as good as
+its threshold:
+
+- **Every pass revisits its first position at the end.** The two visits differ
+  only in when they happened, so their difference measures the drift directly,
+  and a ramp through them is subtracted from the samples in between. One extra
+  measurement per pass.
+- **A pass whose drift is as large as its response is thrown away.** Correcting
+  a linear drift is not the same as it not having happened — what is left is the
+  non-linear part — so if the correction was bigger than the peak-to-trough of
+  what remains, the scan reports `AfStateFailed` and the lens stays where it
+  was. Moving to a wrong position is worse than not moving.
+
+With those in place the same dim scene now produces the honest answer:
+
+```
+No focus peak (50322.1..50922.2, drift 325.9), staying at 0
+```
+
+1.2% between the best and the worst position, and the algorithm says so instead
+of driving the lens to the noise.

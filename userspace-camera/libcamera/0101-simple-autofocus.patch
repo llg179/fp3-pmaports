@@ -1,4 +1,4 @@
-From fe4deff632913d8991bdb58a4936efd277454657 Mon Sep 17 00:00:00 2001
+From e558a6525939a3fbea6ba050c1326f737f013003 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Lajosh=C3=A1zi=2C=20L=C3=A1szl=C3=B3=20Gergely?=
  <lajoshazilg@gmail.com>
 Date: Sat, 1 Aug 2026 18:47:04 +0200
@@ -55,8 +55,8 @@ Assisted-by: Claude:claude-opus-5
  .../internal/software_isp/swisp_stats.h       |  20 +
  .../internal/software_isp/swstats_cpu.h       |  39 +-
  include/libcamera/ipa/soft.mojom              |   4 +-
- src/ipa/simple/algorithms/af.cpp              | 591 ++++++++++++++++++
- src/ipa/simple/algorithms/af.h                |  91 +++
+ src/ipa/simple/algorithms/af.cpp              | 725 ++++++++++++++++++
+ src/ipa/simple/algorithms/af.h                |  98 +++
  src/ipa/simple/algorithms/meson.build         |   1 +
  src/ipa/simple/data/uncalibrated.yaml         |   1 +
  src/ipa/simple/ipa_context.h                  |  24 +
@@ -66,7 +66,7 @@ Assisted-by: Claude:claude-opus-5
  src/libcamera/sensor/camera_sensor_raw.cpp    |   2 +-
  src/libcamera/software_isp/software_isp.cpp   |  18 +
  src/libcamera/software_isp/swstats_cpu.cpp    |  61 +-
- 16 files changed, 883 insertions(+), 21 deletions(-)
+ 16 files changed, 1024 insertions(+), 21 deletions(-)
  create mode 100644 src/ipa/simple/algorithms/af.cpp
  create mode 100644 src/ipa/simple/algorithms/af.h
 
@@ -238,10 +238,10 @@ index 77328c5..b391335 100644
  };
 diff --git a/src/ipa/simple/algorithms/af.cpp b/src/ipa/simple/algorithms/af.cpp
 new file mode 100644
-index 0000000..90b6828
+index 0000000..cd6cb8c
 --- /dev/null
 +++ b/src/ipa/simple/algorithms/af.cpp
-@@ -0,0 +1,591 @@
+@@ -0,0 +1,725 @@
 +/* SPDX-License-Identifier: LGPL-2.1-or-later */
 +/*
 + * Copyright (C) 2026, Lajosházi, László Gergely
@@ -343,6 +343,32 @@ index 0000000..90b6828
 + * Pi algorithm skips 5 frames for the same reason.
 + */
 +constexpr unsigned int kStartupSkip = 6;
++/*
++ * How steady the exposure has to be before a scan is worth starting, and how
++ * long to wait for it.
++ *
++ * A scan is a walk through the positions in order, so anything that drifts
++ * while it runs is indistinguishable from a response to the lens. The AGC
++ * converging after a session starts drifts by a factor of two over a few
++ * seconds in a dim room, which reads as a perfectly monotonic curve and puts
++ * the "peak" at whichever end the scan finished on. Measured on a Fairphone 3,
++ * 2026-08-01: the same lens position scored 3517 early in a scan and 3992 four
++ * seconds later.
++ */
++constexpr double kSteadyExposure = 0.02;
++constexpr unsigned int kSteadySamples = 2;
++constexpr unsigned int kSteadyTimeout = 40;
++/*
++ * How much larger the response to the lens has to be than whatever drifted
++ * during the pass, for the pass to mean anything.
++ *
++ * Correcting a linear drift is not the same as the drift not having happened:
++ * what is left is the non-linear part, and if the correction was larger than
++ * the signal then the "peak" is a residue of it. Measured 2026-08-01 in a dim
++ * room, where the AGC's gain ramp moved the score by a factor of two across a
++ * pass while the lens moved it by a tenth of that.
++ */
++constexpr double kDriftRatio = 1.0;
 +
 +} /* namespace */
 +
@@ -463,6 +489,10 @@ index 0000000..90b6828
 +	sceneAverage_ = RGB<double>({ 0.0, 0.0, 0.0 });
 +	disagreed_ = 0;
 +	startupSkip_ = kStartupSkip;
++	lastExposure_ = 0.0;
++	lastGain_ = 0.0;
++	steadyCount_ = 0;
++	steadyWait_ = 0;
 +
 +	return 0;
 +}
@@ -578,6 +608,40 @@ index 0000000..90b6828
 +	return false;
 +}
 +
++/**
++ * \brief Whether the exposure has stopped moving
++ *
++ * Returns true once the mean luminance has held still for a few statistics
++ * frames, or once waiting has gone on long enough that a drifting scan is
++ * better than no scan at all.
++ */
++bool Af::exposureSteady(double exposure, double gain)
++{
++	/*
++	 * Watch the exposure and the gain themselves rather than the
++	 * brightness they produce: holding the brightness still is the AGC's
++	 * whole purpose, so a stable luminance says nothing. What moves the
++	 * focus measure while the AGC converges is the gain, because the noise
++	 * it amplifies has no focus.
++	 */
++	bool steady = lastExposure_ > 0.0 && lastGain_ > 0.0 &&
++		      std::abs(exposure - lastExposure_) < kSteadyExposure * lastExposure_ &&
++		      std::abs(gain - lastGain_) < kSteadyExposure * lastGain_;
++
++	lastExposure_ = exposure;
++	lastGain_ = gain;
++
++	if (steady)
++		steadyCount_++;
++	else
++		steadyCount_ = 0;
++
++	if (steadyWait_ < kSteadyTimeout)
++		steadyWait_++;
++
++	return steadyCount_ >= kSteadySamples || steadyWait_ >= kSteadyTimeout;
++}
++
 +double Af::luminance(const SwIspStats *stats)
 +{
 +	uint64_t samples = 0;
@@ -613,6 +677,60 @@ index 0000000..90b6828
 +					  static_cast<int32_t>(steps - 1);
 +		if (positions_.empty() || positions_.back() != pos)
 +			positions_.push_back(pos);
++	}
++
++	/*
++	 * Visit the first position once more at the end. The two visits differ
++	 * only in when they happened, so their difference measures whatever
++	 * drifted during the pass, and the samples in between can be corrected
++	 * for it. The revisit is not itself a candidate.
++	 */
++	if (positions_.size() >= 3)
++		positions_.push_back(positions_.front());
++}
++
++/**
++ * \brief Remove a linear drift in time from the samples of a pass
++ *
++ * The last sample repeats the first position, so any difference between them
++ * is time rather than focus. Subtracting a ramp through the two leaves the
++ * response to the lens.
++ */
++void Af::detrend()
++{
++	drift_ = 0.0;
++
++	if (scores_.size() < 3)
++		return;
++
++	unsigned int last = scores_.size() - 1;
++	double drift = scores_[last] - scores_[0];
++
++	drift_ = std::abs(drift);
++	scores_.pop_back();
++
++	if (std::abs(drift) < 1e-9)
++		return;
++
++	LOG(IPASoftAf, Debug)
++		<< "Pass drifted by " << drift << " over " << last
++		<< " samples; correcting";
++
++	for (unsigned int i = 0; i < scores_.size(); i++)
++		scores_[i] -= drift * static_cast<double>(i) / last;
++
++	bestScore_ = 0.0;
++	worstScore_ = 0.0;
++	bestIndex_ = 0;
++
++	for (unsigned int i = 0; i < scores_.size(); i++) {
++		if (scores_[i] > bestScore_) {
++			bestScore_ = scores_[i];
++			bestIndex_ = i;
++			bestPosition_ = positions_[i];
++		}
++		if (worstScore_ == 0.0 || scores_[i] < worstScore_)
++			worstScore_ = scores_[i];
 +	}
 +}
 +
@@ -678,6 +796,8 @@ index 0000000..90b6828
 +	bestPosition_ = positions_.front();
 +
 +	context.activeState.af.state = controls::AfStateScanning;
++	steadyCount_ = 0;
++	steadyWait_ = 0;
 +
 +	moveTo(context, positions_.front());
 +	settle_ = kInitialSettleFrames;
@@ -719,9 +839,20 @@ index 0000000..90b6828
 +			return;
 +
 +		if (af.state == controls::AfStateIdle) {
-+			if (luminance(stats) < kMinLuminance) {
++			double luma = luminance(stats);
++
++			if (luma < kMinLuminance) {
 +				LOG(IPASoftAf, Debug)
 +					<< "Too dark to focus, waiting";
++				return;
++			}
++
++			if (!exposureSteady(frameContext.sensor.exposure,
++					    frameContext.sensor.gain)) {
++				LOG(IPASoftAf, Debug)
++					<< "Exposure still moving (exposure "
++					<< frameContext.sensor.exposure << ", gain "
++					<< frameContext.sensor.gain << "), waiting";
 +				return;
 +			}
 +
@@ -783,6 +914,8 @@ index 0000000..90b6828
 +		return;
 +	}
 +
++	detrend();
++
 +	if (phase_ == ScanPhase::Coarse) {
 +		phase_ = ScanPhase::Fine;
 +		planScan(bestPosition_, coarseStep_, kFineSteps);
@@ -802,11 +935,12 @@ index 0000000..90b6828
 +	 * this the lens is driven to wherever the noise of a featureless scene
 +	 * happened to be highest, which is worse than not moving at all.
 +	 */
-+	if (worstScore_ > 0.0 &&
-+	    bestScore_ < worstScore_ * (1.0 + minContrast_)) {
++	if ((worstScore_ > 0.0 &&
++	     bestScore_ < worstScore_ * (1.0 + minContrast_)) ||
++	    bestScore_ - worstScore_ < kDriftRatio * drift_) {
 +		LOG(IPASoftAf, Info)
 +			<< "No focus peak (" << worstScore_ << ".." << bestScore_
-+			<< "), staying at " << startPosition_;
++			<< ", drift " << drift_ << "), staying at " << startPosition_;
 +
 +		moveTo(context, startPosition_);
 +		focusedScore_ = value;
@@ -835,10 +969,10 @@ index 0000000..90b6828
 +} /* namespace libcamera */
 diff --git a/src/ipa/simple/algorithms/af.h b/src/ipa/simple/algorithms/af.h
 new file mode 100644
-index 0000000..031acad
+index 0000000..3cff742
 --- /dev/null
 +++ b/src/ipa/simple/algorithms/af.h
-@@ -0,0 +1,91 @@
+@@ -0,0 +1,98 @@
 +/* SPDX-License-Identifier: LGPL-2.1-or-later */
 +/*
 + * Copyright (C) 2026, Lajosházi, László Gergely
@@ -891,6 +1025,8 @@ index 0000000..031acad
 +	static RGB<double> average(const SwIspStats *stats);
 +	bool sceneChanged(const RGB<double> &a, const RGB<double> &b) const;
 +	int32_t interpolatePeak() const;
++	bool exposureSteady(double exposure, double gain);
++	void detrend();
 +	void selectZones(IPAContext &context, Span<const Rectangle> windows);
 +
 +	void startScan(IPAContext &context);
@@ -924,6 +1060,11 @@ index 0000000..031acad
 +	double focusedScore_ = 0.0;
 +	RGB<double> sceneAverage_;
 +	unsigned int startupSkip_ = 0;
++	double lastExposure_ = 0.0;
++	double lastGain_ = 0.0;
++	double drift_ = 0.0;
++	unsigned int steadyCount_ = 0;
++	unsigned int steadyWait_ = 0;
 +	unsigned int disagreed_ = 0;
 +};
 +
