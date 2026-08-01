@@ -131,6 +131,46 @@ is live in mainline today — checked directly against `master`, not inferred �
 `get_maintainer.pl` puts the author of the regression on the Cc list. It builds
 warning-free at `W=1` and `checkpatch --strict` is clean.
 
+### A fourth reason, and it now covers the newest commit too
+
+The mount-matrix fix of 2026-08-01 looks like an ideal standalone submission —
+a self-contained correction of a value that is provably not a rotation. It has
+nowhere to go, for a reason that applies to ten of our other eleven commits as
+well and is worth stating as its own rule:
+
+☠️ **The file it patches does not exist upstream.** `drivers/iio/accel/smgr_accel.c`,
+`drivers/iio/common/qcom_smgr/` and `include/linux/iio/common/qcom_smgr.h` all
+return 404 against `torvalds/linux` (checked 2026-08-01). A patch to a driver
+that is not upstream has no destination at all — it is not "hard to rebase", it
+is unsendable until the driver lands. The same is true of the two QRTR
+prerequisites: `net/qrtr/` in mainline holds `af_qrtr.c`, `mhi.c`, `ns.c`,
+`smd.c` and `tun.c`, and nothing named `bus`, so Yassine's QRTR-bus conversion
+is not upstream either.
+
+This is the check to run **before** distilling any submit series, because it is
+cheap and it decides whether the work exists at all:
+
+```sh
+gh api "repos/torvalds/linux/contents/<path>" --jq '.size'   # 404 = nothing to send
+```
+
+### Re-verified 2026-08-01
+
+The "applies clean to mainline" claim in the branch table was an assertion until
+it was measured. It was measured by fetching today's `drivers/soc/qcom/qmi_encdec.c`
+straight from `torvalds/linux` and running `git apply --check` against it, rather
+than by trial-rebasing the local branch:
+
+| check | result |
+|---|---|
+| `Fixes: fe099c387e06` resolves in `torvalds/linux` | yes, and the subject matches the one quoted |
+| the patch applies to today's `qmi_encdec.c` | clean |
+| `checkpatch --strict` | 0 errors, 0 warnings, 0 checks |
+
+The commit message was rewrapped the same day (a sentence had been broken
+mid-clause); the diff is byte-identical, and the pre-rewrap tip is kept as
+`archive/submit-7.1.3-sensor-pre-rewrap`.
+
 ## Status
 
 | sensor | IIO name | works | notes |

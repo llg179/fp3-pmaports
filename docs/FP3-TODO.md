@@ -274,10 +274,19 @@ the power path.
 ## `wip/7.1.3/sensor` — SMGR over QMI/QRTR
 
 Accelerometer, gyroscope, magnetometer, proximity, ambient light. Only one commit
-has been distilled so far — `soc: qcom: qmi: read QMI_DATA_LEN at its declared
-width`, which applies clean to mainline. The SMGR driver itself, 2778 lines across
-30 files on the wip branch including the QRTR-bus prerequisites, has no series
-yet. Gaps, in
+has been distilled — `soc: qcom: qmi: read QMI_DATA_LEN at its declared width` —
+and that is the whole submittable set, not a backlog. Re-verified **2026-08-01**
+against today's `torvalds/linux`: the `Fixes:` hash resolves with a matching
+subject, the patch applies clean to the current `qmi_encdec.c`, and
+`checkpatch --strict` is silent. ☠️ Everything else is **unsendable rather than
+undone**: `smgr_accel.c`, `drivers/iio/common/qcom_smgr/` and `net/qrtr`'s bus
+conversion all 404 against mainline, so ten of our eleven remaining commits and
+both QRTR prerequisites patch files that do not exist upstream — **including the
+mount-matrix fix of item 27, which otherwise looks like an ideal standalone
+submission.** The reasoning, and the cheap check that settles it before any
+distillation work, are in
+[`docs/sensors/README.md`](https://github.com/llg179org/fp3-pmaports/blob/main/docs/sensors/README.md#why-the-submit-series-is-one-patch).
+Gaps, in
 [`docs/sensors/README.md`](https://github.com/llg179org/fp3-pmaports/blob/main/docs/sensors/README.md#known-gaps):
 
 26. ~~**The magnetometer is uncalibrated and its scale unverified**~~ — **both
