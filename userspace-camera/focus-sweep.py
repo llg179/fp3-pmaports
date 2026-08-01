@@ -186,7 +186,7 @@ def scene_stats(path):
     return mean, var ** 0.5, len(set(pixels))
 
 
-def confirm_by_repetition(subdev, args, best, worst, outdir, rounds=3):
+def confirm_by_repetition(subdev, args, a, b, outdir, rounds=3):
     """Alternate between two positions several times and see if the metric follows.
 
     A magnitude threshold cannot tell a weak real effect from noise, because
@@ -200,7 +200,6 @@ def confirm_by_repetition(subdev, args, best, worst, outdir, rounds=3):
     like one side of a focus peak. Interleaving separates the two: drift stays
     monotone in time, a real effect flips back and forth with the position.
     """
-    a, b = best[0], worst[0]
     print('%10s  %14s' % ('position', 'sharpness'))
     scores = {a: [], b: []}
     path = os.path.join(outdir, 'ab.raw')
@@ -324,7 +323,11 @@ def main():
         print('whole range than a still scene changes on its own (a featureless')
         print('frame measured 1.23x). Repeating the two extremes instead.')
         print()
-        return confirm_by_repetition(subdev, args, best, worst, outdir)
+        # ☠️ The extremes of *travel*, not the best and worst of the sweep. On a
+        # flat curve those two are wherever the noise happened to fall - once
+        # measured as 511 and 716, so the retry compared the smallest movement
+        # available instead of the largest, and concluded the lens was still.
+        return confirm_by_repetition(subdev, args, lo, hi, outdir)
 
     # A real focus curve has shoulders: the positions either side of the peak
     # are also sharper than most. A noise spike stands alone. Without this a

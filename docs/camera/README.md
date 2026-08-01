@@ -291,7 +291,35 @@ control moves the lens.**
 
 The sweep is shallow because the subject sat directly under the phone, at or
 past the near limit of travel, so position 0 is simply the best available and no
-peak is crossed. Finding the peak needs a subject at a moderate distance.
+peak is crossed.
+
+**With the subject moved further away the effect disappears entirely.** Same
+instrument, a richer scene (mean 119.5, stddev 65.0, all 256 levels present):
+
+| position | visits | mean | spread |
+|---|---|---|---|
+| 0 | 3 | 422.00 | 0.47 |
+| 1023 | 3 | 421.81 | 2.09 |
+
+0.19 between the extremes of travel against 2.09 within one position. So the
+control demonstrably changes the image at macro distance and demonstrably does
+not at this one. Two readings fit that and this page does not choose between
+them: the subject may now be far enough that the whole travel falls inside the
+depth of field, or the lens may move only a little, enough to matter only close
+up. Separating them needs a subject at an intermediate distance — printed text
+at 10–20 cm — where a full-travel VCM has to cross a peak.
+
+☠️ **A raw readback of the actuator does not settle it either, and looked as
+though it did.** Writing 0, 256, 512 and 1023 through the control and then
+reading two bytes back from register 0x00 returned exactly `0x0000`, `0x4000`,
+`0x8000`, `0xffc0` — the expected `value << 6` every time, which reads as proof
+that the map is right and the writes land where intended. It is not. Dumping
+registers 0x00–0x0f shows each read starting with the *second byte of the
+previous one* (`ffc0`, `c040`, `400e`, `0e60` …): the device ignores the
+register-address write and streams bytes, so what comes back is indistinguishable
+from an echo of the last thing written. It proves the bytes reach the part, and
+nothing about where they land. The register map still rests on the vendor blob
+and its two known-answer controls, not on hardware readback.
 
 ☠️ Two things this cost, both now in `focus-sweep.py`:
 

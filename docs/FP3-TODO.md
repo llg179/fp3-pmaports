@@ -314,8 +314,24 @@ the power path.
     are in `focus-sweep.py`: a scene-content gate before scoring anything, and a
     repetition fallback instead of a magnitude threshold — a threshold cannot
     tell a weak real effect (1.24x here) from noise (1.23x), repetition can.
-    Remaining: no sweep has crossed an actual peak, because every subject so far
-    sat at the near end of travel.
+    Remaining: no sweep has crossed an actual peak. With the subject moved
+    further away the effect vanishes (0.19 between the extremes of travel
+    against a 2.09 spread within one position), so the control changes the image
+    at macro distance and not at that one - either the whole travel now falls
+    inside the depth of field, or the lens moves only a little. A subject at
+    10-20 cm decides it. ☠️ Second script bug found doing this: on a flat curve
+    the retry compared the sweep's best and worst positions, which are wherever
+    the noise fell (once 511 and 716), so it tested the smallest movement
+    available instead of the largest. It now always uses the extremes of travel.
+33e. **A raw readback of the actuator proves less than it appears to.** Writing
+    0, 256, 512, 1023 and reading register 0x00 back returned exactly the
+    expected `value << 6` each time - and that is not evidence. A dump of
+    registers 0x00-0x0f shows every read beginning with the second byte of the
+    previous one (`ffc0`, `c040`, `400e`, `0e60`), so the part ignores the
+    register-address write and streams bytes; the reply is indistinguishable
+    from an echo of the last write. It shows the bytes arrive, not where they
+    land. The register map still rests on the vendor blob and its two
+    known-answer controls.
 33d. **The recorded capture command did not work from a cold boot**, and the
     failure looked like a driver bug. The CAMSS pads default to
     `UYVY8_1X16/1920x1080` while the sensor is at `SRGGB10_1X10/4032x3024`, so
