@@ -235,10 +235,16 @@ is **Joel Selvaraj's** (`sdm670-mainline/linux` MR !3, commit `5130bc702ea2`,
 delta is +68/−21 on 1514 lines, roughly half comments, functionally four things in
 the power path.
 
-24. **Streaming does not work end to end.** The sensor probes and the CAMSS link
-    enables; the remainder is CAMSS-side. The one in-driver lead: the two modes'
-    link frequencies disagree with the DT `link-frequencies`, and one of them is
-    commented `// NOT SURE HOW TO FIND THIS VALUE` by its own author.
+24. ~~**Streaming does not work end to end.**~~ **False, corrected 2026-08-01.**
+    It streams: 15 240 960-byte frames, exactly 4032 x 3024 x 10 / 8, two
+    consecutive frames differing, so it is live sensor data. The old finding was
+    an artefact of asking for `RG10`, which this video node does not offer — the
+    resulting `-EPIPE` from pipeline validation logs nothing and looks exactly
+    like a broken driver. The correct format is **`pRAA`**. What is genuinely
+    open is narrower: **nobody has checked the image is correct** (geometry,
+    Bayer order, stride) against a known scene, and the link frequencies in the
+    DT still disagree with the driver's mode tables. Details in
+    [`docs/camera/README.md`](https://github.com/llg179org/fp3-pmaports/blob/main/docs/camera/README.md).
 25. **Parked: the PMI632 flash LED.** The node exists, but
     `leds-qcom-flash.c` subtype detection is unverified on this hardware and
     risks a probe failure until it is. Kept out of the tree for now.
