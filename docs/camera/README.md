@@ -105,12 +105,10 @@ was that frames came out.
   that the mismatch is harmless.
 - **The EEPROM.** Described in the device tree, no driver bound, calibration
   unread.
-- **Whether the image is correct.** Frames arrive and carry a real scene, but
-  nothing has checked the colour order, the row order or the geometry against a
-  known target.
-- **Where best focus lies, and in which direction.** The lens is confirmed to
-  move (below), but every measurement so far has had the subject at the near
-  end of travel, so no sweep has crossed an actual peak.
+- **That the focus actuator moves the lens at all.** The driver is written and
+  bound, the part is powered and takes its writes without error, and every
+  measurement of the resulting image - machine and human, at three subject
+  distances - shows no change. See [The focus actuator](#the-focus-actuator).
 
 ## The four things that made it probe
 
@@ -264,73 +262,78 @@ power-on and under-waiting is a failed first transfer.
 Mainline's `ak7375.c` is already a chip-definition table, so supporting this
 part is a chipdef and a compatible rather than a new driver.
 
-### It moves — measured 2026-08-01 on `linux-fp3-7.1.3-r32` (`#33-fp3`)
+### It does not move — measured 2026-08-01 on `linux-fp3-7.1.3-r32` (`#33-fp3`)
 
-Structurally: the node is in the live tree, a lens entity is in the media graph,
-and `focus_absolute` appears on `/dev/v4l-subdev17` with `min=0 max=1023 step=1`.
-Writing it produces no I²C error and leaves the device `active`.
+☠️ **This section said the opposite for part of a day.** The claim rested on one
+measurement, and that measurement was confounded. Read the retraction before the
+evidence.
 
-That the lens actually *moves* took a second measurement, because the first one
-was ambiguous in a way worth recording. A plain sweep from 0 to 1023 gave a
-smooth monotone decline, 250.9 → 216.9, a 1.24x spread:
+Structurally everything is in place: the node is in the live tree, a lens entity
+is in the media graph, `focus_absolute` appears on a subdev with
+`min=0 max=1023 step=1`, writes produce no I²C error, and the device stays
+`active`.
 
-☠️ **A sweep walks its positions in time order, so a lens that never moves while
-something else settles produces exactly that curve.** A monotone trend along the
-swept parameter is also the shape of a drift. Interleaving the two extremes
-separates them — a drift stays monotone in time, a real effect flips back with
-the position:
+**But writing the control does not change the image**, by machine or by eye.
 
-| position | visits | mean | spread |
-|---|---|---|---|
-| 0 | 3 | **250.06** | 2.22 |
-| 1023 | 3 | **206.09** | 1.76 |
+#### The retraction
 
-44.0 between the positions against a worst-case 2.2 within one, and each
-position returns to its own value every time it is revisited. **Writing the
-control moves the lens.**
+The first result was position 0 scoring 250.06 against position 1023 scoring
+206.09, with spreads of about 2 — a 20:1 signal, three times over, which looked
+conclusive. It was not, because **position was confounded with capture order**:
+every round measured 0 first and 1023 second, and each capture restarts the
+stream, so anything that settles between the first and second capture of a round
+appears as a position effect.
 
-The sweep is shallow because the subject sat directly under the phone, at or
-past the near limit of travel, so position 0 is simply the best available and no
-peak is crossed.
+Balancing the order — `0,1023 / 1023,0 / 0,1023 / 1023,0` — separates them:
 
-**With the subject moved further away the effect disappears entirely.** Same
-instrument, a richer scene (mean 119.5, stddev 65.0, all 256 levels present):
+| grouping | means | difference |
+|---|---|---|
+| by **position** | 0 → 405.65, 1023 → 404.72 | **0.93** |
+| by **capture order** | first → 405.57, second → 404.81 | **0.76** |
 
-| position | visits | mean | spread |
-|---|---|---|---|
-| 0 | 3 | 422.00 | 0.47 |
-| 1023 | 3 | 421.81 | 2.09 |
+The two are the same size. There is no position effect, and the earlier 44.0
+was an artifact of the design. Every measurement made since, at three subject
+distances including macro, agrees: differences under 1 against within-position
+spreads of 2 to 13.
 
-0.19 between the extremes of travel against 2.09 within one position. So the
-control demonstrably changes the image at macro distance and demonstrably does
-not at this one. Two readings fit that and this page does not choose between
-them: the subject may now be far enough that the whole travel falls inside the
-depth of field, or the lens may move only a little, enough to matter only close
-up. Separating them needs a subject at an intermediate distance — printed text
-at 10–20 cm — where a full-travel VCM has to cross a peak.
+A human check agrees too. A slider driving the control live, watched in the
+camera app with printed text held close to the lens, produces no visible change
+at any position.
 
-☠️ **A raw readback of the actuator does not settle it either, and looked as
-though it did.** Writing 0, 256, 512 and 1023 through the control and then
-reading two bytes back from register 0x00 returned exactly `0x0000`, `0x4000`,
-`0x8000`, `0xffc0` — the expected `value << 6` every time, which reads as proof
-that the map is right and the writes land where intended. It is not. Dumping
-registers 0x00–0x0f shows each read starting with the *second byte of the
-previous one* (`ffc0`, `c040`, `400e`, `0e60` …): the device ignores the
-register-address write and streams bytes, so what comes back is indistinguishable
-from an echo of the last thing written. It proves the bytes reach the part, and
-nothing about where they land. The register map still rests on the vendor blob
-and its two known-answer controls, not on hardware readback.
+#### What has been eliminated
 
-☠️ Two things this cost, both now in `focus-sweep.py`:
+Everything on the software side, each measured rather than assumed:
 
-- **Its first verdict was `PASS` on a black frame.** Pointed at a dark desk the
-  metric wandered 1.23x from sensor noise alone, and the threshold was 1.2. The
-  script now measures the scene before sweeping (that frame: mean 16.6, stddev
-  1.1, 13 distinct levels) and refuses to score a featureless one.
-- **A magnitude threshold cannot separate a weak real effect from noise**, since
-  both are small — the real effect here is 1.24x and the noise was 1.23x.
-  Repetition can, and the script now falls back to it instead of returning
-  `FLAT`.
+| | |
+|---|---|
+| the writes reach the part | no I²C error, and the byte stream reflects them |
+| the part is powered | `cam_af_2p85` and `cam_io_1p8` both `enabled`; TLMM 128 and 130 read `out high` |
+| runtime PM is not cutting power | `runtime_status` stays `active` across writes and captures |
+| the active-mode write happens | `ak7375_vcm_resume()` writes `reg_cont = mode_active` unconditionally — `has_standby` gates only the *suspend*-side write |
+| nothing else fights us | with the camera app running, a written value is unchanged three seconds later, three times; there is no autofocus on this stack |
+| the vendor does nothing more | its parameter block is fully decoded: ten register descriptors of which only the first is filled, and a single init write of `0x02 = 0x00`. The driver does exactly that and nothing is left over |
+
+☠️ **A raw readback looks like confirmation and is not.** Writing 0, 256, 512
+and 1023 and reading register 0x00 returns exactly `value << 6` every time. But a
+dump of registers 0x00–0x0f shows each read starting with the *second byte of the
+previous one* (`ffc0`, `c040`, `400e`, `0e60` …): the part ignores the
+register-address write and streams bytes, so the reply cannot be told from an
+echo of the last write. It shows the bytes arrive, not where they land.
+
+#### What is left
+
+Three possibilities, none of them settled here:
+
+1. **The part is not an AK7374.** Its identity is inferred from the *absence* of
+   anything at 0x72 plus the vendor configuration, not from asking the device.
+   The module EEPROM at 0x50 should carry a module and VCM identifier; reading it
+   needs the layout, which lives in
+   `libmmcamera_ofilm_imx363_bl24s64_eeprom.so` and can be decoded the same way
+   the actuator parameters were.
+2. **Something outside this chip gates the coil** — a separate enable, or an OIS
+   controller in the path.
+3. **This unit's actuator is simply not working.** Possible, and the hardest to
+   distinguish from the other two.
 
 ### The LC898217XC, for the record
 

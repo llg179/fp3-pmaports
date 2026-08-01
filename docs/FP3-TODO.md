@@ -302,36 +302,38 @@ the power path.
     without at least one control whose answer is known independently**, and
     prefer two — the first control is what made the earlier LC898217 decode
     trustworthy, and it is what made this one repairable.
-33c. **The lens moves — measured, `linux-fp3-7.1.3-r32` (`#33-fp3`).** Position 0
-    scores 250.06 (spread 2.22 over three visits), position 1023 scores 206.09
-    (spread 1.76), so 44.0 between positions against 2.2 within one, returning to
-    the same value every revisit. ☠️ The plain sweep was **ambiguous** and its
-    first verdict was wrong twice over: it returned `PASS` on a black frame,
-    where sensor noise alone gave 1.23x against a 1.2 threshold; and once the
-    scene had detail, the sweep produced a smooth monotone decline that is
-    equally the shape of a drift, because a sweep walks its positions in time
-    order. **Interleaving the two extremes is what separates them.** Both fixes
-    are in `focus-sweep.py`: a scene-content gate before scoring anything, and a
-    repetition fallback instead of a magnitude threshold — a threshold cannot
-    tell a weak real effect (1.24x here) from noise (1.23x), repetition can.
-    Remaining: no sweep has crossed an actual peak. With the subject moved
-    further away the effect vanishes (0.19 between the extremes of travel
-    against a 2.09 spread within one position), so the control changes the image
-    at macro distance and not at that one - either the whole travel now falls
-    inside the depth of field, or the lens moves only a little. A subject at
-    10-20 cm decides it. ☠️ Second script bug found doing this: on a flat curve
-    the retry compared the sweep's best and worst positions, which are wherever
-    the noise fell (once 511 and 716), so it tested the smallest movement
-    available instead of the largest. It now always uses the extremes of travel.
-33e. **A raw readback of the actuator proves less than it appears to.** Writing
-    0, 256, 512, 1023 and reading register 0x00 back returned exactly the
-    expected `value << 6` each time - and that is not evidence. A dump of
-    registers 0x00-0x0f shows every read beginning with the second byte of the
-    previous one (`ffc0`, `c040`, `400e`, `0e60`), so the part ignores the
-    register-address write and streams bytes; the reply is indistinguishable
-    from an echo of the last write. It shows the bytes arrive, not where they
-    land. The register map still rests on the vendor blob and its two
-    known-answer controls.
+33c. ☠️ **RETRACTED: the lens is NOT confirmed to move, and the measurement that
+    said it did was confounded.** The claim rested on position 0 scoring 250.06
+    against position 1023 scoring 206.09 with spreads near 2 - a 20:1 signal,
+    three times over. But **every round measured 0 first and 1023 second**, and
+    each capture restarts the stream, so anything settling between the first and
+    second capture of a round appears as a position effect. Balancing the order
+    (`0,1023 / 1023,0 / 0,1023 / 1023,0`) separates them: by position 0.93, by
+    capture order 0.76 - the same size, so there is no position effect. Every
+    measurement since agrees, at three subject distances including macro, and a
+    human driving a live slider while watching the camera sees no change either.
+    ☠️ Second script bug found on the way: on a flat curve the retry compared the
+    sweep's best and worst positions, which are wherever the noise fell (once 511
+    and 716), so it tested the smallest movement available instead of the
+    largest; it now always uses the extremes of travel.
+33c-1. **What is eliminated, all measured.** Writes reach the part (no i2c
+    error); it is powered (`cam_af_2p85` and `cam_io_1p8` enabled, TLMM 128 and
+    130 read `out high`); runtime PM keeps it `active`; the active-mode write
+    happens (`ak7375_vcm_resume()` writes `reg_cont = mode_active`
+    unconditionally - `has_standby` gates only the suspend-side write, which an
+    earlier note here got wrong); nothing else writes the control (a value set
+    with the camera app running is unchanged three seconds later, three times,
+    and there is no autofocus on this stack); and the vendor does nothing more -
+    its parameter block is fully decoded, ten register descriptors of which only
+    the first is filled plus a single init write of `0x02 = 0x00`, which is
+    exactly what the driver does.
+33c-2. **What is left**, none of it settled: the part may not be an AK7374 (its
+    identity is inferred from the absence of anything at 0x72 plus the vendor
+    configuration, not from asking the device - the module EEPROM at 0x50 should
+    carry a VCM identifier, and its layout is in
+    `libmmcamera_ofilm_imx363_bl24s64_eeprom.so`, decodable the same way the
+    actuator parameters were); something outside the chip may gate the coil; or
+    this unit's actuator may simply not work.
 33d. **The recorded capture command did not work from a cold boot**, and the
     failure looked like a driver bug. The CAMSS pads default to
     `UYVY8_1X16/1920x1080` while the sensor is at `SRGGB10_1X10/4032x3024`, so
