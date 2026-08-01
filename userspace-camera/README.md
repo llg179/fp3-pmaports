@@ -37,6 +37,8 @@ looks like a camera stuck at 3× zoom.
 the mismatch shows up as *"no camera found"* in every app —
 `systemctl --user restart wireplumber pipewire` fixes it.
 
+## The tools
+
 | tool | what it answers |
 |---|---|
 | [`focus-sweep.py`](focus-sweep.py) | does the lens move, and where in the control range this scene comes into focus — headless, prints numbers |
