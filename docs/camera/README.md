@@ -7,19 +7,18 @@
 > anything prepared for the LKML carries `Assisted-by:` instead and never a
 > `Signed-off-by` from the assistant, since only a human can certify the DCO.
 
-The Sony IMX363 rear sensor on the Fairphone 3 under a mainline kernel: what is
-wired, what has been measured to work, and what has not been established.
+The Sony IMX363 rear sensor and its focus actuator on the Fairphone 3 under a
+mainline kernel: what is wired, and what has been measured to work.
 
-**Almost none of this is our code.** The driver is Joel Selvaraj's, imported and
-then given a Fairphone 3 power sequence. Who wrote what, and how the delta was
-measured, is in
-[`../kernel/README.md`](../kernel/README.md#camera-imx363c) — that page is
-authoritative on provenance and this one does not repeat it. Open items live in
-[`../TODO.md`](../TODO.md) and [`../FP3-TODO.md`](../FP3-TODO.md).
+| | |
+|---|---|
+| **provenance** — whose code each file is | [`../kernel/README.md`](../kernel/README.md#camera-imx363c) |
+| **how it was brought up**, and the traps found on the way | [`bringup/README.md`](bringup/README.md) |
+| **what is still open** | [`../TODO.md`](../TODO.md) and [`../FP3-TODO.md`](../FP3-TODO.md), items 1 and 33 |
 
 ## The shape of it
 
-Two chips and one bus, none of them shared with anything else on the phone:
+Three chips and one bus, none of them shared with anything else on the phone:
 
 ```
 IMX363 @ CCI i2c-0 0x1a          the sensor: registers over Qualcomm's CCI
@@ -28,13 +27,10 @@ IMX363 @ CCI i2c-0 0x1a          the sensor: registers over Qualcomm's CCI
       | 4 MIPI CSI-2 lanes
       v
 CAMSS  csiphy0 -> csid0 -> ispif0 -> vfe0_rdi0 -> /dev/video0
-```
 
-Alongside the sensor on the same CCI bus sit a `belling,bl24s64` EEPROM at 0x50
-holding the module's calibration, and an **AK7374** voice-coil focus motor at
-**0x0c** — see [The focus actuator](#the-focus-actuator) below. Note that this
-repository and the device tree both claimed 0x72 until the bus was actually
-scanned, and that the phone ships with two camera modules whose actuators differ.
+AK7374 @ CCI i2c-0 0x0c          the focus motor, driven by mainline ak7375.c
+bl24s64 @ CCI i2c-0 0x50         the module's calibration EEPROM (no driver)
+```
 
 The sensor is strapped to I²C address **0x1a** (SLASEL high on this board), is
 mounted rotated 270°, and is described with `orientation = <1>` (world-facing).
@@ -43,9 +39,15 @@ Only the **RDI** path is wired: raw Bayer straight from the sensor to memory, no
 `msm_vfe*_pix` entity in the graph. Debayering, white balance and everything else
 is userspace's problem.
 
+☠️ **The actuator is an AK7374 at 0x0c on this phone, and an LC898217XC at 0x72
+on others** — Fairphone ships two different rear camera modules. Both drivers are
+kept; the device tree describes the one this phone has, and the two variants are
+not distinguishable from the device tree alone.
+
 ## What is measured to work
 
-Measured 2026-08-01 on `linux-fp3-7.1.3-r30` (`#31-fp3`).
+Sensor path measured 2026-08-01 on `linux-fp3-7.1.3-r30` (`#31-fp3`), focus on
+`-r32` (`#33-fp3`).
 
 | | |
 |---|---|
@@ -53,9 +55,9 @@ Measured 2026-08-01 on `linux-fp3-7.1.3-r30` (`#31-fp3`).
 | link into CAMSS | `imx363 → msm_csiphy0` **ENABLED, IMMUTABLE**; `csiphy0 → csid0` **ENABLED** |
 | format negotiation | `SRGGB10_1X10/4032x3024` accepted by **every** pad from the sensor through `vfe0_rdi0` |
 | **streaming** | `VIDIOC_STREAMON` succeeds and frames arrive |
-| frame size | **15 240 960 bytes**, which is exactly 4032 × 3024 × 10 / 8 — packed 10-bit, no padding, no short frames |
+| frame size | **15 240 960 bytes**, exactly 4032 × 3024 × 10 / 8 — packed 10-bit, no padding, no short frames |
 | the data is live | two consecutive frames **differ**, so it is sensor output and not a canned pattern or a stale buffer |
-| the data is an image | over a 200 kB sample: mean 46.3, min 0, max 255, 142 distinct byte values — a dark scene with real dynamic range, not a constant |
+| **the lens moves** | sweeping `focus_absolute` gives a single interior peak: 428.7 at position 409 against 387.3 at 0 and 380.6 at 1023, with 3.4 of spread within a position and 1.3 of drift between passes |
 
 The capture, in full — **and it needs the pipeline set up first**:
 
@@ -72,396 +74,52 @@ v4l2-ctl -d /dev/video0 \
   --stream-mmap=4 --stream-count=2 --stream-to=/tmp/f.raw
 ```
 
-☠️ **The `media-ctl` step was missing from this page until 2026-08-01**, so the
-recorded command reproduced `VIDIOC_STREAMON returned -1 (Broken pipe)` on a
-freshly booted phone — the *same* symptom the pixel-format note below warns
-about, from a different cause, with the same empty dmesg. `focus-sweep.py` now
-does the propagation itself rather than relying on anyone reading this.
-
-☠️ **The pixel format is `pRAA`, not `RG10`.** The video node offers only the
-*packed* 10-bit Bayer formats; `RG10` (unpacked) is not in its list, and asking
-for it makes `v4l2-ctl` fall back to whatever the node already had. The result is
-a `VIDIOC_STREAMON returned -1 (Broken pipe)` — `-EPIPE` from media pipeline
-validation, because the video node's format then does not match the pads. That
-failure is produced entirely by the *request*, logs nothing in dmesg, and looks
-exactly like a broken driver. It is worth stating plainly because this project
-recorded "streaming does not work end to end" as a finding for weeks, and the
-first thing that happened when it was re-measured with the right format string
-was that frames came out.
-
-## What is not established
-
-- **That the image is correct.** Right size, live, non-constant — none of which
-  says the geometry, the Bayer order or the line stride are right. Settling that
-  needs a known scene: point the phone at something recognisable, debayer the
-  raw frame on the host, and look at it. Nobody has done that.
-- **Anything about exposure or gain control.** The V4L2 controls exist; whether
-  they move the image has not been checked.
-- **The two link frequencies in the device tree** (`636000000` and `321000000`)
-  disagree with the values the driver's own mode tables carry. The source
-  driver's author could not account for the first of them either — the comment
-  in the imported file reads `// NOT SURE HOW TO FIND THIS VALUE`. Streaming
-  works anyway, which means something is tolerating the mismatch rather than
-  that the mismatch is harmless.
-- **The EEPROM.** Described in the device tree, no driver bound, calibration
-  unread.
-- **Which physical direction a rising code moves the lens.** The actuator itself
-  works - the sweep finds a clean interior peak, see
-  [The focus actuator](#the-focus-actuator) - but nothing here has yet related a
-  position to a subject *distance*, which takes two targets at known distances.
-
-## The four things that made it probe
-
-The imported driver was written for the Pixel 3a, where the sensor rails come up
-quickly. On this board they are switched through GPIO-driven regulators that
-settle slowly, and the driver as imported never got past the chip-id read. All
-four fixes are in the power path, and each is a *timing* fact about this board
-rather than about the sensor:
-
-1. **MCLK before reset.** INCK must be running and stable before XCLR is
-   released. The import released reset first, and the sensor never booted.
-2. **A 200 ms boot delay.** The sensor only ACKs on I²C about 150 ms after
-   power-up here, so the import's ~10 ms wait always expired.
-3. **An I²C warm-up with a bounded retry.** The first transaction after power-up
-   still times out. Because `power_on()` runs on every runtime-PM resume and not
-   only at probe, the timeout is absorbed there rather than handed to the caller
-   — visible in dmesg on every boot as one `Error reading reg 0x0016: -110`,
-   which is expected and not a fault. Without it the first streaming register
-   writes time out and CAMSS never receives frames; the user-visible symptom was
-   the viewfinder going blank after locking and unlocking the screen with the
-   camera open.
-4. **`vdig` pinned to 1.175 V.** It is a shared PMIC LDO that otherwise sits at
-   its 0.975 V minimum, below what the IMX363 digital core needs. Failing to set
-   it is a warning rather than an error, since a board that already supplies
-   1.175 V does not need it.
-
-## Checking it works
-
-[`tests/checks/40-camera-test.sh`](../../tests/checks/40-camera-test.sh) tells
-three failures apart, because they send you to completely different places:
-
-| symptom | what it means |
-|---|---|
-| no `imx363` node in `/proc/device-tree` | you are running the wrong device tree |
-| node present, driver absent | the module was not built or not loaded |
-| bound but unlinked | the media graph is wrong |
-
-☠️ The first is not hypothetical. **Any `apk` operation can fire the mkinitfs
-trigger, which reinstalls `/boot/<board>.dtb` from the package** and silently
-overwrites a hand-deployed device tree. Installing an unrelated tool cost the
-camera exactly this way on 2026-07-25: the package predated the camera DT work,
-the sensor node vanished, and the driver simply never probed — with no dmesg
-lines to find, which is what makes it confusing.
-
-The check stops at "bound and linked" and does not attempt a capture.
+☠️ **The pixel format is `pRAA`, not `RG10`**, and the `media-ctl` step is not
+optional. Either mistake produces `VIDIOC_STREAMON returned -1 (Broken pipe)`
+with nothing in dmesg, which reads exactly like a broken driver; both cost this
+project weeks. See [`bringup/`](bringup/README.md#two-ways-to-make-streaming-fail-that-look-like-a-broken-driver).
 
 ## The focus actuator
 
-☠️ **This phone's actuator is at 0x0c and it is an AK7374, not an LC898217 —
-but the LC898217 is not a mistake either: Fairphone ships two different camera
-modules and the other one has it.** Both drivers are therefore kept. The
-LC898217XC driver, binding and MAINTAINERS entry landed 2026-08-01 in
-`linux-fp3-7.1.3-r31` with its board DT node removed again once the device was
-measured; AK7374 support followed as a chipdef in mainline's existing
-`ak7375.c`, with the board node pointing at it. Read
-[Which part is it, then?](#which-part-is-it-then--an-ak7374-and-the-phone-comes-both-ways)
-before the LC898217 register table further down, which is accurate about that
-part and does not describe this board.
-
-### What the device actually answers
-
-Measured on hardware, with the actuator rail forced on by a throwaway
-`regulator-always-on` DTB and the sensor resumed through
-`/sys/bus/i2c/devices/0-001a/power/control` so the camera IO rail was up:
-
-```
-/dev/i2c-0: 0x0c 0x1a 0x50
-```
-
-0x1a is the sensor and 0x50 the module EEPROM. **Nothing acknowledges 0x72.**
-
-☠️ **The scan has to be forced (`I2C_SLAVE_FORCE`).** A plain `I2C_SLAVE` scan
-is refused with `EBUSY` for every address a driver has already claimed — which
-is exactly the addresses under investigation. The first scan run this way
-listed only `0x0c 0x50`, silently omitting both the sensor and the actuator
-address, and that absence looks exactly like a result.
-
-Two other things the measurement settled, both of which had looked like driver
-bugs:
-
-- **The CCI bus does not work until the sensor's IO rail is up.** With the
-  sensor suspended, every transfer ends `i2c-qcom-cci: master 0 queue 0
-  timeout` (`-110`). Resume the sensor and the same transfer to an empty
-  address returns `-ENXIO` instead. Timeout versus NACK is the difference
-  between "the bus is dead" and "nobody is home", and only the second is a
-  statement about the actuator.
-- **A failed runtime-PM resume latches.** Once `lc898217_runtime_resume()`
-  failed, the device sat in `power/runtime_status: error` and every later
-  `pm_runtime_resume_and_get()` returned `-EINVAL` — so opening the subdev
-  failed with `-EINVAL`, several steps removed from the real `-110`. Unbind and
-  rebind the driver to clear it.
-
-### Which part is it, then? — an AK7374, and the phone comes both ways
-
-Settled 2026-08-01, and the answer explains why the first attempt went wrong:
-**Fairphone ships this phone with two different rear camera modules, and they do
-not carry the same actuator.** The vendor's own camera configuration,
-`/vendor/etc/camera/camera_config.xml`, pairs them by module:
-
-| `SensorName` | `EepromName` | `ActuatorName` |
-|---|---|---|
-| `imx363` (added 2019-04) | `ofilm_imx363_bl24s64` | `lc898217xc` — 0x72 |
-| `imx363_2nd` (added 2019-12) | `ofilm_imx363_bl24s64` | **`ak7374` — 0x0c** |
-| `imx363pv_2nd` (added 2020-05) | `ofilm_imx363pv_bl24s64` | **`ak7374` — 0x0c** |
-
-This phone answers at 0x0c and not at 0x72, so it carries a **second-source
-module with an AK7374**. The LC898217XC work below is not wrong, it describes
-the *other* variant — the same shape as the battery, where the FP3 ships two
-pack types and this one has the Fuji.
-
-That also disposes of the `ak7374` vs `dw9800` question the earlier text left
-open: `dw9800` appears in `camera_config.xml` against a different module
-entirely, so it was never a candidate for this board. And the downstream
-inversion `value = 1023 - position`, which excludes exactly `ak7374` and
-`dw9800`, does not apply here — the AK7374 takes the position straight.
-
-### The AK7374 register map, and how it was validated
-
-Read out of `libactuator_ak7374.so` on the phone's own vendor partition, where
-the map is a plain structure in `.data`:
-
 | | |
 |---|---|
-| I²C address | **0x0c** (stored 8-bit as 0x18) |
-| position register | **0x00** |
-| position width | **10 bits**, so 0…1023 |
-| alignment | left in the 16-bit word, **shift 6** |
-| standby | none in the vendor's sequence |
+| part | **AK7374**, mainline `ak7375.c` chipdef, `compatible = "asahi-kasei,ak7374"` |
+| I²C address | **0x0c** on CCI master 0, shared with the sensor |
+| position register | **0x00**, 10-bit code, left-aligned in the 16-bit word (shift 6) |
+| standby | none; a single init write of `0x02 = 0x00` |
+| supplies | `vdd` = `vreg_cam_af_2p85`, `vio` = `vreg_cam_io_1p8` |
+| control | `V4L2_CID_FOCUS_ABSOLUTE`, `min=0 max=1023 step=1`, on the lens subdev |
 
-☠️ **The decoder was wrong before it was right, and only a known-answer control
-caught it.** The structure starts at `.data + 0x04`, not at `.data`, and with
-that four-byte error every field decoded to a plausible-looking wrong value.
-What exposed it was running the identical decode against parts whose answers
-mainline already states — and the fix is confirmed the same way:
+The register map was read out of the vendor's own `libactuator_ak7374.so` and
+validated against two parts mainline documents, then confirmed through the lens
+by the sweep above. **Which physical direction a rising code moves the lens is
+still an inference** — no position has been related to a subject distance.
 
-| field | `dw9714` mainline / decoded | `ak7345` mainline / decoded |
-|---|---|---|
-| I²C address | 0x0c / **0x0c** | 0x0c / **0x0c** |
-| position width | 10 bits / **10** | 9 bits / **9** |
-| position register | none / **0xffff** | 0x00 / **0x00** |
-| shift | 4 / **4** | 7 / **7** |
+## Checking it works
 
-Seven fields across two parts, all matching. The AK7374's own numbers then
-satisfy the invariant the whole family obeys: position width plus shift makes a
-full 16-bit word (9+7, 10+6, 12+4).
-
-The one number no control covers is the power-on delay. The AK7345's 20 ms is
-used rather than the AK7375's 10 ms, because over-waiting costs 10 ms once per
-power-on and under-waiting is a failed first transfer.
-
-Mainline's `ak7375.c` is already a chip-definition table, so supporting this
-part is a chipdef and a compatible rather than a new driver.
-
-### It moves — measured 2026-08-01 on `linux-fp3-7.1.3-r32` (`#33-fp3`)
-
-Structurally everything is in place: the node is in the live tree, a lens entity
-is in the media graph, `focus_absolute` appears on a subdev with
-`min=0 max=1023 step=1`, writes produce no I²C error, and the device stays
-`active`. And the image follows the control.
-
-Two sweeps, both with **one capture held open for the whole run** and the
-positions visited in **interleaved passes** of alternating direction. The scene
-was ordinary indoor detail (mean 104, stddev 75, all 256 levels present).
-
-Full range, 11 positions × 3 passes:
-
-| position | 0 | 102 | 204 | 306 | **409** | 511 | 613 | 716 | 818 | 920 | 1023 |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| sharpness | 387.3 | 388.1 | 390.4 | 398.4 | **428.7** | 393.9 | 390.4 | 387.5 | 387.6 | 384.3 | 380.6 |
-
-A single interior peak with shoulders, flat tails either side, and the numbers to
-say how much of that is real: **between positions 48.1, worst spread within one
-position 3.4** — a 14:1 signal — and the pass means differ by only **1.3**, so
-essentially none of it is drift.
-
-Zooming in, 280…480 in nine steps × 4 passes:
-
-| position | 280 | 305 | 330 | 355 | **380** | 405 | 430 | 455 | 480 |
-|---|---|---|---|---|---|---|---|---|---|
-| sharpness | 394.1 | 397.8 | 406.7 | 421.6 | **437.6** | 431.4 | 414.1 | 402.9 | 398.3 |
-
-Peak at **380** (between 43.4, within 3.5, drift 0.9), which is where the phone's
-operator independently reported the picture looking sharp on the viewfinder. The
-control works, the register map read out of the vendor blob is right, and the
-AK7374 chipdef drives this part correctly.
-
-#### ☠️ Why this page said the opposite twice in one day
-
-Both wrong answers came from the *design* of the measurement, not from the
-hardware, and they failed in opposite directions:
-
-1. **"It moves" (wrong).** Position was confounded with capture order — every
-   round measured 0 first and 1023 second, so anything settling between the two
-   captures of a round read as a position effect. Order-balancing collapsed the
-   44.0 difference to 0.93, against a 0.76 order effect.
-2. **"It does not move" (wrong).** Two independent defects, and the second is the
-   one worth remembering:
-   - **every capture restarted the stream** (`v4l2-ctl` launches, takes four
-     frames, exits), which resets auto-exposure and injects a settling transient
-     as large as the effect;
-   - ☠️ **the A/B pair was 0 against 1023 — the two positions with the least
-     contrast between them.** Read the table above: 0 scores 387.3 and 1023
-     scores 380.6, a difference of 6.7, while the peak stands 48 above both. The
-     response to this control is a *peak*, not a ramp, so the ends of travel are
-     equally out of focus. An extremes-vs-extremes test cannot see a peak, and it
-     is exactly the test that "compare the two extremes" instinct produces.
-
-The general rule the second one earns: **choose the contrast pair from the shape
-of the response you expect, not from the ends of the input range.** If the
-expected response has an interior optimum, a two-point test must bracket it or
-sweep it.
-
-#### What was eliminated along the way
-
-All still true, and all measured rather than assumed — kept because it is the
-list that says the driver side is complete:
-
-| | |
+| check | covers |
 |---|---|
-| the writes reach the part | no I²C error, and the byte stream reflects them |
-| the part is powered | `cam_af_2p85` and `cam_io_1p8` both `enabled`; TLMM 128 and 130 read `out high` |
-| runtime PM is not cutting power | `runtime_status` stays `active` across writes and captures |
-| the active-mode write happens | `ak7375_vcm_resume()` writes `reg_cont = mode_active` unconditionally — `has_standby` gates only the *suspend*-side write |
-| nothing else fights us | with the camera app running, a written value is unchanged three seconds later, three times; there is no autofocus on this stack |
-| the vendor does nothing more | its parameter block is fully decoded: ten register descriptors of which only the first is filled, and a single init write of `0x02 = 0x00`. The driver does exactly that and nothing is left over |
+| [`tests/checks/40-camera-test.sh`](../../tests/checks/40-camera-test.sh) | sensor node present, driver bound, media graph linked — three failures kept apart because they send you to different places |
+| [`tests/checks/41-camera-focus-test.sh`](../../tests/checks/41-camera-focus-test.sh) | the actuator's structural half: node, lens entity, `focus_absolute` — no scene needed |
+| [`tests/checks/06-dtb-test.sh`](../../tests/checks/06-dtb-test.sh) | that the booted device tree is the installed package's. ☠️ Any `apk` operation can reinstall `/boot/<board>.dtb` over a hand-deployed one, and the camera node then simply vanishes |
 
-☠️ **A raw readback looks like confirmation and is not.** Writing 0, 256, 512
-and 1023 and reading register 0x00 returns exactly `value << 6` every time. But a
-dump of registers 0x00–0x0f shows each read starting with the *second byte of the
-previous one* (`ffc0`, `c040`, `400e`, `0e60` …): the part ignores the
-register-address write and streams bytes, so the reply cannot be told from an
-echo of the last write. It shows the bytes arrive, not where they land. The sweep
-above is what actually confirms the map, and it does it through the lens.
-
-#### What is still open
-
-- **The direction.** A position is not yet related to a subject *distance*, so
-  which way a rising code moves the lens is still an inference. Settling it takes
-  two targets at known distances and one sweep each: the peak moving one way or
-  the other answers it in a single comparison.
-- **The name.** That the part is an AK7374 is inferred from the absence of
-  anything at 0x72 plus the vendor configuration, not from asking the device. The
-  sweep raises the confidence a long way — a wrong register map would not produce
-  a clean focus curve — but the module EEPROM at 0x50 is where an identifier
-  would actually be read, and it is still unread.
-### The LC898217XC, for the record
-
-The rest of this section is what the vendor blob says about the LC898217XC. It
-is correct about that part, and the driver written from it is worth keeping —
-but it describes hardware this phone does not have.
-
-### Where the register map came from, and why it is not a guess
-
-☠️ **Qualcomm's downstream kernel does not contain the register map, and that is
-the architecture rather than an omission.** Its device tree node is bare —
-`compatible = "qcom,actuator"` plus a CCI master number, no slave address and no
-registers — and `msm_actuator.c` is a generic engine that is *fed* the map from
-userspace over `CFG_SET_ACTUATOR_INFO`. Grepping the whole downstream FP3 tree
-for the part number returns exactly one hit, and it is an unrelated string in
-`sound/pci/hda/patch_realtek.c`. Anyone looking for this in the kernel will find
-nothing and conclude the wrong thing.
-
-The map lives in the board's own Android vendor library,
-`vendor/lib/libactuator_lc898217xc.so`, as a C structure in its `.data` section.
-Reading that means asserting a struct layout, so the assertion was **checked
-against a known answer** rather than assumed: the same decode applied to the
-sibling `libactuator_dw9714.so` yields
-
-| decoded from the blob | what mainline `dw9714.c` does |
-|---|---|
-| slave 7-bit 0x0c | 0x0c |
-| 10-bit code | 10-bit DAC |
-| register address 0xFFFF = none | raw two-byte write, no register |
-| data shift 4 | `(data << 4) \| s` |
-| hardware mask 0x0f | the low four bits are the slew-rate field |
-
-— field for field. As a second, independent check the same decode recovers that
-part's documented power-up sequence (`0xEC=0xA3`, `0xA1=0x05`, `0xF2=0x08`,
-`0xDC=0x51`). Two known answers reproduced, so the layout holds.
-
-### What it says about this part
-
-| | |
-|---|---|
-| I²C address | **0x72** 7-bit (`0xE4` in the blob's 8-bit form) |
-| bus | CCI master 0, shared with the IMX363 |
-| speed | 400 kHz (`I2C_FAST_MODE`) |
-| register address / data | 8-bit / 16-bit |
-| position register | **0x84** |
-| code | **10 bit**, right-aligned, shift 0 |
-| power-up | **`0xE0 = 0x01`**, then ~10 ms |
-| supply | `vreg_cam_af_2p85`, the GPIO-switched 2.85 V rail on TLMM 128 |
-
-The 0x72 is worth noting twice: it was already written as a comment in our
-device tree, and the blob confirms it from a completely separate direction.
-
-One Fairphone-specific fact that exists in no datasheet — the board vendor's own
-edit to `msm_actuator.c` rewrites the code as `1023 - position` for every
-actuator except two others it names, so it applies to this one. It corroborates
-the 10-bit width read out of the library.
-
-### ☠️ What is not established
-
-**Which physical direction a rising DAC code moves the lens** — and now, more
-fundamentally, **which part it is**. `lc898217_position_to_code()` is the single
-place in the driver that decides direction, and is marked as such; it mirrors
-the control, which is what V4L2's "larger value is a closer focus" plus the
-vendor's inversion together imply. That was always an inference rather than a
-measurement, and the inversion it rests on does not even apply to the two parts
-this board is now most likely to carry.
-
-## Two instruments for the focus
-
-[`userspace-camera/focus-sweep.py`](../../userspace-camera/focus-sweep.py) is the
-measurement. It holds **one** capture open for the whole run, steps the control
-across a range in **interleaved passes of alternating direction**, and scores the
-mean squared same-colour gradient over a centred crop. It prints every pass, the
-spread within each position and the pass-to-pass drift, so the verdict can be
-checked rather than taken. Point the camera at something with detail, then
+Neither camera check attempts a capture. The part that needs something to look
+at is [`userspace-camera/focus-sweep.py`](../../userspace-camera/focus-sweep.py):
+it holds one capture open for the whole run, steps the control in interleaved
+passes of alternating direction, and prints every pass plus the within-position
+spread and the drift, so the verdict can be checked rather than taken.
 
 ```sh
-focus-sweep.py                          # full range, 9 positions, 4 passes
-focus-sweep.py --lo 280 --hi 480 --passes 6   # zoom in on the peak
+focus-sweep.py                                 # full range, 9 positions, 4 passes
+focus-sweep.py --lo 280 --hi 480 --passes 6    # zoom in on the peak
 ```
 
-Both properties are load-bearing rather than tidy: a per-position capture and an
-extremes-only A/B each produced a *confidently wrong* verdict on this phone —
-see [It moves](#it-moves--measured-2026-08-01-on-linux-fp3-713-r32-33-fp3).
+☠️ Both properties are load-bearing: a per-position capture and an extremes-only
+A/B each produced a confidently wrong verdict on this phone. The gradient is also
+taken between pixel *x* and *x+2*, never adjacent pixels — the frames are raw
+Bayer, so neighbours are different colour planes.
 
-☠️ The gradient is taken between pixel *x* and *x+2*, never adjacent pixels: the
-frames are raw Bayer, so neighbours are different colour planes and an adjacent
-difference measures the scene's colour rather than the focus.
-
-`focus-view.py` (in the `fp3-porting-debug` skill's `scripts/`) is the human half:
-a live viewfinder that owns `/dev/video0` itself, with a focus slider, a live
-sharpness number using the same metric, a 1–16× zoom and a cheap demosaic. It
-exists because a focus change is invisible in a scaled-down preview — the
-operator confirmed the peak only after zooming in — and because a null result
-from a headless script is hard to trust when nothing can be seen.
-
-[`tests/checks/41-camera-focus-test.sh`](../../tests/checks/41-camera-focus-test.sh)
-covers the half that needs no scene — node present, driver bound, control
-exposed.
-
-## The device tree binding
-
-`sony,imx363.yaml` was written on 2026-07-31, and writing it was worth more than
-it looks. Until it existed, `dtbs_check` **skipped the camera node in silence** —
-a node whose `compatible` nothing documents produces no output at all rather than
-being reported as unchecked, so its clean result had never meant anything.
-Checked for the first time, the node adds nothing: the board goes from the base's
-own 44 errors to 45, and the single addition is the battery node that a separate
-open item already covers.
-
-Two places where copying the nearest model would have been wrong are recorded in
-[`../TODO.md`](../TODO.md#open-before-anything-is-submitted) item 1.
+`focus-view.py` (kept with the `fp3-porting-debug` debugging skill, not in this
+repository) is the human half: a live viewfinder that owns `/dev/video0` itself,
+with a focus slider, the same sharpness metric printed live, a 1–16× zoom and a
+cheap demosaic.

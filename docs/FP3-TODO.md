@@ -245,6 +245,10 @@ the power path.
     Bayer order, stride) against a known scene, and the link frequencies in the
     DT still disagree with the driver's mode tables. Details in
     [`docs/camera/README.md`](https://github.com/llg179org/fp3-pmaports/blob/main/docs/camera/README.md).
+24b. **Untested: the camera's exposure and gain controls.** The V4L2 controls
+    exist on the sensor subdev; nothing has checked that writing them moves the
+    image. Cheap to settle now that `focus-sweep.py` can hold one stream open -
+    the same brightness statistic it already prints per frame is the measurement.
 25. **Parked: the PMI632 flash LED.** The node exists, but
     `leds-qcom-flash.c` subtype detection is unverified on this hardware and
     risks a probe failure until it is. Kept out of the tree for now.
