@@ -1,4 +1,4 @@
-From 095b3ed5db60b72681d6fb75fd65b8920b491a33 Mon Sep 17 00:00:00 2001
+From 21dd4c5be804d4c46f66a33843ea753df1029184 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Lajosh=C3=A1zi=2C=20L=C3=A1szl=C3=B3=20Gergely?=
  <lajoshazilg@gmail.com>
 Date: Sat, 1 Aug 2026 19:05:29 +0200
@@ -22,10 +22,10 @@ were pointing rather than to the app.
 
 The range is camerabin's own: 1x to its max-zoom, which it reports as 10.
 ---
- aperture/src/viewfinder.rs  |  38 +++++++++++++
- data/resources/ui/camera.ui |  19 +++++++
- src/widgets/camera.rs       | 109 ++++++++++++++++++++++++++++++++++++
- 3 files changed, 166 insertions(+)
+ aperture/src/viewfinder.rs  |  38 ++++++++++++
+ data/resources/ui/camera.ui |  19 ++++++
+ src/widgets/camera.rs       | 115 ++++++++++++++++++++++++++++++++++++
+ 3 files changed, 172 insertions(+)
 
 diff --git a/aperture/src/viewfinder.rs b/aperture/src/viewfinder.rs
 index 0cdc0f5..b3247a1 100644
@@ -128,7 +128,7 @@ index accf906..fcaf293 100644
                            <object class="GtkRevealer" id="recording_revealer">
                              <property name="halign">center</property>
 diff --git a/src/widgets/camera.rs b/src/widgets/camera.rs
-index 5108426..6ee17c0 100644
+index 5108426..e94ed5d 100644
 --- a/src/widgets/camera.rs
 +++ b/src/widgets/camera.rs
 @@ -34,6 +34,7 @@ mod imp {
@@ -151,14 +151,17 @@ index 5108426..6ee17c0 100644
          #[template_child]
          pub recording_revealer: TemplateChild<gtk::Revealer>,
          #[template_child]
-@@ -160,6 +166,74 @@ mod imp {
+@@ -160,6 +166,79 @@ mod imp {
  
              obj.add_controller(controller);
  
-+            // Zoom: pinch on a touchscreen, ctrl-less scroll wheel on a
-+            // desktop, double tap to toggle between 1x and 2x. All three end
-+            // up on camerabin's own `zoom` property, so what is framed is
-+            // what gets saved.
++            // Zoom: pinch on a touchscreen, scroll wheel on a desktop, double
++            // tap to toggle between 1x and 2x. All three end up on camerabin's
++            // own `zoom` property, so what is framed is what gets saved.
++            //
++            // The controllers go on the page rather than on the viewfinder:
++            // the viewfinder is covered by a full-area overlay carrying the
++            // controls, so a controller attached to it never sees a touch.
 +            let zoom_gesture = gtk::GestureZoom::new();
 +            zoom_gesture.set_propagation_phase(gtk::PropagationPhase::Capture);
 +            let zoom_start = std::rc::Rc::new(std::cell::Cell::new(1.0_f64));
@@ -177,10 +180,12 @@ index 5108426..6ee17c0 100644
 +                #[strong]
 +                zoom_start,
 +                move |_, scale| {
-+                    obj.imp().viewfinder.set_zoom(zoom_start.get() * scale);
++                    let zoom = zoom_start.get() * scale;
++                    log::debug!("pinch: scale {scale:.2} -> zoom {zoom:.2}");
++                    obj.imp().viewfinder.set_zoom(zoom);
 +                }
 +            ));
-+            self.viewfinder.add_controller(zoom_gesture);
++            obj.add_controller(zoom_gesture);
 +
 +            let scroll = gtk::EventControllerScroll::new(
 +                gtk::EventControllerScrollFlags::VERTICAL,
@@ -196,7 +201,7 @@ index 5108426..6ee17c0 100644
 +                    glib::Propagation::Stop
 +                }
 +            ));
-+            self.viewfinder.add_controller(scroll);
++            obj.add_controller(scroll);
 +
 +            let double_tap = gtk::GestureClick::new();
 +            double_tap.set_button(gtk::gdk::BUTTON_PRIMARY);
@@ -213,7 +218,7 @@ index 5108426..6ee17c0 100644
 +                    viewfinder.set_zoom(zoom);
 +                }
 +            ));
-+            self.viewfinder.add_controller(double_tap);
++            obj.add_controller(double_tap);
 +
 +            self.viewfinder.connect_zoom_notify(glib::clone!(
 +                #[weak]
@@ -226,7 +231,7 @@ index 5108426..6ee17c0 100644
              provider.connect_camera_added(glib::clone!(
                  #[weak]
                  obj,
-@@ -464,6 +538,11 @@ impl Camera {
+@@ -464,6 +543,11 @@ impl Camera {
              self.stop_recording();
          }
  
@@ -238,7 +243,7 @@ index 5108426..6ee17c0 100644
          imp.viewfinder.set_camera(camera);
      }
  
-@@ -615,6 +694,36 @@ impl Camera {
+@@ -615,6 +699,37 @@ impl Camera {
          }
      }
  
@@ -250,6 +255,7 @@ index 5108426..6ee17c0 100644
 +            source.remove();
 +        }
 +
++        log::info!("zoom is now {zoom:.2}x");
 +        imp.zoom_label.set_label(&format!("{zoom:.1}\u{00d7}"));
 +        imp.zoom_revealer.set_reveal_child(zoom > 1.0);
 +

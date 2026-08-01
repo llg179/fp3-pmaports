@@ -133,9 +133,12 @@ Measured 2026-08-01 on `linux-fp3-7.1.3-r32` (`#33-fp3`) with libcamera 0.7.1,
 | enumeration | `cam -l` → `Internal back camera (/base/soc@0/cci@1b0c000/i2c-bus@0/camera@1a)` |
 | pipeline handler | **`simple`**, with the **software ISP** — there is no qcom-camss handler and none is needed for the RDI-only path |
 | tuning | [`imx363.yaml`](../../userspace-camera/libcamera/imx363.yaml): `BlackLevel 4096`, `Awb`, **`Af`**, `Adjust`, `Agc` |
-| frame rate | **~6 fps at 4032×3024, ~30 fps at 2016×1512 and at 1920×1080** — the software ISP is the limit, and it scales, so the size an app asks for decides the preview's smoothness |
+| debayer | the **GPU** one (`GL_RENDERER: FD506`, Mesa 26.1.1). It has to be asked for: the aport needs `mesa-dev` and `-Dsoftisp-gpu=enabled`, without which libcamera silently falls back to the CPU debayer |
+| frame rate | **~6 fps at 4032×3024, ~30 fps at 1920×1080** — the same on both debayers, so the limit is not the debayering |
+| field of view | full, **on the GPU debayer only**. ☠️ The CPU debayer does not scale, it **centre-crops**: `window_.width = outputCfg.size.width` out of a 4032-wide sensor, so a 1920×1080 preview shows 48% of the width and 36% of the height — which looks exactly like a fixed ~3× zoom next to another phone |
 | PipeWire | device `imx363 [libcamera]`, source *Built-in Back Camera*, offering a ladder of sizes from 160×120 up |
 | controls offered | `Contrast`, `Gamma`, **`AfMode`, `AfTrigger`, `AfMetering`, `AfWindows`** |
+| autofocus | continuous by default; a scan is 19 measurements, so **~3.5 s at 1920×1080** and ~14 s at full resolution — statistics arrive once every four frames |
 
 Autofocus is ours: libcamera's `simple` IPA had no AF algorithm at all, so one
 was written and is carried as [a patch](../../userspace-camera/libcamera/) on the

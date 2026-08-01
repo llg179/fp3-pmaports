@@ -26,6 +26,12 @@ kind, and both are written to be offered upstream.
 They are applied by the `libcamera` and `snapshot` aports in the pmaports
 checkout; the copies here are the source of truth for this port.
 
+The `libcamera` aport needs two more changes, which are not patches:
+`mesa-dev` in `makedepends` and `-Dsoftisp-gpu=enabled` in `build()`. Without
+them libcamera builds only the CPU debayer, which **centre-crops** instead of
+scaling — a 1920×1080 preview then shows less than half the sensor's width, and
+looks like a camera stuck at 3× zoom.
+
 ☠️ **After upgrading libcamera, restart the PipeWire stack.** A running
 `wireplumber` holds the old library while the new IPA is loaded from disk, and
 the mismatch shows up as *"no camera found"* in every app —
