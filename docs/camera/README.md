@@ -103,23 +103,47 @@ still an inference** — no position has been related to a subject distance.
 | [`tests/checks/41-camera-focus-test.sh`](../../tests/checks/41-camera-focus-test.sh) | the actuator's structural half: node, lens entity, `focus_absolute` — no scene needed |
 | [`tests/checks/06-dtb-test.sh`](../../tests/checks/06-dtb-test.sh) | that the booted device tree is the installed package's. ☠️ Any `apk` operation can reinstall `/boot/<board>.dtb` over a hand-deployed one, and the camera node then simply vanishes |
 
-Neither camera check attempts a capture. The part that needs something to look
-at is [`userspace-camera/focus-sweep.py`](../../userspace-camera/focus-sweep.py):
-it holds one capture open for the whole run, steps the control in interleaved
-passes of alternating direction, and prints every pass plus the within-position
-spread and the drift, so the verdict can be checked rather than taken.
+Neither camera check attempts a capture. The two tools that need a scene are in
+[`userspace-camera/`](../../userspace-camera/README.md), and they open the video
+node exclusively, so neither can run alongside a camera app:
+
+| tool | what it is for |
+|---|---|
+| [`userspace-camera/focus-sweep.py`](../../userspace-camera/focus-sweep.py) | the measurement: one capture held open for the whole run, positions visited in interleaved passes of alternating direction, printing every pass plus the within-position spread and the drift |
+| [`userspace-camera/focus-view.py`](../../userspace-camera/focus-view.py) | the human half: a live viewfinder with a focus slider, the same sharpness number, and a 1–16× zoom — the focus effect is invisible at 1× and obvious at 8× |
 
 ```sh
 focus-sweep.py                                 # full range, 9 positions, 4 passes
 focus-sweep.py --lo 280 --hi 480 --passes 6    # zoom in on the peak
+systemd-run --user --unit=focus-view /usr/bin/python3 ./focus-view.py
 ```
 
-☠️ Both properties are load-bearing: a per-position capture and an extremes-only
-A/B each produced a confidently wrong verdict on this phone. The gradient is also
-taken between pixel *x* and *x+2*, never adjacent pixels — the frames are raw
-Bayer, so neighbours are different colour planes.
+☠️ Both properties of the sweep are load-bearing: a per-position capture and an
+extremes-only A/B each produced a confidently wrong verdict on this phone. The
+gradient is also taken between pixel *x* and *x+2*, never adjacent pixels — the
+frames are raw Bayer, so neighbours are different colour planes.
 
-`focus-view.py` (kept with the `fp3-porting-debug` debugging skill, not in this
-repository) is the human half: a live viewfinder that owns `/dev/video0` itself,
-with a focus slider, the same sharpness metric printed live, a 1–16× zoom and a
-cheap demosaic.
+## Through libcamera, which is what an app sees
+
+Measured 2026-08-01 on `linux-fp3-7.1.3-r32` (`#33-fp3`) with libcamera 0.7.1,
+**from a freshly booted phone**:
+
+| | |
+|---|---|
+| enumeration | `cam -l` → `Internal back camera (/base/soc@0/cci@1b0c000/i2c-bus@0/camera@1a)` |
+| pipeline handler | **`simple`**, with the **software ISP** — there is no qcom-camss handler and none is needed for the RDI-only path |
+| tuning | `/usr/share/libcamera/ipa/simple/imx363.yaml`, shipped by libcamera: `BlackLevel 4096`, `Awb`, `Adjust`, `Agc` |
+| capture | 4032×3024 packed RGB, 48 771 072 bytes per frame, ~30 fps sustained |
+| PipeWire | device `imx363 [libcamera]`, source *Built-in Back Camera* — so an app such as Snapshot has a camera |
+| controls offered | **`Contrast` and `Gamma`, and nothing else** — no `AfMode`, no `LensPosition`, no exposure controls |
+
+So the focus motor is fully driven from the kernel side and completely
+unreachable from an app: `ipa_simple.so` contains no focus symbols at all, and
+`imx363.yaml` lists no `Af` algorithm. What autofocus would take is
+[FP3-TODO item 33e](../FP3-TODO.md).
+
+☠️ **Unbinding and rebinding the lens driver breaks libcamera until the next
+reboot.** Each bind leaves the previous ancillary media link behind, one of them
+with a sink id of 0, and libcamera then refuses the whole media device with
+`Failed to find MediaObject with id 0` — the camera disappears from every app,
+with the actuator still working perfectly through V4L2. A reboot clears it.

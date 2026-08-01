@@ -356,6 +356,35 @@ the power path.
     `focus-sweep.py` itself and written into
     [`docs/camera/README.md`](https://github.com/llg179org/fp3-pmaports/blob/main/docs/camera/README.md).
 
+33e. **Autofocus needs an AF algorithm in libcamera's software ISP; the kernel
+    side is finished.** Measured 2026-08-01 with libcamera 0.7.1 on a freshly
+    booted phone: the camera enumerates through the `simple` pipeline handler
+    with the software ISP, streams 4032x3024 RGB at ~30 fps, is exported to
+    PipeWire as *Built-in Back Camera*, and offers exactly two controls -
+    `Contrast` and `Gamma`. No `AfMode`, no `LensPosition`; `ipa_simple.so`
+    contains no focus symbols and the shipped `imx363.yaml` tuning lists only
+    `BlackLevel`, `Awb`, `Adjust` and `Agc`. So nothing an app can do reaches the
+    actuator, however well it works over V4L2. What is missing, in order: (1) the
+    `simple` pipeline handler has to expose the lens it already has through the
+    ancillary media link, (2) the simple IPA needs an AF algorithm - a per-frame
+    focus metric plus a hill climb - and (3) the `AfMode`/`AfTrigger`/`AfState`
+    controls have to be published so an app can ask for continuous AF. The
+    algorithm itself is the one this repository already runs in
+    `userspace-camera/focus-sweep.py`, and the measured curve says how to shape
+    the search: the peak is roughly 50 counts wide out of 1024, with flat tails,
+    so a coarse pass of ~16 steps followed by a fine pass of +/-40 around the
+    best is enough. Upstream work, in libcamera rather than in the kernel.
+33f. **Unbinding the ak7375 driver leaves a dangling ancillary media link and
+    warns in the regulator core.** Each unbind/rebind adds another
+    sensor-to-lens ancillary link instead of replacing it, and one of them ends
+    up with a sink id of 0; libcamera then rejects the entire media device with
+    `Failed to find MediaObject with id 0`, so the camera vanishes from every
+    app until a reboot - while the actuator still works perfectly through V4L2.
+    The unbind also produces `WARNING: drivers/regulator/core.c:2657 at
+    _regulator_put` from `devm_regulator_bulk_release`, i.e. the supplies are
+    still enabled when the driver is released. Both look like upstream bugs
+    rather than integration mistakes, but neither has been reduced to a minimal
+    reproducer yet, and neither is on any path the phone takes in normal use.
 ## `wip/7.1.3/sensor` — SMGR over QMI/QRTR
 
 Accelerometer, gyroscope, magnetometer, proximity, ambient light. Only one commit
