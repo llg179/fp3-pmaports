@@ -497,15 +497,36 @@ the power path.
     (SPA's own rectangle type is a size with no origin, so it would have to be
     an array of four ints), and the app has to turn a tap into a window. Both
     are upstream work in PipeWire, not on this phone.
-33h. **The front camera has no driver, and the blocker is now named.** Started
-    2026-08-03: the sensor is described (`camera@10` on `cci_i2c1`) and a
-    bring-up driver exists that powers it and reads its model ID, but it
-    registers no subdevice, so `cam -l` still reports one camera and **no
-    application can show a front view**. Every rail it needs was already in the
-    board file - `pm8953_l22` also feeds the rear sensor and `vreg_cam2_dig_1p2`
-    on GPIO 46 was declared and unused - with reset on GPIO 129, MCLK1, CCI
-    master 1 and a 270 degree mount, all read out of Fairphone's downstream
-    `msm8953-camera-sensor-mtp.dtsi`, which also puts it on CSIPHY2/CSID1.
+33h. **The front sensor answers, and what is left is a licence question.**
+    2026-08-03 on `linux-fp3-7.1.3-r36`: `s5k4h7 1-0010: S5K4H7 detected, model
+    ID 0x487b`. It registers no subdevice, so `cam -l` still reports one camera
+    and **no application can show a front view**. Every rail it needs was
+    already in the board file - `pm8953_l22` also feeds the rear sensor and
+    `vreg_cam2_dig_1p2` on GPIO 46 was declared and unused - with reset on GPIO
+    129, MCLK1, CCI master 1 and a 270 degree mount, all read out of
+    Fairphone's downstream `msm8953-camera-sensor-mtp.dtsi`, which also puts it
+    on CSIPHY2/CSID1.
+
+    ☠️ **The one thing that was actually missing was the pinmux, and the board
+    file removed it.** `msm8953.dtsi` muxes both CCI buses on the controller
+    (`pinctrl-0 = <&cci0_default &cci1_default>`), but this board overrode
+    `pinctrl-0` to add its MCLK0 pin and dropped `cci1_default` in the process,
+    so the second bus had no pins and MCLK1 never reached the sensor. The
+    symptom told the story once read properly: `-110` is a transfer that never
+    completed, where an absent device gives `-ENXIO`. Everything else was
+    already right, which is what left the pins as the only candidate.
+
+    ☠️ **A `-110` from `imx363 0-001a` at boot is *not* related, and looked
+    exactly as if it were.** It lands ~300 ms after the front sensor is
+    detected, in every boot. Moving `s5k4h7.ko` aside and rebooting shows the
+    same error with the driver absent, so it predates this work; the rear
+    camera binds, keeps 24 media entities and captures normally either side of
+    the change.
+
+    ☠️ **No port yet, deliberately.** CAMSS does not finish registering until
+    every endpoint in its graph binds a subdevice, so wiring this sensor in
+    before its driver registers one would stall the notifier and take the
+    working rear camera down with it.
 
     ☠️ **No port yet, deliberately.** CAMSS does not finish registering until
     every endpoint in its graph binds a subdevice, so wiring this sensor in
