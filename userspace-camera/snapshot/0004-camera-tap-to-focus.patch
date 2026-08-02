@@ -1,8 +1,8 @@
-From e1d17b0ae521541f86b88eeea66d15a1c0e6b426 Mon Sep 17 00:00:00 2001
+From 04eb7616e4434961d37971c8de59c786fe03bb59 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Lajosh=C3=A1zi=2C=20L=C3=A1szl=C3=B3=20Gergely?=
  <lajoshazilg@gmail.com>
 Date: Sun, 2 Aug 2026 02:51:03 +0200
-Subject: [PATCH] camera: an autofocus switch, and taps that focus
+Subject: [PATCH 4/5] camera: an autofocus switch, and taps that focus
 
 Continuous autofocus is not always what is wanted: it hunts, and on a camera
 whose scan takes a few seconds that is worse than deciding when to focus. Add
@@ -182,7 +182,7 @@ index cb57112..20c310a 100644
  mod device_provider;
  mod enums;
 diff --git a/aperture/src/viewfinder.rs b/aperture/src/viewfinder.rs
-index ef97757..a0ceddb 100644
+index 2636cb2..c725e09 100644
 --- a/aperture/src/viewfinder.rs
 +++ b/aperture/src/viewfinder.rs
 @@ -83,6 +83,8 @@ mod imp {
@@ -191,10 +191,10 @@ index ef97757..a0ceddb 100644
          pub restore_res: Cell<Option<usize>>,
 +        /// Whether the camera should keep focusing by itself.
 +        pub autofocus: Cell<bool>,
-         /// Buffers seen by the video sink since the last measurement.
-         pub frame_count: std::sync::Arc<std::sync::atomic::AtomicU32>,
-         pub fps_source: RefCell<Option<glib::SourceId>>,
-@@ -285,6 +287,7 @@ mod imp {
+ 
+         pub picture: gtk::Picture,
+         pub offload: gtk::GraphicsOffload,
+@@ -281,6 +283,7 @@ mod imp {
  
              // Cell<f64> starts at 0.0, while the property's default is 1.0.
              self.zoom.set(1.0);
@@ -202,13 +202,12 @@ index ef97757..a0ceddb 100644
  
              let bus = self.camerabin().bus().unwrap();
              let watch = bus
-@@ -1392,11 +1395,48 @@ impl Viewfinder {
+@@ -1368,10 +1371,47 @@ impl Viewfinder {
  
          imp.resolutions.replace(resolutions);
          imp.capture_res.set(0);
 +        self.set_autofocus(imp.autofocus.get());
          imp.restore_res.set(None);
-         imp.slow_windows.set(0);
          self.apply_source_resolution(preview);
      }
  

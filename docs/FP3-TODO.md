@@ -388,8 +388,8 @@ the power path.
     still enabled when the driver is released. Both look like upstream bugs
     rather than integration mistakes, but neither has been reduced to a minimal
     reproducer yet, and neither is on any path the phone takes in normal use.
-33f-2. **Two libcamera clients at once wedge the focus lens until reboot**, and
-    this one *is* on a path normal use takes. Opening the lens subdevice
+33f-2. **Merely enumerating the cameras can wedge the focus lens until reboot**,
+    and this one *is* on a path normal use takes. Opening the lens subdevice
     runtime-resumes the actuator over the CCI bus; do that while another client
     is tearing the camera down and the transfer times out
     (`i2c-qcom-cci 1b0c000.cci: master 0 queue 0 timeout`, then
@@ -403,6 +403,21 @@ the power path.
     nothing else touching the camera is also fine. Unclear yet whether the fault
     is the CCI driver's arbitration, the actuator's resume ordering, or a shared
     regulator dropping mid-transfer; each is a separate measurement.
+
+    ☠️ **It does not take two *clients*, and libcamera's exclusivity does not
+    protect against it.** Read in the source 2026-08-02:
+    `CameraSensorLegacy::init()` calls `discoverAncillaryDevices()`, which opens
+    the lens subdevice — at **camera creation**, so during plain enumeration,
+    long before `acquire()` and entirely outside its lock. Measured the same
+    day: `cam` was refused the camera with *"Pipeline handler in use by another
+    process"* and had **still** powered the VCM up over I²C by then. The rule
+    "one client at a time" is therefore not enough; anything that merely lists
+    cameras touches the hardware.
+
+    That also points at a fix: open the lens lazily, on `acquire()`, the way the
+    uvcvideo pipeline handler already delays opening `/dev/video#` for power
+    reasons. It would put the lens inside the exclusivity that already exists
+    rather than inventing new arbitration.
 33g. **Focusing on demand works; focusing on a *point* still stops in
     PipeWire.** The zones and the `AfMetering`/`AfWindows` controls a tapped
     point needs are implemented in the IPA, but PipeWire's libcamera plugin maps

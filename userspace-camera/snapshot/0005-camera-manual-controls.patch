@@ -1,8 +1,8 @@
-From aa208a83672c9011d84fe103dabc51dd71d362ad Mon Sep 17 00:00:00 2001
+From 3a118cfa8304cc69e19417f81ce02abb895362b4 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Lajosh=C3=A1zi=2C=20L=C3=A1szl=C3=B3=20Gergely?=
  <lajoshazilg@gmail.com>
 Date: Sun, 2 Aug 2026 05:03:59 +0200
-Subject: [PATCH] camera: let every camera setting be chosen by hand
+Subject: [PATCH 5/5] camera: let every camera setting be chosen by hand
 
 Automatic exposure, gain and white balance are right most of the time and
 wrong exactly when a picture is worth taking by hand: a scene that is meant
@@ -37,9 +37,9 @@ becomes ready, so the camera starts where it was left.
  src/widgets/camera.rs                   |  28 +++
  src/widgets/camera_settings.rs          | 215 ++++++++++++++++++++++++
  src/widgets/mod.rs                      |   2 +
- src/widgets/preferences_window.rs       |  20 +++
+ src/widgets/preferences_window.rs       |  22 ++-
  src/widgets/window.rs                   |   7 +
- 12 files changed, 494 insertions(+), 4 deletions(-)
+ 12 files changed, 495 insertions(+), 5 deletions(-)
  create mode 100644 src/widgets/camera_settings.rs
 
 diff --git a/Cargo.lock b/Cargo.lock
@@ -300,10 +300,10 @@ index 20c310a..7b153f8 100644
  pub use enums::{CameraLocation, VideoFormat, ViewfinderState};
  pub use error::{CaptureError, PipewireError, ProviderError};
 diff --git a/aperture/src/viewfinder.rs b/aperture/src/viewfinder.rs
-index a0ceddb..d486c48 100644
+index c725e09..38f1386 100644
 --- a/aperture/src/viewfinder.rs
 +++ b/aperture/src/viewfinder.rs
-@@ -1424,6 +1424,28 @@ impl Viewfinder {
+@@ -1399,6 +1399,28 @@ impl Viewfinder {
          self.request_autofocus(crate::camera_control::AfRequest::Trigger);
      }
  
@@ -649,7 +649,7 @@ index 961f304..9f5d5a8 100644
  pub use gallery::Gallery;
  pub use gallery_button::GalleryButton;
 diff --git a/src/widgets/preferences_window.rs b/src/widgets/preferences_window.rs
-index a23f879..68142cb 100644
+index a23f879..19223fa 100644
 --- a/src/widgets/preferences_window.rs
 +++ b/src/widgets/preferences_window.rs
 @@ -5,6 +5,7 @@ use gtk::CompositeTemplate;
@@ -660,7 +660,13 @@ index a23f879..68142cb 100644
  
  mod imp {
      use std::cell::{Cell, OnceCell};
-@@ -20,6 +21,8 @@ mod imp {
+@@ -15,11 +16,13 @@ mod imp {
+     #[template(resource = "/org/gnome/Snapshot/ui/preferences_window.ui")]
+     #[properties(wrapper_type = super::PreferencesWindow)]
+     pub struct PreferencesWindow {
+-        settings: OnceCell<gio::Settings>,
++        pub settings: OnceCell<gio::Settings>,
+ 
          #[property(get, set, construct_only)]
          pub is_app_recording: Cell<bool>,
  

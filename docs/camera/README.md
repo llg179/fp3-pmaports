@@ -100,6 +100,51 @@ still an inference** — no position has been related to a subject distance.
 Useful when something in the app path is suspect, because it takes every layer
 above libcamera out of the picture:
 
+☠️ **A stray `LIBCAMERA_SOFTISP_MODE=cpu` defeats the GPU debayer at runtime,
+whatever the package was built with.** The variable is read from the *session*
+environment, so a file in `/etc/environment.d/` silently forces every
+session-launched process — `wireplumber` included, and therefore every camera
+app — onto the CPU debayer, which **centre-crops**. The symptom is that the
+saved picture shows a visibly wider scene than the viewfinder did.
+
+How it was found, 2026-08-02, is worth keeping: the same `cam` binary logged
+EGL from an interactive SSH session and no EGL at all when run as a
+`systemd-run --user` unit. Same binary, same camera, different environment —
+so the answer was in `diff <(systemd-run env) <(ssh env)`, not in the code.
+`GL_RENDERER: FD506` in a process's log is the proof the GPU debayer is
+actually in use; its absence is the tell.
+
+☠️ **Which sizes can be streamed is not derivable, and the ladder is long.**
+Measured on this camera, each size in its own process from idle: of the 47
+sizes PipeWire advertises, everything below about 1.8 megapixels refuses with
+`Failed to start streaming: Resource busy` — 160×120, 320×240, 400×240,
+640×480, 800×600, 1024×768, 1280×720, 1280×1024, 1400×1050 and 1680×1050 —
+while 1600×1200, 1920×1080 and 4032×3024 work. All three working sizes take
+the **full 4032×3024 sensor mode** (`Input 4032x3024-RGGB-10-CSI2P` in the
+log); the failing ones are the sizes for which the pipeline selects the
+sensor's 1920×1080 mode.
+
+☠️ **Setting a control the camera does not publish is not a no-op.** PipeWire
+answers `set_param Spa:Enum:ParamId:Props: No such file or directory` and logs
+it for every attempt. That happens by itself whenever the lens fails to
+initialise, since libcamera then stops publishing the `Af*` controls entirely
+while everything else keeps working — so an application must look a control up
+before writing it.
+
+☠️ **The `simple` pipeline handler takes the camera exclusively, and
+`wireplumber` holds it.** `cam` then refuses with *"Pipeline handler in use by
+another process"*, so a hand measurement needs
+`systemctl --user stop wireplumber pipewire pipewire.socket` first — and the
+same exclusivity is what wedges the focus lens when two clients overlap.
+
+☠️ **`pipewiresrc` does not preroll from an SSH session** — the pipeline sits
+in PAUSED and produces nothing, with no error. Measure through `cam`, which
+talks to libcamera directly.
+
+☠️ **A capture smaller than the sensor's own size fails** with
+`Failed to start streaming: Resource busy`. `cam -C4` at full resolution works,
+but a frame is 36 MB and the rootfs has ~200 MB free, so delete between runs.
+
 ```sh
 # which node is the camera
 pw-dump | grep -B5 'Video/Source'
@@ -160,12 +205,44 @@ Measured 2026-08-01 on `linux-fp3-7.1.3-r32` (`#33-fp3`) with libcamera 0.7.1,
 | what a control can be | the node describes itself — `pw-dump <node>` returns each control's libcamera name, type, bounds and, for the enumerated ones, its value labels. That is enough to build a user interface for a camera nobody wrote code for, and is how the app's manual controls are built |
 | manual focus | **not offered.** `LensPosition` is defined in dioptres, so publishing it needs two actuator codes related to real distances; the module's own EEPROM (`bl24s64`, no driver) is where a vendor keeps them. Until then the lens can be focused but not *told a distance* — see [FP3-TODO 33j](../FP3-TODO.md) |
 | autofocus | continuous by default; a scan is 19 measurements, so **~3.5 s at 1920×1080** and ~14 s at full resolution — statistics arrive once every four frames |
+| autofocus, in daylight | **verified 2026-08-02**: repeated scans of a lit indoor scene settled at 385, 386, 387, 389, 391 and 394 with peak scores around 15 000. In the dark the same instrument scored ~1 300 and refused (`No focus peak … staying at`), which is the algorithm declining rather than guessing |
 | reaching a control from an app | only by binding the PipeWire node directly. `pw-cli set-param <node> Props '{ 16777249: 1 }'` sets `AfMode`; the id is `SPA_PROP_START_CUSTOM` (0x1000000) plus libcamera's control id (`AfMode` 33, `AfTrigger` 38) |
 
 Autofocus is ours: libcamera's `simple` IPA had no AF algorithm at all, so one
 was written and is carried as [a patch](../../userspace-camera/libcamera/) on the
 package. What it does, and how to check it, is in
 [`bringup/`](bringup/README.md#autofocus-in-libcamera).
+
+### The manual controls, measured
+
+Measured 2026-08-02 on libcamera `99990.7.1-r8`, in a dark room, by asking the
+IPA rather than the picture: `cam --metadata --script` reports what was
+*actually used* for each frame, which is a verdict the scene's brightness
+cannot spoil.
+
+| asked for | reported back |
+|---|---|
+| automatic | 8783 µs at **11.9×** — the AGC's answer to a dark room |
+| 2000 µs, gain 1 | **1996 µs**, 1.000 |
+| 30000 µs, gain 1 | **29995 µs**, 1.000 |
+| 8000 µs, gain 12 | **7984 µs**, 12.000 |
+| **5000 µs, gain automatic** | **4999 µs held**, gain raised to **12.8×** |
+| white balance 2800 K | `AwbEnable false`, `ColourTemperature 2800` |
+| white balance 8000 K | `AwbEnable false`, `ColourTemperature 8000` |
+
+The fifth row is the one worth having: with the exposure time pinned and the
+gain left automatic, the AGC answered the dark room with gain alone and never
+touched the exposure. That is the independence the two modes promise, and it
+is the part a single "manual mode" flag would not have.
+
+Requested times come back a few microseconds short — 2000 → 1996, 8000 → 7984
+— because exposure is set in whole sensor lines, and a line is about 4.3 µs
+here. That is quantisation, not error.
+
+☠️ **A brightness measurement could not have decided this.** In the dark room
+every frame averaged between 1.7 and 7.3 out of 255, and the differences
+between settings were smaller than the noise. The metadata answers regardless
+of the light; a picture-based check has to wait for a lit scene.
 
 ☠️ **Only `AfMode` and `AfTrigger` reach an application, and not through
 GStreamer.** PipeWire's libcamera plugin maps controls to properties only for

@@ -1,0 +1,184 @@
+From ba141905427d871d0e2addbb8b43490cc207a71a Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Lajosh=C3=A1zi=2C=20L=C3=A1szl=C3=B3=20Gergely?=
+ <lajoshazilg@gmail.com>
+Date: Sun, 2 Aug 2026 08:23:11 +0200
+Subject: [PATCH] camera: never set a control the camera does not offer
+
+Asking for a control that is not there is not a no-op. PipeWire answers
+ENOENT, logs an error for every attempt, and the write is simply lost - so a
+tap that means "focus now" produces nothing but noise in the journal.
+
+This is not hypothetical: libcamera stops publishing the autofocus controls
+entirely when the lens fails to initialise, which on this camera happens
+whenever two clients overlap on it. The application then went on sending
+AfMode and AfTrigger to a camera that had neither.
+
+So look the control up in what the camera published before writing it, and do
+nothing if it is absent. That also removes the last hard-coded numbers from
+this path: the property id to write and the meaning of each value both come
+from the camera's own description, rather than from a copy of libcamera's
+header kept in step by hand.
+
+The published controls are asked for once per camera and kept, since otherwise
+each tap would cost a process.
+---
+ aperture/src/camera_control.rs | 70 ++++++++++++++++++++--------------
+ aperture/src/viewfinder.rs     | 22 ++++++++---
+ 2 files changed, 59 insertions(+), 33 deletions(-)
+
+diff --git a/aperture/src/camera_control.rs b/aperture/src/camera_control.rs
+index 40fcfcd..a8538c7 100644
+--- a/aperture/src/camera_control.rs
++++ b/aperture/src/camera_control.rs
+@@ -19,21 +19,6 @@
+ use std::process::Command;
+ use std::process::Stdio;
+ 
+-/// First property id the libcamera plugin uses for a control it has no
+-/// standard SPA property for.
+-const SPA_PROP_START_CUSTOM: u32 = 0x1000000;
+-
+-/// libcamera control ids, from `control_ids.h`.
+-const CONTROL_AF_MODE: u32 = 33;
+-const CONTROL_AF_TRIGGER: u32 = 38;
+-
+-/// `AfMode` values, from libcamera's `control_ids_core.yaml`.
+-const AF_MODE_AUTO: i32 = 1;
+-const AF_MODE_CONTINUOUS: i32 = 2;
+-
+-/// `AfTrigger` values.
+-const AF_TRIGGER_START: i32 = 0;
+-
+ /// What to do with a camera's autofocus.
+ #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+ pub enum AfRequest {
+@@ -46,13 +31,19 @@ pub enum AfRequest {
+ }
+ 
+ impl AfRequest {
+-    fn properties(self) -> Vec<(u32, i32)> {
++    /// The controls to set, by libcamera name and by the name of the value.
++    ///
++    /// Named rather than numbered, because the camera publishes both: the
++    /// property id to write and the value's meaning come from the camera
++    /// itself, so nothing here has to agree with a copy of libcamera's
++    /// headers.
++    fn wanted(self) -> &'static [(&'static str, &'static str)] {
+         match self {
+-            Self::Continuous => vec![(CONTROL_AF_MODE, AF_MODE_CONTINUOUS)],
+-            Self::OnDemand => vec![(CONTROL_AF_MODE, AF_MODE_AUTO)],
+-            Self::Trigger => vec![
+-                (CONTROL_AF_MODE, AF_MODE_AUTO),
+-                (CONTROL_AF_TRIGGER, AF_TRIGGER_START),
++            Self::Continuous => &[("AfMode", "AfModeContinuous")],
++            Self::OnDemand => &[("AfMode", "AfModeAuto")],
++            Self::Trigger => &[
++                ("AfMode", "AfModeAuto"),
++                ("AfTrigger", "AfTriggerStart"),
+             ],
+         }
+     }
+@@ -246,14 +237,37 @@ pub fn set_control(node_id: u32, control: &CameraControl, value: f64) {
+ ///
+ /// Failures are logged rather than returned: nothing the user can do about
+ /// them, and a camera that will not focus on demand is still a working camera.
+-pub fn request_autofocus(node_id: u32, request: AfRequest) {
++pub fn request_autofocus(node_id: u32, request: AfRequest, controls: &[CameraControl]) {
++    let mut writes = Vec::new();
++
++    for (name, value) in request.wanted() {
++        let Some(control) = controls.iter().find(|c| c.name == *name) else {
++            /*
++             * The camera does not offer it - this one stops offering the
++             * autofocus controls entirely when the lens fails to initialise.
++             * Writing them anyway is not harmless: PipeWire answers ENOENT and
++             * logs an error for every attempt.
++             */
++            log::debug!("Camera does not offer {name}; not asking it to focus");
++            return;
++        };
++
++        let ControlKind::Choice { values, .. } = &control.kind else {
++            log::debug!("{name} is not the kind of control it was expected to be");
++            return;
++        };
++
++        let Some((number, _)) = values.iter().find(|(_, label)| label == value) else {
++            log::debug!("{name} has no value called {value}");
++            return;
++        };
++
++        writes.push((control.key.clone(), number.to_string()));
++    }
++
+     std::thread::spawn(move || {
+-        for (control, value) in request.properties() {
+-            set_literal(
+-                node_id,
+-                &(SPA_PROP_START_CUSTOM + control).to_string(),
+-                &value.to_string(),
+-            );
++        for (key, value) in writes {
++            set_literal(node_id, &key, &value);
+         }
+     });
+ }
+diff --git a/aperture/src/viewfinder.rs b/aperture/src/viewfinder.rs
+index 706f7e9..3c8c994 100644
+--- a/aperture/src/viewfinder.rs
++++ b/aperture/src/viewfinder.rs
+@@ -87,6 +87,8 @@ mod imp {
+         pub restore_res: Cell<Option<usize>>,
+         /// Whether the camera should keep focusing by itself.
+         pub autofocus: Cell<bool>,
++        /// What the current camera publishes, asked once per camera.
++        pub controls: RefCell<Vec<crate::camera_control::CameraControl>>,
+         /// Index being tried while looking for a preview size that streams.
+         pub probe: Cell<Option<usize>>,
+         /// Largest index seen to stream, and largest index still unknown.
+@@ -1396,6 +1398,7 @@ impl Viewfinder {
+         );
+ 
+         imp.resolutions.replace(resolutions);
++        imp.controls.borrow_mut().clear();
+         imp.capture_res.set(0);
+         self.set_autofocus(imp.autofocus.get());
+         imp.restore_res.set(None);
+@@ -1597,12 +1600,20 @@ impl Viewfinder {
+     }
+ 
+     /// What the camera in use offers to be set, as it describes itself.
++    ///
++    /// Asked once and kept: every write has to check that what it is about to
++    /// set exists, and asking PipeWire on every tap would mean a process per
++    /// tap.
+     pub fn camera_controls(&self) -> Vec<crate::camera_control::CameraControl> {
+-        let Some(node_id) = self.camera().and_then(|camera| camera.node_id()) else {
+-            return Vec::new();
+-        };
++        let imp = self.imp();
++
++        if imp.controls.borrow().is_empty() {
++            if let Some(node_id) = self.camera().and_then(|camera| camera.node_id()) {
++                imp.controls.replace(crate::camera_control::discover(node_id));
++            }
++        }
+ 
+-        crate::camera_control::discover(node_id)
++        imp.controls.borrow().clone()
+     }
+ 
+     /// Sets one of those controls.
+@@ -1628,7 +1639,8 @@ impl Viewfinder {
+             return;
+         };
+ 
+-        crate::camera_control::request_autofocus(node_id, request);
++        let controls = self.camera_controls();
++        crate::camera_control::request_autofocus(node_id, request, &controls);
+     }
+ 
+     fn size_caps(size: crate::utils::Size) -> gst::Caps {
+-- 
+2.53.0
+

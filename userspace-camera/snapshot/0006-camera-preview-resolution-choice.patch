@@ -1,0 +1,512 @@
+From bcb1b4187f812737e1c56e3b4a9c7ee14e6d7480 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Lajosh=C3=A1zi=2C=20L=C3=A1szl=C3=B3=20Gergely?=
+ <lajoshazilg@gmail.com>
+Date: Sun, 2 Aug 2026 07:30:57 +0200
+Subject: [PATCH] camera: choose the viewfinder resolution, and remember it
+
+A camera offers sizes it cannot always stream. Asked for one of those, the
+pipeline answers 'Failed to start streaming: Resource busy' and the viewfinder
+is dead - no picture, and no error the user can act on. Measured on a Fairphone
+3, each size in its own process starting from idle so that nothing here is a
+matter of reconfiguring in a hurry: of the 47 sizes that camera advertises,
+everything below about 1.8 megapixels fails and everything above it works -
+160x120, 320x240, 400x240, 640x480, 800x600, 1024x768, 1280x720, 1280x1024,
+1400x1050 and 1680x1050 all refuse, while 1600x1200, 1920x1080 and the sensor's
+own 4032x3024 stream.
+
+Which ones work therefore cannot be derived, only tried. On first use the
+viewfinder bisects the list - which is ordered by pixel count - for the
+smallest size that streams: a size that fails reports it through the pipeline's
+error, which is an answer rather than a breakdown, so the search moves on
+instead of giving up the camera. Bisecting matters: walking up from the
+smallest would have cost thirty pipeline restarts on the camera above, in front
+of a user looking at a black screen, where six suffice.
+
+The bisection assumes that a size which streams keeps streaming as it grows.
+Where that does not hold the result is merely not the smallest one that works,
+never a size that does not, because only a size seen to stream is settled on.
+
+The winner is published as the preview-resolution property, and the application
+binds that to a setting in both directions. The search therefore happens once
+in the lifetime of an installation rather than at every start, and a size
+chosen by hand in the preferences takes precedence. Choosing one that turns out
+not to stream is not fatal either: the search simply runs again.
+
+Smallest-first is deliberate. It is the cheapest to debayer in software and so
+the fastest preview, and the picture is taken at the sensor's full resolution
+regardless of what the viewfinder runs at.
+---
+ aperture/src/lib.rs                    |   2 +-
+ aperture/src/utils.rs                  |  19 ++-
+ aperture/src/viewfinder.rs             | 217 +++++++++++++++++++++++--
+ data/org.gnome.Snapshot.gschema.xml.in |   5 +
+ src/widgets/camera.rs                  |   9 +
+ src/widgets/camera_settings.rs         |  56 +++++++
+ src/widgets/preferences_window.rs      |  13 +-
+ src/widgets/window.rs                  |   2 +-
+ 8 files changed, 309 insertions(+), 14 deletions(-)
+
+diff --git a/aperture/src/lib.rs b/aperture/src/lib.rs
+index 7b153f8..9feecc9 100644
+--- a/aperture/src/lib.rs
++++ b/aperture/src/lib.rs
+@@ -25,7 +25,7 @@ mod device_provider;
+ mod enums;
+ mod error;
+ mod pipeline_tee;
+-mod utils;
++pub mod utils;
+ mod viewfinder;
+ 
+ pub use camera::Camera;
+diff --git a/aperture/src/utils.rs b/aperture/src/utils.rs
+index 9f3948e..88a2aeb 100644
+--- a/aperture/src/utils.rs
++++ b/aperture/src/utils.rs
+@@ -1,9 +1,26 @@
+ #[derive(Debug, Clone, Copy, PartialEq)]
+-pub(crate) struct Size {
++pub struct Size {
+     pub width: i32,
+     pub height: i32,
+ }
+ 
++impl std::fmt::Display for Size {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        write!(f, "{}x{}", self.width, self.height)
++    }
++}
++
++impl Size {
++    /// Reads back what Display writes; anything else is None.
++    pub fn parse(value: &str) -> Option<Self> {
++        let (width, height) = value.split_once('x')?;
++        Some(Self {
++            width: width.trim().parse().ok()?,
++            height: height.trim().parse().ok()?,
++        })
++    }
++}
++
+ pub(crate) mod caps {
+     use std::sync::LazyLock;
+ 
+diff --git a/aperture/src/viewfinder.rs b/aperture/src/viewfinder.rs
+index 38f1386..706f7e9 100644
+--- a/aperture/src/viewfinder.rs
++++ b/aperture/src/viewfinder.rs
+@@ -56,6 +56,8 @@ mod imp {
+         enable_hw_encoding: Cell<bool>,
+         #[property(get, set = Self::set_zoom, explicit_notify, default = 1.0)]
+         zoom: Cell<f64>,
++        #[property(get, set = Self::set_preview_resolution, explicit_notify)]
++        pub preview_resolution: RefCell<String>,
+         #[property(get = Self::max_zoom, type = f64)]
+         max_zoom: PhantomData<f64>,
+ 
+@@ -85,6 +87,13 @@ mod imp {
+         pub restore_res: Cell<Option<usize>>,
+         /// Whether the camera should keep focusing by itself.
+         pub autofocus: Cell<bool>,
++        /// Index being tried while looking for a preview size that streams.
++        pub probe: Cell<Option<usize>>,
++        /// Largest index seen to stream, and largest index still unknown.
++        pub probe_lo: Cell<usize>,
++        pub probe_hi: Cell<usize>,
++        pub probe_found: Cell<bool>,
++        pub probe_timeout: RefCell<Option<glib::SourceId>>,
+ 
+         pub picture: gtk::Picture,
+         pub offload: gtk::GraphicsOffload,
+@@ -125,6 +134,22 @@ mod imp {
+             self.obj().notify_zoom();
+         }
+ 
++        /// The size the viewfinder runs at, as "WIDTHxHEIGHT".
++        ///
++        /// Empty means the viewfinder chooses, which it does by trying sizes
++        /// until one streams; the size it settles on is written back here, so
++        /// binding this to a setting both remembers a choice and saves the
++        /// search from being repeated.
++        fn set_preview_resolution(&self, value: String) {
++            if value == *self.preview_resolution.borrow() {
++                return;
++            }
++
++            self.preview_resolution.replace(value);
++            self.obj().notify_preview_resolution();
++            self.obj().apply_preview_resolution();
++        }
++
+         pub(crate) fn set_state(&self, state: ViewfinderState) {
+             if state != self.state.replace(state) {
+                 self.obj().notify_state();
+@@ -601,6 +626,8 @@ impl Viewfinder {
+     /// smaller than the sensor, and every pixel above this is debayered in
+     /// software for nothing.
+     const MAX_VIEWFINDER_PIXELS: i64 = 1920 * 1080;
++    /// How long a size gets to prove it streams before it is believed.
++    const PROBE_SECONDS: u32 = 3;
+     /// How many 100 ms waits to allow the pipeline for coming back up after
+     /// switching resolution for a picture.
+     const CAPTURE_WAIT_TRIES: u32 = 50;
+@@ -949,6 +976,12 @@ impl Viewfinder {
+             err.debug()
+         );
+ 
++        // A size being tried failed to stream: that is an answer, not a
++        // breakdown. Move on to the next one instead of giving up the camera.
++        if self.probe_failed() {
++            return;
++        }
++
+         self.cancel_current_operation();
+ 
+         if self.imp().camerabin().current_state() != gst::State::Playing {
+@@ -1356,24 +1389,188 @@ impl Viewfinder {
+             return;
+         }
+ 
+-        let preview = resolutions
+-            .iter()
+-            .position(|s| (s.width as i64) * (s.height as i64) <= Self::MAX_VIEWFINDER_PIXELS)
+-            .unwrap_or(0);
+-
+         log::info!(
+-            "Capture at {}x{}, preview at {}x{}",
++            "Capture at {}x{}",
+             resolutions[0].width,
+-            resolutions[0].height,
+-            resolutions[preview].width,
+-            resolutions[preview].height
++            resolutions[0].height
+         );
+ 
+         imp.resolutions.replace(resolutions);
+         imp.capture_res.set(0);
+         self.set_autofocus(imp.autofocus.get());
+         imp.restore_res.set(None);
+-        self.apply_source_resolution(preview);
++        self.apply_preview_resolution();
++    }
++
++    /// The sizes this camera offers, largest first.
++    pub fn resolutions(&self) -> Vec<crate::utils::Size> {
++        self.imp().resolutions.borrow().clone()
++    }
++
++    /// Puts the viewfinder on the chosen size, or goes looking for one.
++    fn apply_preview_resolution(&self) {
++        let imp = self.imp();
++
++        if imp.resolutions.borrow().is_empty() {
++            return;
++        }
++
++        self.stop_probe();
++
++        let wanted = crate::utils::Size::parse(&self.preview_resolution());
++        let index = wanted.and_then(|size| {
++            imp.resolutions
++                .borrow()
++                .iter()
++                .position(|offered| *offered == size)
++        });
++
++        match index {
++            Some(index) => {
++                log::info!(
++                    "Preview at {}",
++                    self.preview_resolution()
++                );
++                self.switch_source_resolution(index);
++            }
++            None => self.start_probe(),
++        }
++    }
++
++    /// Looks for the smallest size that actually streams.
++    ///
++    /// A camera advertises sizes it cannot always deliver: asked for one of
++    /// those, the pipeline answers 'Failed to start streaming: Resource busy'
++    /// and the viewfinder is simply dead. Which sizes those are is a property
++    /// of the camera and its driver, not something an application can know, so
++    /// the only honest way to find out is to ask for one and see.
++    ///
++    /// The search is a bisection rather than a walk. A camera can offer dozens
++    /// of sizes - one measured here offers 47 - and trying them one by one
++    /// costs a pipeline restart each, in front of a user looking at a black
++    /// screen. Bisecting the list, which is ordered by pixel count, finds the
++    /// boundary in about six attempts instead of thirty.
++    ///
++    /// What the bisection assumes is that a size which streams stays streaming
++    /// as it grows. Where that does not hold the result is merely not the
++    /// smallest one that works - never a size that does not, since only a size
++    /// seen to stream is ever settled on.
++    fn start_probe(&self) {
++        let imp = self.imp();
++        let last = imp.resolutions.borrow().len().saturating_sub(1);
++
++        // Index 0 is the largest, and the sensor's own mode: the likeliest to
++        // work, so it is where the search falls back to rather than starts.
++        imp.probe_lo.set(0);
++        imp.probe_hi.set(last);
++        imp.probe_found.set(false);
++        self.probe_step();
++    }
++
++    /// Tries the size in the middle of what is still unknown, or stops.
++    fn probe_step(&self) {
++        let imp = self.imp();
++
++        let lo = imp.probe_lo.get();
++        let hi = imp.probe_hi.get();
++
++        if lo >= hi {
++            if imp.probe_found.get() || lo == 0 {
++                self.probe_settle(lo);
++            } else {
++                // Nothing was ever seen to stream; the largest is untried.
++                self.try_probe(0);
++            }
++            return;
++        }
++
++        self.try_probe(lo + (hi - lo).div_ceil(2));
++    }
++
++    fn try_probe(&self, index: usize) {
++        let imp = self.imp();
++
++        let Some(size) = imp.resolutions.borrow().get(index).copied() else {
++            return;
++        };
++
++        log::info!("Trying {size} for the preview");
++        imp.probe.set(Some(index));
++        self.switch_source_resolution(index);
++
++        // No error within the settling time means this size works.
++        let source = glib::timeout_add_seconds_local_once(
++            Self::PROBE_SECONDS,
++            glib::clone!(
++                #[weak(rename_to = obj)]
++                self,
++                move || obj.probe_succeeded()
++            ),
++        );
++        imp.probe_timeout.replace(Some(source));
++    }
++
++    /// The size being tried has streamed: smaller ones are still worth trying.
++    fn probe_succeeded(&self) {
++        let imp = self.imp();
++        imp.probe_timeout.take();
++
++        let Some(index) = imp.probe.take() else {
++            return;
++        };
++
++        imp.probe_lo.set(index);
++        imp.probe_found.set(true);
++
++        if index >= imp.probe_hi.get() {
++            self.probe_settle(index);
++        } else {
++            self.probe_step();
++        }
++    }
++
++    /// Called when the pipeline fails while a size is being tried: that size
++    /// and everything smaller is out.
++    fn probe_failed(&self) -> bool {
++        let imp = self.imp();
++
++        let Some(index) = imp.probe.take() else {
++            return false;
++        };
++
++        if let Some(source) = imp.probe_timeout.take() {
++            source.remove();
++        }
++
++        if index == 0 {
++            log::warn!("No size the camera offers would stream");
++            return false;
++        }
++
++        imp.probe_hi.set(index - 1);
++        self.probe_step();
++        true
++    }
++
++    fn probe_settle(&self, index: usize) {
++        let imp = self.imp();
++
++        let Some(size) = imp.resolutions.borrow().get(index).copied() else {
++            return;
++        };
++
++        log::info!("Preview settled at {size}");
++        self.switch_source_resolution(index);
++        imp.preview_resolution.replace(size.to_string());
++        self.notify_preview_resolution();
++    }
++
++    fn stop_probe(&self) {
++        let imp = self.imp();
++        imp.probe.set(None);
++        if let Some(source) = imp.probe_timeout.take() {
++            source.remove();
++        }
+     }
+ 
+     /// Whether the camera focuses continuously, or only when asked.
+diff --git a/data/org.gnome.Snapshot.gschema.xml.in b/data/org.gnome.Snapshot.gschema.xml.in
+index a92fa61..14a8f8f 100644
+--- a/data/org.gnome.Snapshot.gschema.xml.in
++++ b/data/org.gnome.Snapshot.gschema.xml.in
+@@ -34,6 +34,11 @@
+       <summary>Focus continuously</summary>
+       <description>Whether the camera keeps focusing by itself. When off, tap the picture to focus and double tap to focus and take a photo.</description>
+     </key>
++    <key name="preview-resolution" type="s">
++      <default>''</default>
++      <summary>Viewfinder resolution</summary>
++      <description>The size the viewfinder runs at, as WIDTHxHEIGHT. Empty means the application chooses it, which it does by trying sizes until one streams and then storing the answer here. A size the camera does not offer is ignored and the search runs again.</description>
++    </key>
+     <key name="camera-controls" type="a{sd}">
+       <default>{}</default>
+       <summary>Camera controls chosen by the user</summary>
+diff --git a/src/widgets/camera.rs b/src/widgets/camera.rs
+index a9d8ea3..26c4b67 100644
+--- a/src/widgets/camera.rs
++++ b/src/widgets/camera.rs
+@@ -249,6 +249,15 @@ mod imp {
+             obj.add_controller(taps);
+ 
+             let settings = self.settings();
++
++            // Two-way on purpose: the user's choice reaches the viewfinder,
++            // and the size the viewfinder finds for itself is written back, so
++            // the search for one that streams happens once and not every time
++            // the application starts.
++            settings
++                .bind("preview-resolution", &*self.viewfinder, "preview-resolution")
++                .build();
++
+             self.viewfinder.set_autofocus(settings.boolean("autofocus"));
+             settings.connect_changed(
+                 Some("autofocus"),
+diff --git a/src/widgets/camera_settings.rs b/src/widgets/camera_settings.rs
+index 316daa1..a7c8328 100644
+--- a/src/widgets/camera_settings.rs
++++ b/src/widgets/camera_settings.rs
+@@ -45,6 +45,62 @@ fn title_for(control: &CameraControl) -> String {
+     }
+ }
+ 
++/// A row for choosing what size the viewfinder runs at.
++///
++/// The list is what this camera offers, plus an entry for letting the
++/// application decide. Choosing a size the camera cannot actually stream is
++/// not fatal: the viewfinder answers by looking for one that works, and writes
++/// that back.
++pub fn resolution_row(
++    resolutions: &[aperture::utils::Size],
++    settings: &gio::Settings,
++) -> Option<adw::ComboRow> {
++    if resolutions.is_empty() {
++        return None;
++    }
++
++    let automatic = gettext("Automatic");
++    let mut labels = vec![automatic.clone()];
++    labels.extend(resolutions.iter().map(|size| {
++        /* A multiplication sign reads better than an x between numbers. */
++        format!("{}\u{00d7}{}", size.width, size.height)
++    }));
++
++    let model = gtk::StringList::new(&labels.iter().map(String::as_str).collect::<Vec<_>>());
++
++    let row = adw::ComboRow::new();
++    row.set_title(&gettext("Viewfinder Resolution"));
++    row.set_subtitle(&gettext("Smaller is faster; the picture is taken at full size either way"));
++    row.set_model(Some(&model));
++
++    let stored = settings.string("preview-resolution");
++    let selected = aperture::utils::Size::parse(&stored)
++        .and_then(|size| resolutions.iter().position(|offered| *offered == size))
++        .map(|index| index + 1)
++        .unwrap_or(0);
++    row.set_selected(selected as u32);
++
++    row.connect_selected_notify({
++        let settings = settings.clone();
++        let resolutions = resolutions.to_vec();
++        move |row| {
++            let value = match row.selected() {
++                0 => String::new(),
++                index => match resolutions.get(index as usize - 1) {
++                    Some(size) => size.to_string(),
++                    None => return,
++                },
++            };
++
++            if let Err(err) = settings.set_string("preview-resolution", &value) {
++                log::warn!("Could not store the viewfinder resolution: {err}");
++            }
++        }
++    });
++
++    Some(row)
++}
++
+ /// Builds the group, or nothing if the camera has nothing to offer.
+ pub fn group(
+     controls: &[CameraControl],
+diff --git a/src/widgets/preferences_window.rs b/src/widgets/preferences_window.rs
+index 19223fa..67d3952 100644
+--- a/src/widgets/preferences_window.rs
++++ b/src/widgets/preferences_window.rs
+@@ -108,12 +108,23 @@ impl PreferencesWindow {
+     /// nothing here.
+     pub fn add_camera_controls(
+         &self,
++        resolutions: &[aperture::utils::Size],
+         controls: &[aperture::CameraControl],
+         apply: impl Fn(&aperture::CameraControl, f64) + Clone + 'static,
+     ) {
+         let settings = self.imp().settings.get().unwrap();
+ 
+-        if let Some(group) = camera_settings::group(controls, settings, apply) {
++        let group = camera_settings::group(controls, settings, apply).unwrap_or_else(|| {
++            let group = adw::PreferencesGroup::new();
++            group.set_title(&gettextrs::gettext("Camera"));
++            group
++        });
++
++        if let Some(row) = camera_settings::resolution_row(resolutions, settings) {
++            /* First, because it is the one that changes what is on screen. */
++            group.add(&row);
++            self.imp().general_page.add(&group);
++        } else if group.parent().is_none() && !resolutions.is_empty() {
+             self.imp().general_page.add(&group);
+         }
+     }
+diff --git a/src/widgets/window.rs b/src/widgets/window.rs
+index a496db4..5299120 100644
+--- a/src/widgets/window.rs
++++ b/src/widgets/window.rs
+@@ -447,7 +447,7 @@ impl Window {
+         let preferences = crate::PreferencesWindow::new(is_recording);
+ 
+         let viewfinder = self.imp().camera.viewfinder();
+-        preferences.add_camera_controls(&viewfinder.camera_controls(), {
++        preferences.add_camera_controls(&viewfinder.resolutions(), &viewfinder.camera_controls(), {
+             let viewfinder = viewfinder.clone();
+             move |control, value| viewfinder.set_camera_control(control, value)
+         });
+-- 
+2.53.0
+

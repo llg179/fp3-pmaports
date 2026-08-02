@@ -1,9 +1,9 @@
-From e5f2b73c9c3e5dae23b575e65f22e3fdea10f3d8 Mon Sep 17 00:00:00 2001
+From 2a50c5f0a875c3f870848f8ac2ababbb5d4ae3c2 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Lajosh=C3=A1zi=2C=20L=C3=A1szl=C3=B3=20Gergely?=
  <lajoshazilg@gmail.com>
 Date: Sat, 1 Aug 2026 21:15:10 +0200
-Subject: [PATCH] camera: take the picture at the sensor's resolution, not the
- preview's
+Subject: [PATCH 3/5] camera: take the picture at the sensor's resolution, not
+ the preview's
 
 The source's capsfilter is shared by the viewfinder and by still capture, so
 the two have always had one resolution between them: whatever is smooth enough
@@ -29,16 +29,21 @@ and image-done puts the preview resolution back. If the pipeline does not come
 back up in five seconds the shot is taken anyway, because a picture at the
 wrong resolution beats a shutter press that does nothing.
 
-With the two separated, lowering the preview costs nothing: a pad probe counts
-the buffers that actually reach the video sink, and if fewer than 20 arrive per
-second for two consecutive two-second windows the preview drops to the next
-smaller resolution the camera offers. Never below 640x480, never back up, and
-never while a picture is being taken.
+The preview resolution is chosen once, from what the camera offers, and left
+alone. Adapting it to the frame rate was tried and removed: dropping to the
+next size the camera advertises walks into sizes this pipeline cannot actually
+stream, and the failure is not graceful. Measured on the Fairphone 3, where a
+dark room is enough to make the preview slow: the source was reconfigured from
+1920x1080 to 1600x1200 to 1680x1050 within seconds and then refused to start
+with 'Failed to start streaming: Resource busy', leaving the application with
+no camera at all. A slow viewfinder is a much better outcome than that, and a
+size ladder that a pipeline handler advertises is evidently not a promise that
+every rung can be streamed.
 ---
- aperture/src/camera.rs     |  23 +++
+ aperture/src/camera.rs     |  23 ++++++
  aperture/src/utils.rs      |   2 +-
- aperture/src/viewfinder.rs | 277 ++++++++++++++++++++++++++++++++++++-
- 3 files changed, 300 insertions(+), 2 deletions(-)
+ aperture/src/viewfinder.rs | 156 ++++++++++++++++++++++++++++++++++++-
+ 3 files changed, 179 insertions(+), 2 deletions(-)
 
 diff --git a/aperture/src/camera.rs b/aperture/src/camera.rs
 index 6aa9e75..b2d85d1 100644
@@ -83,10 +88,10 @@ index 72ab13b..9f3948e 100644
      pub width: i32,
      pub height: i32,
 diff --git a/aperture/src/viewfinder.rs b/aperture/src/viewfinder.rs
-index b3247a1..ef97757 100644
+index b3247a1..2636cb2 100644
 --- a/aperture/src/viewfinder.rs
 +++ b/aperture/src/viewfinder.rs
-@@ -75,6 +75,19 @@ mod imp {
+@@ -75,6 +75,15 @@ mod imp {
  
          pub timeout_handler: RefCell<Option<glib::SourceId>>,
  
@@ -98,30 +103,11 @@ index b3247a1..ef97757 100644
 +        pub capture_res: Cell<usize>,
 +        /// Set while a picture is being taken at a different resolution.
 +        pub restore_res: Cell<Option<usize>>,
-+        /// Buffers seen by the video sink since the last measurement.
-+        pub frame_count: std::sync::Arc<std::sync::atomic::AtomicU32>,
-+        pub fps_source: RefCell<Option<glib::SourceId>>,
-+        pub slow_windows: Cell<u32>,
 +
          pub picture: gtk::Picture,
          pub offload: gtk::GraphicsOffload,
      }
-@@ -365,6 +378,14 @@ mod imp {
-                 .expect("Missing GStreamer Base Plug-ins");
-             camerabin.set_property("image-filter", &videoconvert_image);
- 
-+            if let Some(pad) = paintablesink.static_pad("sink") {
-+                let counter = self.frame_count.clone();
-+                pad.add_probe(gst::PadProbeType::BUFFER, move |_, _| {
-+                    counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-+                    gst::PadProbeReturn::Ok
-+                });
-+            }
-+
-             self.sink_paintable.set(paintablesink).unwrap();
- 
-             self.picture
-@@ -585,6 +606,22 @@ impl Default for Viewfinder {
+@@ -585,6 +594,14 @@ impl Default for Viewfinder {
  }
  
  impl Viewfinder {
@@ -129,14 +115,6 @@ index b3247a1..ef97757 100644
 +    /// smaller than the sensor, and every pixel above this is debayered in
 +    /// software for nothing.
 +    const MAX_VIEWFINDER_PIXELS: i64 = 1920 * 1080;
-+    /// Never drop the viewfinder below this.
-+    const MIN_VIEWFINDER_PIXELS: i64 = 640 * 480;
-+    /// Frames per second below which the viewfinder is too slow to use.
-+    const SLOW_FPS: f64 = 20.0;
-+    /// Consecutive slow windows before giving up a resolution step.
-+    const SLOW_WINDOWS: u32 = 2;
-+    /// Length of one measurement window, in seconds.
-+    const FPS_WINDOW: u32 = 2;
 +    /// How many 100 ms waits to allow the pipeline for coming back up after
 +    /// switching resolution for a picture.
 +    const CAPTURE_WAIT_TRIES: u32 = 50;
@@ -144,7 +122,7 @@ index b3247a1..ef97757 100644
      /// Creates a new [`Viewfinder`][crate::Viewfinder]
      ///
      /// # Returns
-@@ -647,11 +684,54 @@ impl Viewfinder {
+@@ -647,11 +664,54 @@ impl Viewfinder {
          let camerabin = imp.camerabin();
          camerabin.set_property_from_str("mode", "mode-image");
          camerabin.set_property("location", location.as_ref().display().to_string());
@@ -200,25 +178,7 @@ index b3247a1..ef97757 100644
      /// Starts recording a video.
      ///
      /// The recording will be saved to `location`. This method throws an error
-@@ -753,6 +833,8 @@ impl Viewfinder {
- 
-     /// Starts the viewfinder.
-     pub fn start_stream(&self) {
-+        self.start_fps_monitor();
-+
-         glib::spawn_future_local(glib::clone!(
-             #[weak(rename_to = obj)]
-             self,
-@@ -825,6 +907,8 @@ impl Viewfinder {
-     ///
-     /// A black frame will be shown after this methods has been called.
-     pub fn stop_stream(&self) {
-+        self.stop_fps_monitor();
-+
-         if let Err(err) = self.imp().camerabin().set_state(gst::State::Null) {
-             log::error!("Could not pause camerabin: {err}");
-             self.imp().set_state(ViewfinderState::Error);
-@@ -860,6 +944,11 @@ impl Viewfinder {
+@@ -860,6 +920,11 @@ impl Viewfinder {
      fn on_image_done(&self, file: &gio::File) {
          self.imp().is_taking_picture.set(false);
  
@@ -230,7 +190,7 @@ index b3247a1..ef97757 100644
          self.emit_picture_done(Some(file));
      }
  
-@@ -1254,12 +1343,198 @@ impl Viewfinder {
+@@ -1254,12 +1319,101 @@ impl Viewfinder {
              capsfilter.set_property("caps", &caps);
          }
  
@@ -284,7 +244,6 @@ index b3247a1..ef97757 100644
 +        imp.resolutions.replace(resolutions);
 +        imp.capture_res.set(0);
 +        imp.restore_res.set(None);
-+        imp.slow_windows.set(0);
 +        self.apply_source_resolution(preview);
 +    }
 +
@@ -328,102 +287,6 @@ index b3247a1..ef97757 100644
 +
 +        self.apply_source_resolution(index);
 +        self.reset_pipeline();
-+    }
-+
-+    /// Drops the preview to the next smaller resolution, if there is one worth
-+    /// dropping to. Returns whether anything changed.
-+    fn lower_preview_resolution(&self) -> bool {
-+        let imp = self.imp();
-+        let next = imp.viewfinder_res.get() + 1;
-+
-+        let size = {
-+            let resolutions = imp.resolutions.borrow();
-+            match resolutions.get(next).copied() {
-+                Some(size) => size,
-+                None => return false,
-+            }
-+        };
-+
-+        if (size.width as i64) * (size.height as i64) < Self::MIN_VIEWFINDER_PIXELS {
-+            return false;
-+        }
-+
-+        self.switch_source_resolution(next);
-+        true
-+    }
-+
-+    /// Watches how fast frames actually arrive, and gives up resolution when
-+    /// they do not.
-+    fn start_fps_monitor(&self) {
-+        let imp = self.imp();
-+
-+        if imp.fps_source.borrow().is_some() {
-+            return;
-+        }
-+
-+        imp.frame_count.store(0, std::sync::atomic::Ordering::Relaxed);
-+
-+        let source = glib::timeout_add_seconds_local(
-+            Self::FPS_WINDOW,
-+            glib::clone!(
-+                #[weak(rename_to = obj)]
-+                self,
-+                #[upgrade_or]
-+                glib::ControlFlow::Break,
-+                move || {
-+                    obj.check_fps();
-+                    glib::ControlFlow::Continue
-+                }
-+            ),
-+        );
-+
-+        imp.fps_source.replace(Some(source));
-+    }
-+
-+    fn stop_fps_monitor(&self) {
-+        if let Some(source) = self.imp().fps_source.take() {
-+            source.remove();
-+        }
-+    }
-+
-+    fn check_fps(&self) {
-+        let imp = self.imp();
-+
-+        let frames = imp
-+            .frame_count
-+            .swap(0, std::sync::atomic::Ordering::Relaxed);
-+        let fps = f64::from(frames) / f64::from(Self::FPS_WINDOW);
-+
-+        // A stream that has just started, one that is not running, or one in
-+        // the middle of taking a picture says nothing about how fast the
-+        // pipeline can go.
-+        if !matches!(self.state(), ViewfinderState::Ready)
-+            || frames == 0
-+            || imp.restore_res.get().is_some()
-+            || imp.is_taking_picture.get()
-+        {
-+            imp.slow_windows.set(0);
-+            return;
-+        }
-+
-+        if fps >= Self::SLOW_FPS {
-+            imp.slow_windows.set(0);
-+            return;
-+        }
-+
-+        let slow = imp.slow_windows.get() + 1;
-+        imp.slow_windows.set(slow);
-+        log::debug!("Viewfinder at {fps:.1} fps ({slow} slow windows)");
-+
-+        if slow < Self::SLOW_WINDOWS {
-+            return;
-+        }
-+
-+        imp.slow_windows.set(0);
-+
-+        if self.lower_preview_resolution() {
-+            log::info!("Only {fps:.1} fps; lowering the preview resolution");
-+        }
 +    }
 +
      fn reset_pipeline(&self) {
