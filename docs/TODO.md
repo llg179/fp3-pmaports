@@ -378,6 +378,104 @@ the base file plus six other qcom machine drivers compare against it), and the
 undocumented `slim217` vendor prefix (absent from `vendor-prefixes.yaml`, but
 already used by four device trees in Linus' tree).
 
+## Licence and provenance
+
+An audit on 2026-08-02 asked one question — *is anything in this work copied from
+closed-source Android code, or otherwise carried under the wrong licence?* — and
+walked all five `wip/7.1.3/*` categories, the SPDX header of every `.c`/`.h` they
+touch, the authorship of every import commit, and the provenance tables in
+[`kernel/README.md`](kernel/README.md#provenance) and
+[`sensors/README.md`](sensors/README.md#provenance).
+
+**The headline is negative: there is no closed-source Android driver in the fork
+and no file carried under the wrong licence.** Every source file the five
+categories touch is GPL-2.0 by SPDX — the single exception,
+`scripts/mod/file2alias.c`, carries no SPDX line upstream either and this work
+adds ten lines to it. No firmware blob is checked into either repository; the
+ADSP, modem and WCNSS images stay on the phone's own partitions and are
+referenced by name.
+
+What the audit did find, in descending order of exposure. **None of it is acted
+on**; each item needs its pro and contra written out and confirmed first, and the
+first one is a legal judgement rather than a technical one.
+
+1. **`drivers/media/i2c/lc898217.c` is the one part derived from closed
+   source.** The actuator's whole register interface — slave address, address
+   and data widths, position register, code width, power-up write — was read out
+   of `libactuator_lc898217xc.so`, the proprietary vendor userspace library
+   shipped with this board's Android firmware. There was no GPL source to take
+   it from: Qualcomm's downstream keeps no register map in the kernel for this
+   part at all (the node is a bare `qcom,actuator` with a CCI master number, and
+   the generic engine in `msm_actuator.c` is fed the map from that library over
+   an ioctl), and searching the downstream tree for the part number returns one
+   hit, an unrelated string in `sound/pci/hda/patch_realtek.c`.
+
+   In favour: what came out is a hardware register map for a **third-party ON
+   Semiconductor part** — facts about hardware, not expression; it was read from
+   the library's `.data` section rather than decompiled; and the decode was
+   validated against a known answer (the same layout applied to
+   `libactuator_dw9714.so` reproduces, field for field, what `dw9714.c` already
+   does in-tree, and recovers that part's documented power-up sequence). The EU
+   Software Directive's Article 6 interoperability exception and the US
+   *Sega v. Accolade* / *Sony v. Connectix* line both point the same way, and the
+   kernel takes reverse-engineered drivers routinely. The method is stated in the
+   commit message rather than left implicit, which is the right shape.
+
+   Against: any EULA on the firmware is a separate, contractual question that
+   none of the above answers, and on the LKML this is the point a maintainer will
+   ask about first. ☠️ **This is a decision for a human, not something to resolve
+   by writing a better commit message.**
+
+2. **The imported sensor base cannot carry a DCO.** `bc02a8f70f69` *WIP: iio:
+   Add Qualcomm Sensor Manager driver* and `e4f194b29e8a` *WIP: iio: accel: …*
+   are Yassine Oudjana's code and carry **no `Signed-off-by` at all**, not even
+   his own. The licence is fine — GPL-2.0-only by SPDX — but the certification
+   chain is not, and only he can supply it. His other two QRTR commits are
+   properly signed off. Already the first of the three reasons
+   `submit/7.1.3/sensor` is a single patch; see
+   [`sensors/README.md`](sensors/README.md#why-the-submit-series-is-one-patch).
+
+3. **Checked and clean, recorded so the question is not reopened.**
+   `imx363.c` is Joel Selvaraj's reverse-engineering work under GPL-2.0, keeping
+   `Copyright (C) 2018 Intel Corporation` from the driver it is structured on,
+   and the import preserves the full chain (Joel → panpanpanpan → Richard Acayan
+   → us). Every value taken from the vendor — DT addresses, mic-bias voltages,
+   the DMIC rate, the JEITA thresholds, the actuator inversion in
+   `msm_actuator.c` — comes from Fairphone's **published GPL kernel release**,
+   the same licence as the files it lands in. `qcom_smbx.c`, `wcd9335.c`,
+   `wcd-mbhc-v2.c`, `apq8016_sbc.c`, `q6afe.c` and `q6voice-dai.c` are all
+   in-place extensions of GPL code that was already in the base.
+
+4. **Four compliance gaps in this repository**, none in the kernel fork, all of
+   them small:
+
+   * There is **no `LICENSE` or `COPYING` file**. The
+     [top-level README](../README.md#license) states GPL-2.0-only and nothing
+     else does.
+   * [`device_tree/downstream/fairphone/3.A.0136/`](device_tree/downstream/fairphone/3.A.0136/)
+     redistributes 938 of Fairphone's GPL-2 device-tree files. Each one keeps its
+     Linux Foundation copyright and GPLv2 notice — checked, not assumed — but
+     **the licence text is not shipped alongside them**, which GPL-2 §1 asks for.
+     Copying in a `COPYING` closes it.
+   * [`sensors/bringup/data/sns.reg`](sensors/bringup/data/sns.reg) and the 1437
+     pairs decoded from it in
+     [`../userspace-sensors/registry.conf`](../userspace-sensors/registry.conf)
+     are the phone's factory sensor registry — third-party vendor data, under no
+     stated licence, in a public repository.
+   * [`../userspace-sensors/groups.txt`](../userspace-sensors/groups.txt) is the
+     group map taken from upstream
+     [`sns-reg`](https://gitlab.com/msm8996-mainline/sns-reg)'s `map.c`, and
+     **that project's licence is recorded nowhere here**.
+
+   The libcamera and Snapshot changes are shipped as patches against their own
+   upstreams, so they raise nothing.
+
+Separately from licensing, the AI-authorship policy is already settled and needs
+no work: local fork commits carry `Co-authored-by: Claude`, anything prepared for
+the LKML carries `Assisted-by:` and never a `Signed-off-by` from the assistant.
+That is also why the LKML is the only open destination — see
+[`FP3-TODO.md`](FP3-TODO.md) and the top-level README.
+
 ## The notification LED blinks forever after a missed call
 
 **Symptom:** after a missed call the LED keeps blinking; dismissing the
