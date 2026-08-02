@@ -1,0 +1,368 @@
+From 108c74cda23fced1b4230d968444601249c0df88 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Lajosh=C3=A1zi=2C=20L=C3=A1szl=C3=B3=20Gergely?=
+ <lajoshazilg@gmail.com>
+Date: Sun, 2 Aug 2026 05:01:29 +0200
+Subject: [PATCH 102/104] ipa: simple: Allow the exposure time and the gain to
+ be set
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The simple IPA computes both and offers no way to say otherwise, so an
+application cannot hold a shutter speed, cannot pick a gain to keep noise
+down, and cannot bracket an exposure. Implement ExposureTimeMode and
+AnalogueGainMode with their manual values, as control_ids_core.yaml describes
+them: a value sent while the quantity is automatic is dropped, and the
+metadata reports which source each came from.
+
+The two are independent, which is the point of there being two modes. With the
+exposure time held and the gain automatic, a darkening scene has to be
+answered with gain; with the gain held, with a longer exposure. The AGC's
+ladder is therefore gated per quantity rather than skipped as a whole, so the
+half that is still automatic keeps working and does the whole job.
+
+Publishing a range for these controls needs the sensor's limits before the
+camera is ever configured, since the ControlInfoMap an application sees is
+built once at init() time. The limits are read there from the sensor's V4L2
+controls, alongside the lens, and noted as a range for a user interface rather
+than a promise: they can move when the sensor is reconfigured for another
+resolution, so a value is clamped to the session's limits when it is applied.
+
+Signed-off-by: Lajosházi, László Gergely <lajoshazilg@gmail.com>
+Assisted-by: Claude:claude-opus-5
+---
+ src/ipa/simple/algorithms/agc.cpp | 148 +++++++++++++++++++++++++++++-
+ src/ipa/simple/algorithms/agc.h   |   6 ++
+ src/ipa/simple/ipa_context.h      |  30 ++++++
+ src/ipa/simple/soft_simple.cpp    |  36 ++++++++
+ 4 files changed, 216 insertions(+), 4 deletions(-)
+
+diff --git a/src/ipa/simple/algorithms/agc.cpp b/src/ipa/simple/algorithms/agc.cpp
+index 2f7e040..df11472 100644
+--- a/src/ipa/simple/algorithms/agc.cpp
++++ b/src/ipa/simple/algorithms/agc.cpp
+@@ -7,6 +7,8 @@
+ 
+ #include "agc.h"
+ 
++#include <algorithm>
++#include <array>
+ #include <stdint.h>
+ 
+ #include <libcamera/base/log.h>
+@@ -41,6 +43,107 @@ Agc::Agc()
+ {
+ }
+ 
++int Agc::init(IPAContext &context, [[maybe_unused]] const ValueNode &tuningData)
++{
++	/*
++	 * Without a sensor to ask, there is nothing to hand over: the exposure
++	 * and the gain stay this algorithm's business.
++	 */
++	if (!context.sensor.present)
++		return 0;
++
++	static const std::array<ControlValue, 2> kModes = {
++		ControlValue(static_cast<int32_t>(controls::ExposureTimeModeAuto)),
++		ControlValue(static_cast<int32_t>(controls::ExposureTimeModeManual)),
++	};
++	static const std::array<ControlValue, 2> kGainModes = {
++		ControlValue(static_cast<int32_t>(controls::AnalogueGainModeAuto)),
++		ControlValue(static_cast<int32_t>(controls::AnalogueGainModeManual)),
++	};
++
++	context.ctrlMap[&controls::ExposureTimeMode] =
++		ControlInfo(Span<const ControlValue>(kModes),
++			    ControlValue(static_cast<int32_t>(controls::ExposureTimeModeAuto)));
++	context.ctrlMap[&controls::AnalogueGainMode] =
++		ControlInfo(Span<const ControlValue>(kGainModes),
++			    ControlValue(static_cast<int32_t>(controls::AnalogueGainModeAuto)));
++
++	context.ctrlMap[&controls::ExposureTime] =
++		ControlInfo(context.sensor.exposureMin,
++			    context.sensor.exposureMax,
++			    context.sensor.exposureDef);
++	context.ctrlMap[&controls::AnalogueGain] =
++		ControlInfo(static_cast<float>(context.sensor.gainMin),
++			    static_cast<float>(context.sensor.gainMax),
++			    static_cast<float>(context.sensor.gainDef));
++
++	return 0;
++}
++
++int Agc::configure(IPAContext &context,
++		   [[maybe_unused]] const IPAConfigInfo &configInfo)
++{
++	context.activeState.agc.manualExposure = false;
++	context.activeState.agc.manualGain = false;
++
++	return 0;
++}
++
++void Agc::queueRequest(typename Module::Context &context,
++		       [[maybe_unused]] const uint32_t frame,
++		       [[maybe_unused]] typename Module::FrameContext &frameContext,
++		       const ControlList &controls)
++{
++	auto &agc = context.activeState.agc;
++
++	const auto &exposureMode = controls.get(controls::ExposureTimeMode);
++	if (exposureMode.has_value()) {
++		agc.manualExposure = exposureMode.value() == controls::ExposureTimeModeManual;
++		LOG(IPASoftExposure, Debug)
++			<< "Exposure time is now "
++			<< (agc.manualExposure ? "manual" : "automatic");
++	}
++
++	const auto &gainMode = controls.get(controls::AnalogueGainMode);
++	if (gainMode.has_value()) {
++		agc.manualGain = gainMode.value() == controls::AnalogueGainModeManual;
++		LOG(IPASoftExposure, Debug)
++			<< "Analogue gain is now "
++			<< (agc.manualGain ? "manual" : "automatic");
++	}
++
++	/*
++	 * A value that arrives while the quantity is automatic is dropped, as
++	 * the control definition requires - the algorithm would overwrite it on
++	 * the next frame anyway, and retaining it would make the metadata lie
++	 * about what the sensor was told.
++	 */
++	const auto &exposureTime = controls.get(controls::ExposureTime);
++	if (exposureTime.has_value() && agc.manualExposure) {
++		const double lineMicroseconds =
++			context.configuration.agc.lineDuration.get<std::micro>();
++		int32_t lines = lineMicroseconds > 0
++					? static_cast<int32_t>(exposureTime.value() / lineMicroseconds)
++					: context.configuration.agc.exposureMin;
++		agc.exposure = std::clamp(lines,
++					  context.configuration.agc.exposureMin,
++					  context.configuration.agc.exposureMax);
++		agc.valid = true;
++		LOG(IPASoftExposure, Debug)
++			<< "Setting exposure to " << exposureTime.value()
++			<< " us (" << agc.exposure << " lines)";
++	}
++
++	const auto &gain = controls.get(controls::AnalogueGain);
++	if (gain.has_value() && agc.manualGain) {
++		agc.again = std::clamp(static_cast<double>(gain.value()),
++				       context.configuration.agc.againMin,
++				       context.configuration.agc.againMax);
++		agc.valid = true;
++		LOG(IPASoftExposure, Debug) << "Setting analogue gain to " << agc.again;
++	}
++}
++
+ void Agc::updateExposure(IPAContext &context, IPAFrameContext &frameContext, double exposureMSV)
+ {
+ 	/*
+@@ -54,14 +157,23 @@ void Agc::updateExposure(IPAContext &context, IPAFrameContext &frameContext, dou
+ 	int32_t &exposure = frameContext.sensor.exposure;
+ 	double &again = frameContext.sensor.gain;
+ 
++	/*
++	 * Whichever of the two the application has taken over is left alone,
++	 * and the other one does all the work: with the exposure time pinned,
++	 * a dark scene has to be answered with gain, and with the gain pinned,
++	 * with a longer exposure.
++	 */
++	const bool mayExpose = !context.activeState.agc.manualExposure;
++	const bool mayGain = !context.activeState.agc.manualGain;
++
+ 	if (exposureMSV < kExposureOptimal - kExposureSatisfactory) {
+-		if (exposure < context.configuration.agc.exposureMax) {
++		if (mayExpose && exposure < context.configuration.agc.exposureMax) {
+ 			int32_t next = exposure * kExpNumeratorUp / kExpDenominator;
+ 			if (next - exposure < 1)
+ 				exposure += 1;
+ 			else
+ 				exposure = next;
+-		} else {
++		} else if (mayGain) {
+ 			double next = again * kExpNumeratorUp / kExpDenominator;
+ 			if (next - again < context.configuration.agc.againMinStep)
+ 				again += context.configuration.agc.againMinStep;
+@@ -71,13 +183,13 @@ void Agc::updateExposure(IPAContext &context, IPAFrameContext &frameContext, dou
+ 	}
+ 
+ 	if (exposureMSV > kExposureOptimal + kExposureSatisfactory) {
+-		if (again > context.configuration.agc.again10) {
++		if (mayGain && again > context.configuration.agc.again10) {
+ 			double next = again * kExpNumeratorDown / kExpDenominator;
+ 			if (again - next < context.configuration.agc.againMinStep)
+ 				again -= context.configuration.agc.againMinStep;
+ 			else
+ 				again = next;
+-		} else {
++		} else if (mayExpose) {
+ 			int32_t next = exposure * kExpNumeratorDown / kExpDenominator;
+ 			if (exposure - next < 1)
+ 				exposure -= 1;
+@@ -105,10 +217,38 @@ void Agc::process(IPAContext &context,
+ 		  const SwIspStats *stats,
+ 		  ControlList &metadata)
+ {
++	auto &agc = context.activeState.agc;
++
++	/*
++	 * A manual value is applied here rather than in queueRequest(), so that
++	 * it survives the frames for which there are no statistics: the code
++	 * below would otherwise put the automatic value back.
++	 */
++	if (agc.valid) {
++		if (agc.manualExposure)
++			frameContext.sensor.exposure = agc.exposure;
++		if (agc.manualGain)
++			frameContext.sensor.gain = agc.again;
++	}
++
+ 	utils::Duration exposureTime =
+ 		context.configuration.agc.lineDuration * frameContext.sensor.exposure;
+ 	metadata.set(controls::ExposureTime, exposureTime.get<std::micro>());
+ 	metadata.set(controls::AnalogueGain, frameContext.sensor.gain);
++	metadata.set(controls::ExposureTimeMode,
++		     agc.manualExposure ? controls::ExposureTimeModeManual
++					: controls::ExposureTimeModeAuto);
++	metadata.set(controls::AnalogueGainMode,
++		     agc.manualGain ? controls::AnalogueGainModeManual
++				    : controls::AnalogueGainModeAuto);
++
++	/* Nothing left to decide when the application decides both. */
++	if (agc.manualExposure && agc.manualGain) {
++		agc.exposure = frameContext.sensor.exposure;
++		agc.again = frameContext.sensor.gain;
++		agc.valid = true;
++		return;
++	}
+ 
+ 	if (!context.activeState.agc.valid) {
+ 		/*
+diff --git a/src/ipa/simple/algorithms/agc.h b/src/ipa/simple/algorithms/agc.h
+index 112d9f5..426e9fe 100644
+--- a/src/ipa/simple/algorithms/agc.h
++++ b/src/ipa/simple/algorithms/agc.h
+@@ -19,6 +19,12 @@ public:
+ 	Agc();
+ 	~Agc() = default;
+ 
++	int init(IPAContext &context, const ValueNode &tuningData) override;
++	int configure(IPAContext &context, const IPAConfigInfo &configInfo) override;
++	void queueRequest(typename Module::Context &context,
++			  const uint32_t frame,
++			  typename Module::FrameContext &frameContext,
++			  const ControlList &controls) override;
+ 	void process(IPAContext &context, const uint32_t frame,
+ 		     IPAFrameContext &frameContext,
+ 		     const SwIspStats *stats,
+diff --git a/src/ipa/simple/ipa_context.h b/src/ipa/simple/ipa_context.h
+index b3abc90..b818708 100644
+--- a/src/ipa/simple/ipa_context.h
++++ b/src/ipa/simple/ipa_context.h
+@@ -49,11 +49,38 @@ struct IPALensInfo {
+ 	int32_t def;
+ };
+ 
++/**
++ * \brief What the sensor can be asked for, in the units controls use
++ *
++ * The session configuration holds the same limits in sensor units (exposure in
++ * lines), and is only known once the camera is configured. These are needed
++ * earlier: the control ranges an application sees are published at init() time
++ * and never change afterwards.
++ *
++ * The exposure limits can move when the sensor is reconfigured to another
++ * resolution, so a value taken from here is a range for the user interface,
++ * not a promise - it is clamped to the session's limits when applied.
++ */
++struct IPASensorInfo {
++	bool present;
++	/* Exposure time in microseconds */
++	int32_t exposureMin;
++	int32_t exposureMax;
++	int32_t exposureDef;
++	/* Analogue gain as a multiplier, or as a raw code with no helper */
++	double gainMin;
++	double gainMax;
++	double gainDef;
++};
++
+ struct IPAActiveState {
+ 	struct {
+ 		int32_t exposure;
+ 		double again;
+ 		bool valid;
++		/* Whether the application, rather than this IPA, decides them */
++		bool manualExposure;
++		bool manualGain;
+ 	} agc;
+ 
+ 	struct {
+@@ -65,6 +92,8 @@ struct IPAActiveState {
+ 	struct {
+ 		RGB<float> gains;
+ 		unsigned int temperatureK;
++		/* Whether the application, rather than this IPA, decides them */
++		bool manual;
+ 	} awb;
+ 
+ 	Matrix<float, 3, 3> combinedMatrix;
+@@ -112,6 +141,7 @@ struct IPAContext {
+ 
+ 	IPACameraSensorInfo sensorInfo;
+ 	IPALensInfo lens = {};
++	IPASensorInfo sensor = {};
+ 	IPASessionConfiguration configuration;
+ 	IPAActiveState activeState;
+ 	FCQueue<IPAFrameContext> frameContexts;
+diff --git a/src/ipa/simple/soft_simple.cpp b/src/ipa/simple/soft_simple.cpp
+index f89fadf..d93b88d 100644
+--- a/src/ipa/simple/soft_simple.cpp
++++ b/src/ipa/simple/soft_simple.cpp
+@@ -127,6 +127,42 @@ int IPASoftSimple::init(const IPASettings &settings,
+ 			<< context_.lens.max << " (default " << context_.lens.def << ")";
+ 	}
+ 
++	/*
++	 * Describe the sensor's exposure and gain the same way, and for the
++	 * same reason: an algorithm that offers manual control of them has to
++	 * publish their range before the camera is ever configured.
++	 */
++	const auto &exposure = sensorControls.find(V4L2_CID_EXPOSURE);
++	const auto &gain = sensorControls.find(V4L2_CID_ANALOGUE_GAIN);
++	if (exposure != sensorControls.end() && gain != sensorControls.end()) {
++		const utils::Duration lineDuration =
++			sensorInfo.minLineLength * 1.0s / sensorInfo.pixelRate;
++		const auto toMicroseconds = [&](int32_t lines) {
++			return static_cast<int32_t>((lineDuration * lines).get<std::micro>());
++		};
++		const auto toGain = [&](int32_t code) {
++			return camHelper_ ? camHelper_->gain(code)
++					  : static_cast<double>(code);
++		};
++
++		context_.sensor.present = true;
++		context_.sensor.exposureMin =
++			std::max(toMicroseconds(exposure->second.min().get<int32_t>()), 1);
++		context_.sensor.exposureMax =
++			toMicroseconds(exposure->second.max().get<int32_t>());
++		context_.sensor.exposureDef =
++			toMicroseconds(exposure->second.def().get<int32_t>());
++		context_.sensor.gainMin = toGain(gain->second.min().get<int32_t>());
++		context_.sensor.gainMax = toGain(gain->second.max().get<int32_t>());
++		context_.sensor.gainDef = toGain(gain->second.def().get<int32_t>());
++
++		LOG(IPASoft, Info)
++			<< "Sensor exposure " << context_.sensor.exposureMin << "-"
++			<< context_.sensor.exposureMax << " us, gain "
++			<< context_.sensor.gainMin << "-" << context_.sensor.gainMax
++			<< (camHelper_ ? "x" : " (raw, no sensor helper)");
++	}
++
+ 	/* Load the tuning data file */
+ 	File file(settings.configurationFile);
+ 	if (!file.open(File::OpenModeFlag::ReadOnly)) {
+-- 
+2.53.0
+

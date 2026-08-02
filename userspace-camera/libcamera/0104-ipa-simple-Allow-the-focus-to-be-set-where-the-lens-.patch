@@ -1,0 +1,159 @@
+From 0dd42c894a69a54b45e9db725f8e8bd7d12f6b22 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Lajosh=C3=A1zi=2C=20L=C3=A1szl=C3=B3=20Gergely?=
+ <lajoshazilg@gmail.com>
+Date: Sun, 2 Aug 2026 05:02:02 +0200
+Subject: [PATCH 104/104] ipa: simple: Allow the focus to be set, where the
+ lens is calibrated
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+AfModeManual currently means only "stop focusing"; there is no way to say
+where. Implement LensPosition, mapping dioptres to actuator codes linearly,
+which is how a voice coil behaves closely enough for focusing.
+
+The mapping cannot be invented. LensPosition is defined in dioptres, so it
+takes two reference points - the code that focuses at infinity, and a code
+with the distance it focuses at - and those are a property of the camera
+module, often held in the module's own EEPROM. They are read from the tuning
+file, and where the tuning file does not have them the control is not
+advertised at all: an uncalibrated lens that reported dioptres would be
+reporting a number that means nothing, and an application cannot tell the
+difference.
+
+Signed-off-by: Lajosházi, László Gergely <lajoshazilg@gmail.com>
+Assisted-by: Claude:claude-opus-5
+---
+ src/ipa/simple/algorithms/af.cpp | 73 ++++++++++++++++++++++++++++++++
+ src/ipa/simple/algorithms/af.h   | 14 ++++++
+ 2 files changed, 87 insertions(+)
+
+diff --git a/src/ipa/simple/algorithms/af.cpp b/src/ipa/simple/algorithms/af.cpp
+index cd6cb8c..8a98c4b 100644
+--- a/src/ipa/simple/algorithms/af.cpp
++++ b/src/ipa/simple/algorithms/af.cpp
+@@ -173,9 +173,70 @@ int Af::init(IPAContext &context, const ValueNode &tuningData)
+ 	context.ctrlMap[&controls::AfWindows] =
+ 		ControlInfo(Rectangle(), Rectangle(), Rectangle());
+ 
++	/*
++	 * LensPosition is in dioptres, so it can only be offered where somebody
++	 * has related an actuator code to a distance. That is a property of the
++	 * camera module - often held in its own EEPROM - and belongs in the
++	 * tuning file; guessing it would be inventing a calibration. Without
++	 * it, manual focus is simply not advertised, and AfModeManual means
++	 * only "hold the lens where it is".
++	 */
++	const auto infinity = tuningData["lens-infinity-code"].get<int32_t>();
++	const auto closest = tuningData["lens-closest-code"].get<int32_t>();
++	const auto distance = tuningData["lens-closest-distance"].get<double>();
++
++	if (infinity.has_value() && closest.has_value() &&
++	    distance.has_value() && distance.value() > 0.0 &&
++	    infinity.value() != closest.value()) {
++		calibration_.known = true;
++		calibration_.infinity = infinity.value();
++		calibration_.closest = closest.value();
++		calibration_.closestDioptres = 1.0 / distance.value();
++
++		context.ctrlMap[&controls::LensPosition] =
++			ControlInfo(0.0f, calibration_.closestDioptres,
++				    dioptresOf(context.lens.def));
++
++		LOG(IPASoftAf, Info)
++			<< "Manual focus from " << calibration_.infinity
++			<< " (infinity) to " << calibration_.closest << " ("
++			<< distance.value() << " m)";
++	} else {
++		LOG(IPASoftAf, Info)
++			<< "Lens not calibrated, manual focus unavailable";
++	}
++
+ 	return 0;
+ }
+ 
++/**
++ * \brief Convert a raw actuator code to dioptres
++ *
++ * The two are taken to be linear in each other, which is how a voice coil
++ * behaves closely enough for focusing: the lens moves proportionally to the
++ * current, and the reciprocal of the focus distance moves proportionally to
++ * the lens.
++ */
++float Af::dioptresOf(int32_t position) const
++{
++	if (!calibration_.known)
++		return 0.0f;
++
++	const float span = calibration_.closest - calibration_.infinity;
++	return (position - calibration_.infinity) / span * calibration_.closestDioptres;
++}
++
++int32_t Af::positionOf(float dioptres) const
++{
++	if (!calibration_.known || calibration_.closestDioptres <= 0.0f)
++		return 0;
++
++	const float span = calibration_.closest - calibration_.infinity;
++	const float position = calibration_.infinity +
++			       dioptres / calibration_.closestDioptres * span;
++	return static_cast<int32_t>(std::lround(position));
++}
++
+ /**
+  * \brief Choose the focus zones the score is taken over
+  * \param[in] windows The requested windows, empty for the whole frame
+@@ -295,6 +356,16 @@ void Af::queueRequest(typename Module::Context &context,
+ 			startScan(context);
+ 	}
+ 
++	const auto &position = controls.get(controls::LensPosition);
++	if (position.has_value() && calibration_.known &&
++	    af.mode == controls::AfModeManual) {
++		moveTo(context, positionOf(position.value()));
++		af.state = controls::AfStateIdle;
++		LOG(IPASoftAf, Debug)
++			<< "Lens moved to " << position.value() << " dioptres ("
++			<< af.position << ")";
++	}
++
+ 	const auto &trigger = controls.get(controls::AfTrigger);
+ 	if (trigger.has_value() && af.mode == controls::AfModeAuto) {
+ 		if (trigger.value() == controls::AfTriggerStart) {
+@@ -575,6 +646,8 @@ void Af::process(IPAContext &context,
+ 		return;
+ 
+ 	metadata.set(controls::AfState, af.state);
++	if (calibration_.known)
++		metadata.set(controls::LensPosition, dioptresOf(af.position));
+ 
+ 	if (af.mode == controls::AfModeManual || !stats->valid)
+ 		return;
+diff --git a/src/ipa/simple/algorithms/af.h b/src/ipa/simple/algorithms/af.h
+index 3cff742..b67d8b1 100644
+--- a/src/ipa/simple/algorithms/af.h
++++ b/src/ipa/simple/algorithms/af.h
+@@ -58,6 +58,20 @@ private:
+ 	void planScan(int32_t centre, int32_t span, unsigned int steps);
+ 	void moveTo(IPAContext &context, int32_t position);
+ 
++	float dioptresOf(int32_t position) const;
++	int32_t positionOf(float dioptres) const;
++
++	/*
++	 * What the raw actuator codes mean as focus distances. Only known if
++	 * the tuning file says so, and LensPosition is offered only then.
++	 */
++	struct {
++		bool known = false;
++		int32_t infinity = 0;
++		int32_t closest = 0;
++		float closestDioptres = 0.0f;
++	} calibration_;
++
+ 	/* Which focus zones the score is taken over */
+ 	std::array<bool, SwIspStats::kAfZonesX * SwIspStats::kAfZonesY> zones_;
+ 
+-- 
+2.53.0
+

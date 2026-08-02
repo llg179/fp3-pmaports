@@ -156,7 +156,9 @@ Measured 2026-08-01 on `linux-fp3-7.1.3-r32` (`#33-fp3`) with libcamera 0.7.1,
 | frame rate | **~6 fps at 4032×3024, ~30 fps at 1920×1080** — the same on both debayers, so the limit is not the debayering |
 | field of view | full, **on the GPU debayer only**. ☠️ The CPU debayer does not scale, it **centre-crops**: `window_.width = outputCfg.size.width` out of a 4032-wide sensor, so a 1920×1080 preview shows 48% of the width and 36% of the height — which looks exactly like a fixed ~3× zoom next to another phone |
 | PipeWire | device `imx363 [libcamera]`, source *Built-in Back Camera*, offering a ladder of sizes from 160×120 up |
-| controls offered | `Contrast`, `Gamma`, **`AfMode`, `AfTrigger`, `AfMetering`, `AfWindows`** |
+| controls offered | `Contrast`, `Gamma`, **`AfMode`, `AfTrigger`, `AfMetering`, `AfWindows`**, and with the manual-control patches **`ExposureTimeMode`, `ExposureTime`, `AnalogueGainMode`, `AnalogueGain`, `AwbEnable`, `ColourTemperature`** |
+| what a control can be | the node describes itself — `pw-dump <node>` returns each control's libcamera name, type, bounds and, for the enumerated ones, its value labels. That is enough to build a user interface for a camera nobody wrote code for, and is how the app's manual controls are built |
+| manual focus | **not offered.** `LensPosition` is defined in dioptres, so publishing it needs two actuator codes related to real distances; the module's own EEPROM (`bl24s64`, no driver) is where a vendor keeps them. Until then the lens can be focused but not *told a distance* — see [FP3-TODO 33j](../FP3-TODO.md) |
 | autofocus | continuous by default; a scan is 19 measurements, so **~3.5 s at 1920×1080** and ~14 s at full resolution — statistics arrive once every four frames |
 | reaching a control from an app | only by binding the PipeWire node directly. `pw-cli set-param <node> Props '{ 16777249: 1 }'` sets `AfMode`; the id is `SPA_PROP_START_CUSTOM` (0x1000000) plus libcamera's control id (`AfMode` 33, `AfTrigger` 38) |
 
@@ -172,8 +174,11 @@ GStreamer.** PipeWire's libcamera plugin maps controls to properties only for
 `spa/plugins/libcamera/libcamera-source.cpp`), so `AfWindows` never arrives —
 focusing on a *tapped point* still needs a change there
 ([FP3-TODO 33g](../FP3-TODO.md)). And `pipewiresrc` carries no camera controls
-at all, so an application has to bind the node itself; the Snapshot patches do
-exactly that, using the `object.id` the GStreamer device already carries.
+at all, so an application has to reach the node itself; the Snapshot patches run
+`pw-cli set-param` on the `object.id` the GStreamer device already carries.
+Binding the node in-process needs the `pipewire` Rust crate, whose bindgen step
+does not survive cross compilation — see
+[`userspace-camera/`](../../userspace-camera/README.md).
 
 ☠️ **Two libcamera clients at once can wedge the focus lens until reboot.**
 Opening the lens subdevice runtime-resumes the actuator, and if that happens

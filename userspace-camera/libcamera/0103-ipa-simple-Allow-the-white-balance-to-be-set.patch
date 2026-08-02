@@ -1,0 +1,269 @@
+From 9deec1ce45abfc00dd1dad26cf5ca80d71c07c5d Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Lajosh=C3=A1zi=2C=20L=C3=A1szl=C3=B3=20Gergely?=
+ <lajoshazilg@gmail.com>
+Date: Sun, 2 Aug 2026 05:01:52 +0200
+Subject: [PATCH 103/104] ipa: simple: Allow the white balance to be set
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Grey-world white balance is wrong exactly when a scene is not grey - a wall
+of foliage, a sunset, a coloured wall - and there is currently no way to tell
+it so. Implement AwbEnable, and with it off, take the illuminant from
+ColourTemperature.
+
+Naming the illuminant is the form that survives the trip to an application:
+ColourGains would be the more direct control, but it is an array, and a
+transport that carries only scalars - as PipeWire's libcamera plugin does -
+drops it. A temperature is also the choice a photographer recognises.
+
+The conversion needs the opposite of estimateCCT(), which libipa did not have,
+so rgbFromCCT() is added next to it: the Planckian locus by the cubic
+approximation of Kim et al., then the standard D65 matrix into linear sRGB,
+which gives a neutral result at 6500 K as it should.
+
+It is not the inverse of estimateCCT() and the two do not round-trip, which is
+worth saying plainly because the obvious implementation would be to invert
+that function's matrix. That matrix is not a colorimetric RGB-to-XYZ one;
+inverting it yields a red gain that is not even monotonic in the temperature
+(measured: a maximum around 4000 K, with 2800 K and 6500 K landing within one
+percent of each other). A chosen temperature is therefore reported back as it
+was chosen, rather than re-estimated from the gains it produced.
+
+What this is not is a calibration. It says what a black body of that
+temperature looks like in a standard colour space, not what it looks like to
+a particular sensor, which would need a colour correction matrix.
+
+Signed-off-by: Lajosházi, László Gergely <lajoshazilg@gmail.com>
+Assisted-by: Claude:claude-opus-5
+---
+ src/ipa/libipa/colours.cpp        | 73 ++++++++++++++++++++++++++++++
+ src/ipa/libipa/colours.h          |  1 +
+ src/ipa/simple/algorithms/awb.cpp | 74 +++++++++++++++++++++++++++++++
+ src/ipa/simple/algorithms/awb.h   |  5 +++
+ 4 files changed, 153 insertions(+)
+
+diff --git a/src/ipa/libipa/colours.cpp b/src/ipa/libipa/colours.cpp
+index 97124cf..4ef7a54 100644
+--- a/src/ipa/libipa/colours.cpp
++++ b/src/ipa/libipa/colours.cpp
+@@ -76,6 +76,79 @@ uint32_t estimateCCT(const RGB<double> &rgb)
+ 	return 449 * n * n * n + 3525 * n * n + 6823.3 * n + 5520.33;
+ }
+ 
++/**
++ * \brief Estimate the RGB colour space input for a colour temperature
++ * \param[in] cct The correlated colour temperature, in kelvin
++ *
++ * This is the counterpart of estimateCCT(), for the case where an application
++ * names the illuminant instead of the camera measuring it. The temperature is
++ * turned into a chromaticity on the Planckian locus using the cubic
++ * approximation of Kim et al., "Design of Advanced Color Temperature Control
++ * System for HDTV Applications" (2002), valid from 1667 K to 25000 K, and the
++ * chromaticity into linear sRGB through the standard D65 matrix. At 6500 K it
++ * therefore returns a neutral value, as it should.
++ *
++ * \warning It is not the inverse of estimateCCT(), and the two do not
++ * round-trip. That function converts with a matrix that is not a colorimetric
++ * RGB-to-XYZ one, and inverting it produces a red gain that is not even
++ * monotonic in the temperature. A caller that has to report a temperature it
++ * was given should report what it was given.
++ *
++ * Note also what this is not: an illuminant is not a calibration. The result
++ * says what a black body of that temperature looks like in a standard colour
++ * space, not what it looks like to a particular sensor, for which a colour
++ * correction matrix would be needed.
++ *
++ * \return The RGB value, normalised so that green is 1.0
++ */
++RGB<double> rgbFromCCT(uint32_t cct)
++{
++	const double t = std::clamp<double>(cct, 1667.0, 25000.0);
++	const double t2 = t * t;
++	const double t3 = t2 * t;
++
++	double x;
++	if (t <= 4000.0)
++		x = -0.2661239e9 / t3 - 0.2343589e6 / t2 + 0.8776956e3 / t + 0.179910;
++	else
++		x = -3.0258469e9 / t3 + 2.1070379e6 / t2 + 0.2226347e3 / t + 0.240390;
++
++	const double x2 = x * x;
++	const double x3 = x2 * x;
++
++	double y;
++	if (t <= 2222.0)
++		y = -1.1063814 * x3 - 1.34811020 * x2 + 2.18555832 * x - 0.20219683;
++	else if (t <= 4000.0)
++		y = -0.9549476 * x3 - 1.37418593 * x2 + 2.09137015 * x - 0.16748867;
++	else
++		y = 3.0817580 * x3 - 5.87338670 * x2 + 3.75112997 * x - 0.37001483;
++
++	/* Chromaticity to tristimulus values, at unit luminance. */
++	const Vector<double, 3> xyz{ { x / y, 1.0, (1.0 - x - y) / y } };
++
++	/* CIE XYZ (D65) to linear sRGB. */
++	static const Matrix<double, 3, 3> xyz2rgb({
++		 3.2404542, -1.5371385, -0.4985314,
++		-0.9692660,  1.8760108,  0.0415560,
++		 0.0556434, -0.2040259,  1.0572252
++	});
++
++	Vector<double, 3> rgb = xyz2rgb * xyz;
++
++	/*
++	 * The locus leaves the sRGB gamut at both ends, and a component that
++	 * has gone negative there would become a negative gain. Keep the result
++	 * usable rather than correct where that happens.
++	 */
++	const double green = rgb.y() > 1e-6 ? rgb.y() : 1.0;
++	return RGB<double>{ {
++		std::max(rgb.x() / green, 1e-3),
++		1.0,
++		std::max(rgb.z() / green, 1e-3),
++	} };
++}
++
+ } /* namespace ipa */
+ 
+ } /* namespace libcamera */
+diff --git a/src/ipa/libipa/colours.h b/src/ipa/libipa/colours.h
+index d39b2ca..684b06f 100644
+--- a/src/ipa/libipa/colours.h
++++ b/src/ipa/libipa/colours.h
+@@ -17,6 +17,7 @@ namespace ipa {
+ 
+ double rec601LuminanceFromRGB(const RGB<double> &rgb);
+ uint32_t estimateCCT(const RGB<double> &rgb);
++RGB<double> rgbFromCCT(uint32_t cct);
+ 
+ } /* namespace ipa */
+ 
+diff --git a/src/ipa/simple/algorithms/awb.cpp b/src/ipa/simple/algorithms/awb.cpp
+index f5c88ea..b2f8894 100644
+--- a/src/ipa/simple/algorithms/awb.cpp
++++ b/src/ipa/simple/algorithms/awb.cpp
+@@ -7,6 +7,7 @@
+ 
+ #include "awb.h"
+ 
++#include <algorithm>
+ #include <numeric>
+ #include <stdint.h>
+ 
+@@ -23,15 +24,75 @@ LOG_DEFINE_CATEGORY(IPASoftAwb)
+ 
+ namespace ipa::soft::algorithms {
+ 
++/*
++ * The range offered for a manually chosen illuminant. The wide end is candle
++ * light, the narrow end an overcast sky; outside it the Planckian locus leaves
++ * what the conversion can represent.
++ */
++static constexpr int32_t kMinColourTemperature = 2000;
++static constexpr int32_t kMaxColourTemperature = 10000;
++static constexpr int32_t kDefaultColourTemperature = 6500;
++
++int Awb::init(IPAContext &context, [[maybe_unused]] const ValueNode &tuningData)
++{
++	context.ctrlMap[&controls::AwbEnable] = ControlInfo(false, true, true);
++	context.ctrlMap[&controls::ColourTemperature] =
++		ControlInfo(kMinColourTemperature,
++			    kMaxColourTemperature,
++			    kDefaultColourTemperature);
++
++	return 0;
++}
++
+ int Awb::configure(IPAContext &context,
+ 		   [[maybe_unused]] const IPAConfigInfo &configInfo)
+ {
+ 	auto &gains = context.activeState.awb.gains;
+ 	gains = { { 1.0, 1.0, 1.0 } };
++	context.activeState.awb.manual = false;
++	context.activeState.awb.temperatureK = kDefaultColourTemperature;
+ 
+ 	return 0;
+ }
+ 
++void Awb::queueRequest(typename Module::Context &context,
++		       [[maybe_unused]] const uint32_t frame,
++		       [[maybe_unused]] typename Module::FrameContext &frameContext,
++		       const ControlList &controls)
++{
++	auto &awb = context.activeState.awb;
++
++	const auto &enable = controls.get(controls::AwbEnable);
++	if (enable.has_value()) {
++		awb.manual = !enable.value();
++		LOG(IPASoftAwb, Debug)
++			<< "White balance is now "
++			<< (awb.manual ? "manual" : "automatic");
++	}
++
++	const auto &temperature = controls.get(controls::ColourTemperature);
++	if (temperature.has_value() && awb.manual) {
++		awb.temperatureK = std::clamp(temperature.value(),
++					      kMinColourTemperature,
++					      kMaxColourTemperature);
++
++		/*
++		 * The gains have to undo the illuminant, so they are the
++		 * reciprocal of what it looks like.
++		 */
++		const RGB<double> illuminant = rgbFromCCT(awb.temperatureK);
++		awb.gains = { {
++			std::clamp(static_cast<float>(1.0 / illuminant.r()), 0.25f, 4.0f),
++			1.0f,
++			std::clamp(static_cast<float>(1.0 / illuminant.b()), 0.25f, 4.0f),
++		} };
++
++		LOG(IPASoftAwb, Debug)
++			<< "Setting colour temperature to " << awb.temperatureK
++			<< " K, gains " << awb.gains;
++	}
++}
++
+ void Awb::prepare(IPAContext &context,
+ 		  [[maybe_unused]] const uint32_t frame,
+ 		  IPAFrameContext &frameContext,
+@@ -64,6 +125,19 @@ void Awb::process(IPAContext &context,
+ 		static_cast<float>(frameContext.gains.blue)
+ 	};
+ 	metadata.set(controls::ColourGains, mdGains);
++	metadata.set(controls::AwbEnable, !context.activeState.awb.manual);
++
++	/*
++	 * A chosen illuminant is reported back as it was chosen. Measuring it
++	 * from the gains instead would report a different number, since
++	 * estimateCCT() is not the inverse of the conversion that produced
++	 * them - see rgbFromCCT().
++	 */
++	if (context.activeState.awb.manual) {
++		metadata.set(controls::ColourTemperature,
++			     context.activeState.awb.temperatureK);
++		return;
++	}
+ 
+ 	if (!stats->valid)
+ 		return;
+diff --git a/src/ipa/simple/algorithms/awb.h b/src/ipa/simple/algorithms/awb.h
+index ad993f3..faaf943 100644
+--- a/src/ipa/simple/algorithms/awb.h
++++ b/src/ipa/simple/algorithms/awb.h
+@@ -19,7 +19,12 @@ public:
+ 	Awb() = default;
+ 	~Awb() = default;
+ 
++	int init(IPAContext &context, const ValueNode &tuningData) override;
+ 	int configure(IPAContext &context, const IPAConfigInfo &configInfo) override;
++	void queueRequest(typename Module::Context &context,
++			  const uint32_t frame,
++			  typename Module::FrameContext &frameContext,
++			  const ControlList &controls) override;
+ 	void prepare(IPAContext &context,
+ 		     const uint32_t frame,
+ 		     IPAFrameContext &frameContext,
+-- 
+2.53.0
+

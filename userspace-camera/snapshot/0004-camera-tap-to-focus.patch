@@ -1,4 +1,4 @@
-From 84da99436a1c9af5560069050d7514f1da1bd40a Mon Sep 17 00:00:00 2001
+From e1d17b0ae521541f86b88eeea66d15a1c0e6b426 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Lajosh=C3=A1zi=2C=20L=C3=A1szl=C3=B3=20Gergely?=
  <lajoshazilg@gmail.com>
 Date: Sun, 2 Aug 2026 02:51:03 +0200
@@ -13,11 +13,15 @@ Reaching the camera's focus needs a word about how. libcamera's controls are
 published by PipeWire's libcamera plugin as node properties, keyed by
 SPA_PROP_START_CUSTOM plus the libcamera control id, and GStreamer's
 pipewiresrc carries none of them: it exposes the stream and nothing else. So
-Aperture talks to PipeWire directly for this one purpose, binding the node the
-GstDevice names in object.id and setting Props on it, which is what
-'pw-cli set-param <node> Props { ... }' does by hand. It runs on a thread and
-logs rather than fails: a camera that will not focus on demand is still a
-working camera.
+Aperture sets them on the node itself, by running
+
+    pw-cli set-param <node> Props { <id>: <value> }
+
+on the node the GstDevice names in object.id. Binding the node in-process
+would avoid the fork, but that means the pipewire crate, whose libspa-sys
+runs bindgen and so needs a working libclang in the build - a heavy
+dependency for two integers. It runs on a thread and logs rather than fails:
+a camera that will not focus on demand is still a working camera.
 
 Only integer controls arrive this way - the plugin maps bool, int32 and float
 and returns early for arrays - so AfMode and AfTrigger come through while
@@ -27,315 +31,17 @@ wait for a change in PipeWire; focusing when the picture is tapped does not.
 With autofocus on, a double tap keeps toggling the zoom, since the camera is
 already focusing by itself.
 ---
- Cargo.lock                              | 178 +++++++++++++++++++++++-
- aperture/Cargo.toml                     |   1 +
- aperture/src/camera.rs                  |  13 ++
- aperture/src/camera_control.rs          | 171 +++++++++++++++++++++++
- aperture/src/lib.rs                     |   1 +
- aperture/src/viewfinder.rs              |  40 ++++++
- data/org.gnome.Snapshot.gschema.xml.in  |   5 +
- data/resources/ui/preferences_window.ui |   8 ++
- src/widgets/camera.rs                   |  48 +++++--
- src/widgets/preferences_window.rs       |   3 +
- 10 files changed, 459 insertions(+), 9 deletions(-)
+ aperture/src/camera.rs                  | 13 ++++
+ aperture/src/camera_control.rs          | 97 +++++++++++++++++++++++++
+ aperture/src/lib.rs                     |  1 +
+ aperture/src/viewfinder.rs              | 40 ++++++++++
+ data/org.gnome.Snapshot.gschema.xml.in  |  5 ++
+ data/resources/ui/preferences_window.ui |  8 ++
+ src/widgets/camera.rs                   | 48 ++++++++++--
+ src/widgets/preferences_window.rs       |  3 +
+ 8 files changed, 207 insertions(+), 8 deletions(-)
  create mode 100644 aperture/src/camera_control.rs
 
-diff --git a/Cargo.lock b/Cargo.lock
-index d44eb3b..28ffbbc 100644
---- a/Cargo.lock
-+++ b/Cargo.lock
-@@ -17,6 +17,22 @@ version = "0.2.21"
- source = "registry+https://github.com/rust-lang/crates.io-index"
- checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
- 
-+[[package]]
-+name = "annotate-snippets"
-+version = "0.11.5"
-+source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "710e8eae58854cdc1790fcb56cca04d712a17be849eeb81da2a724bf4bae2bc4"
-+dependencies = [
-+ "anstyle",
-+ "unicode-width",
-+]
-+
-+[[package]]
-+name = "anstyle"
-+version = "1.0.14"
-+source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "940b3a0ca603d1eade50a4846a2afffd5ef57a9feac2c0e2ec2e14f9ead76000"
-+
- [[package]]
- name = "anyhow"
- version = "1.0.102"
-@@ -34,6 +50,7 @@ dependencies = [
-  "gstreamer-video",
-  "gtk4",
-  "log",
-+ "pipewire",
-  "rqrr",
- ]
- 
-@@ -205,6 +222,25 @@ version = "1.5.0"
- source = "registry+https://github.com/rust-lang/crates.io-index"
- checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
- 
-+[[package]]
-+name = "bindgen"
-+version = "0.72.1"
-+source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "993776b509cfb49c750f11b8f07a46fa23e0a1386ffc01fb1e7d343efc387895"
-+dependencies = [
-+ "annotate-snippets",
-+ "bitflags",
-+ "cexpr",
-+ "clang-sys",
-+ "itertools 0.13.0",
-+ "proc-macro2",
-+ "quote",
-+ "regex",
-+ "rustc-hash",
-+ "shlex",
-+ "syn",
-+]
-+
- [[package]]
- name = "bitflags"
- version = "2.11.0"
-@@ -269,6 +305,15 @@ dependencies = [
-  "shlex",
- ]
- 
-+[[package]]
-+name = "cexpr"
-+version = "0.6.0"
-+source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "6fac387a98bb7c37292057cffc56d62ecb629900026402633ae9160df93a8766"
-+dependencies = [
-+ "nom 7.1.3",
-+]
-+
- [[package]]
- name = "cfg-expr"
- version = "0.20.6"
-@@ -285,6 +330,17 @@ version = "1.0.4"
- source = "registry+https://github.com/rust-lang/crates.io-index"
- checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
- 
-+[[package]]
-+name = "clang-sys"
-+version = "1.9.1"
-+source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "157a8ba7b480713b56f4c09fd13fc3e0a22a5dfab8097ba61cbc5feef950788a"
-+dependencies = [
-+ "glob",
-+ "libc",
-+ "libloading",
-+]
-+
- [[package]]
- name = "concurrent-queue"
- version = "2.5.0"
-@@ -294,6 +350,12 @@ dependencies = [
-  "crossbeam-utils",
- ]
- 
-+[[package]]
-+name = "cookie-factory"
-+version = "0.3.3"
-+source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "9885fa71e26b8ab7855e2ec7cae6e9b380edff76cd052e07c683a0319d51b3a2"
-+
- [[package]]
- name = "crossbeam-utils"
- version = "0.8.21"
-@@ -728,6 +790,12 @@ dependencies = [
-  "system-deps",
- ]
- 
-+[[package]]
-+name = "glob"
-+version = "0.3.4"
-+source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "e4eba85ea1d0a966a983acd07deee566e67395d2d96b6fb39e62b5a833f1eb0b"
-+
- [[package]]
- name = "gobject-sys"
- version = "0.22.0"
-@@ -805,7 +873,7 @@ dependencies = [
-  "futures-util",
-  "glib",
-  "gstreamer-sys",
-- "itertools",
-+ "itertools 0.14.0",
-  "kstring",
-  "libc",
-  "muldiv",
-@@ -1055,6 +1123,15 @@ dependencies = [
-  "serde_core",
- ]
- 
-+[[package]]
-+name = "itertools"
-+version = "0.13.0"
-+source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "413ee7dfc52ee1a4949ceeb7dbc8a33f2d6c088194d9f922fb8318faf1f01186"
-+dependencies = [
-+ "either",
-+]
-+
- [[package]]
- name = "itertools"
- version = "0.14.0"
-@@ -1190,6 +1267,43 @@ dependencies = [
-  "system-deps",
- ]
- 
-+[[package]]
-+name = "libloading"
-+version = "0.8.9"
-+source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "d7c4b02199fee7c5d21a5ae7d8cfa79a6ef5bb2fc834d6e9058e89c825efdc55"
-+dependencies = [
-+ "cfg-if",
-+ "windows-link",
-+]
-+
-+[[package]]
-+name = "libspa"
-+version = "0.10.0"
-+source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "2909f3be29d674e7f10604aff18d1bbe1bb03c4cd61c8a8ba19c0b1d162f7d4e"
-+dependencies = [
-+ "bitflags",
-+ "cc",
-+ "cookie-factory",
-+ "libc",
-+ "libspa-sys",
-+ "nom 8.0.0",
-+ "rustix",
-+ "system-deps",
-+]
-+
-+[[package]]
-+name = "libspa-sys"
-+version = "0.10.0"
-+source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "69ad52764fca54818486f3cf75afec844d1f1a1568c24dcee25d41b1ab007dda"
-+dependencies = [
-+ "bindgen",
-+ "cc",
-+ "system-deps",
-+]
-+
- [[package]]
- name = "linux-raw-sys"
- version = "0.12.1"
-@@ -1248,12 +1362,37 @@ dependencies = [
-  "autocfg",
- ]
- 
-+[[package]]
-+name = "minimal-lexical"
-+version = "0.2.1"
-+source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
-+
- [[package]]
- name = "muldiv"
- version = "1.0.1"
- source = "registry+https://github.com/rust-lang/crates.io-index"
- checksum = "956787520e75e9bd233246045d19f42fb73242759cc57fba9611d940ae96d4b0"
- 
-+[[package]]
-+name = "nom"
-+version = "7.1.3"
-+source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "d273983c5a657a70a3e8f2a01329822f3b8c8172b73826411a55751e404a0a4a"
-+dependencies = [
-+ "memchr",
-+ "minimal-lexical",
-+]
-+
-+[[package]]
-+name = "nom"
-+version = "8.0.0"
-+source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "df9761775871bdef83bee530e60050f7e54b1105350d6884eb0fb4f46c2f9405"
-+dependencies = [
-+ "memchr",
-+]
-+
- [[package]]
- name = "nu-ansi-term"
- version = "0.50.3"
-@@ -1398,6 +1537,31 @@ dependencies = [
-  "futures-io",
- ]
- 
-+[[package]]
-+name = "pipewire"
-+version = "0.10.0"
-+source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "8585aba8a52ad74ccc633b8e293c1dc4277976bd5d510b925533f34fd6685f38"
-+dependencies = [
-+ "bitflags",
-+ "libc",
-+ "libspa",
-+ "libspa-sys",
-+ "pipewire-sys",
-+ "rustix",
-+]
-+
-+[[package]]
-+name = "pipewire-sys"
-+version = "0.10.0"
-+source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "f2089f245b548723e60325773c27f586b7a2372c79ea941b246cd0d654706adc"
-+dependencies = [
-+ "bindgen",
-+ "libspa-sys",
-+ "system-deps",
-+]
-+
- [[package]]
- name = "pkg-config"
- version = "0.3.32"
-@@ -1500,6 +1664,12 @@ dependencies = [
-  "lru",
- ]
- 
-+[[package]]
-+name = "rustc-hash"
-+version = "2.1.3"
-+source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "6b1e7f9a428571be2dc5bc0505c13fb6bf936822b894ec87abf8a08a4e51742d"
-+
- [[package]]
- name = "rustc_version"
- version = "0.4.1"
-@@ -1862,6 +2032,12 @@ version = "1.0.24"
- source = "registry+https://github.com/rust-lang/crates.io-index"
- checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
- 
-+[[package]]
-+name = "unicode-width"
-+version = "0.2.2"
-+source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "b4ac048d71ede7ee76d585517add45da530660ef4390e49b098733c6e897f254"
-+
- [[package]]
- name = "unicode-xid"
- version = "0.2.6"
-diff --git a/aperture/Cargo.toml b/aperture/Cargo.toml
-index fbd80fc..8c85a13 100644
---- a/aperture/Cargo.toml
-+++ b/aperture/Cargo.toml
-@@ -19,4 +19,5 @@ gst-pbutils = { workspace = true }
- gst-video = { workspace = true }
- gtk = { workspace = true }
- log = { workspace = true }
-+pipewire = "0.10.0"
- rqrr = { version = "0.10", default-features = false }
 diff --git a/aperture/src/camera.rs b/aperture/src/camera.rs
 index b2d85d1..c020bb9 100644
 --- a/aperture/src/camera.rs
@@ -362,29 +68,30 @@ index b2d85d1..c020bb9 100644
              return Vec::new();
 diff --git a/aperture/src/camera_control.rs b/aperture/src/camera_control.rs
 new file mode 100644
-index 0000000..1cdef9d
+index 0000000..104d8e3
 --- /dev/null
 +++ b/aperture/src/camera_control.rs
-@@ -0,0 +1,171 @@
+@@ -0,0 +1,97 @@
 +//! Setting libcamera controls on a PipeWire camera node.
 +//!
 +//! GStreamer's `pipewiresrc` has no way to reach a camera's controls: it
 +//! exposes the stream, and nothing else. PipeWire's libcamera plugin does
 +//! publish them, as node properties keyed by `SPA_PROP_START_CUSTOM` plus the
-+//! libcamera control id, so they can be set on the node itself the way
-+//! `pw-cli set-param <node> Props { ... }` does.
++//! libcamera control id, so they can be set on the node itself.
++//!
++//! That is done here by running `pw-cli set-param <node> Props { ... }`, the
++//! tool PipeWire ships for exactly this. Binding the node from inside the
++//! process would avoid the fork, but it means the `pipewire` crate, whose
++//! `libspa-sys` runs bindgen and so drags a working libclang into the build -
++//! a heavy dependency for two integers, and one that does not survive cross
++//! compilation.
 +//!
 +//! Only integer controls arrive that way. The plugin maps `bool`, `int32` and
 +//! `float` and returns early for arrays, so `AfMode` and `AfTrigger` come
 +//! through while `AfWindows` does not.
 +
-+use std::cell::Cell;
-+use std::cell::RefCell;
-+use std::io::Cursor;
-+use std::rc::Rc;
-+
-+use pipewire as pw;
-+use pw::spa;
++use std::process::Command;
++use std::process::Stdio;
 +
 +/// First property id the libcamera plugin uses for a control it has no
 +/// standard SPA property for.
@@ -427,115 +134,40 @@ index 0000000..1cdef9d
 +
 +/// Applies an autofocus request to a camera node, without blocking the caller.
 +///
-+/// Talking to PipeWire means running a main loop until the server has answered,
-+/// so it happens on a thread of its own. Failures are logged rather than
-+/// returned: nothing the user can do about them, and a camera that will not
-+/// focus on demand is still a working camera.
++/// Failures are logged rather than returned: nothing the user can do about
++/// them, and a camera that will not focus on demand is still a working camera.
 +pub fn request_autofocus(node_id: u32, request: AfRequest) {
 +    std::thread::spawn(move || {
-+        if let Err(err) = apply(node_id, request) {
-+            log::warn!("Could not set autofocus on node {node_id}: {err}");
++        for (control, value) in request.properties() {
++            set_property(node_id, SPA_PROP_START_CUSTOM + control, value);
 +        }
 +    });
 +}
 +
-+fn apply(node_id: u32, request: AfRequest) -> Result<(), pw::Error> {
-+    pw::init();
++fn set_property(node_id: u32, key: u32, value: i32) {
++    let props = format!("{{ {key}: {value} }}");
 +
-+    let mainloop = pw::main_loop::MainLoopRc::new(None)?;
-+    let context = pw::context::ContextRc::new(&mainloop, None)?;
-+    let core = context.connect_rc(None)?;
-+    let registry = Rc::new(core.get_registry_rc()?);
++    let status = Command::new("pw-cli")
++        .arg("set-param")
++        .arg(node_id.to_string())
++        .arg("Props")
++        .arg(&props)
++        .stdin(Stdio::null())
++        .stdout(Stdio::null())
++        .stderr(Stdio::null())
++        .status();
 +
-+    let node: Rc<RefCell<Option<pw::node::Node>>> = Rc::new(RefCell::new(None));
-+
-+    let _registry_listener = registry
-+        .add_listener_local()
-+        .global({
-+            let node = node.clone();
-+            let registry = registry.clone();
-+            move |global| {
-+                if global.id != node_id {
-+                    return;
-+                }
-+
-+                match registry.bind::<pw::node::Node, _>(global) {
-+                    Ok(bound) => *node.borrow_mut() = Some(bound),
-+                    Err(err) => log::warn!("Could not bind node {node_id}: {err}"),
-+                }
-+            }
-+        })
-+        .register();
-+
-+    // Run until the server has told us about every object it has.
-+    roundtrip(&core, &mainloop)?;
-+
-+
-+    let node = node.borrow();
-+    let Some(node) = node.as_ref() else {
-+        log::warn!("PipeWire node {node_id} not found");
-+        return Ok(());
-+    };
-+
-+    for (control, value) in request.properties() {
-+        let key = SPA_PROP_START_CUSTOM + control;
-+
-+        let object = spa::pod::Value::Object(spa::pod::Object {
-+            type_: spa::utils::SpaTypes::ObjectParamProps.as_raw(),
-+            id: spa::param::ParamType::Props.as_raw(),
-+            properties: vec![spa::pod::Property {
-+                key,
-+                flags: spa::pod::PropertyFlags::empty(),
-+                value: spa::pod::Value::Int(value),
-+            }],
-+        });
-+
-+        let bytes = spa::pod::serialize::PodSerializer::serialize(Cursor::new(Vec::new()), &object)
-+            .map(|(cursor, _)| cursor.into_inner())
-+            .unwrap_or_default();
-+
-+        let Some(pod) = spa::pod::Pod::from_bytes(&bytes) else {
-+            log::warn!("Could not build a Props pod for control {control}");
-+            continue;
-+        };
-+
-+        node.set_param(spa::param::ParamType::Props, 0, pod);
-+        log::debug!("Set camera control {control} to {value} on node {node_id}");
++    match status {
++        Ok(status) if status.success() => {
++            log::debug!("Set {props} on PipeWire node {node_id}");
++        }
++        Ok(status) => {
++            log::warn!("pw-cli set-param {node_id} Props '{props}' failed: {status}");
++        }
++        Err(err) => {
++            log::warn!("Could not run pw-cli: {err}");
++        }
 +    }
-+
-+    // Make sure the messages leave before the loop is torn down.
-+    roundtrip(&core, &mainloop)?;
-+
-+    Ok(())
-+}
-+
-+/// Waits for the server to finish what it has been asked so far.
-+fn roundtrip(
-+    core: &pw::core::CoreRc,
-+    mainloop: &pw::main_loop::MainLoopRc,
-+) -> Result<(), pw::Error> {
-+    let done = Rc::new(Cell::new(false));
-+    let pending = core.sync(0)?;
-+
-+    let _listener = core
-+        .add_listener_local()
-+        .done({
-+            let done = done.clone();
-+            let mainloop = mainloop.clone();
-+            move |id, seq| {
-+                if id == pw::core::PW_ID_CORE && seq == pending {
-+                    done.set(true);
-+                    mainloop.quit();
-+                }
-+            }
-+        })
-+        .register();
-+
-+    while !done.get() {
-+        mainloop.run();
-+    }
-+
-+    Ok(())
 +}
 diff --git a/aperture/src/lib.rs b/aperture/src/lib.rs
 index cb57112..20c310a 100644

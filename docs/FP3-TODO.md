@@ -435,6 +435,26 @@ the power path.
     missing `/usr/bin/qcam`. Either drop the desktop file or build `qcam` - it
     would be a useful instrument, since it can set AF controls without going
     through PipeWire at all, but it pulls Qt onto a phone.
+
+33j. **The focus lens is not related to any distance, so manual focus cannot be
+    offered.** Everything else the camera does is now settable by hand -
+    exposure time, gain, white balance - but `LensPosition` is defined in
+    dioptres, and the IPA refuses to publish a dioptre it cannot mean
+    (`0104-ipa-simple-Allow-the-focus-to-be-set-where-the-lens-.patch`). Two
+    numbers unlock it, both in the tuning file: `lens-infinity-code`, and
+    `lens-closest-code` with the `lens-closest-distance` it focuses at.
+
+    Two ways to get them, in increasing order of trustworthiness. **Measured:**
+    point the camera at a detailed target at a tape-measured distance, run
+    `focus-sweep.py --lo/--hi` around the peak, and record the code; repeat far
+    away for the infinity end. **Read out:** the module carries its own
+    calibration EEPROM (`bl24s64` at CCI 0x50, no driver), which is where the
+    vendor keeps exactly these two codes - the honest source, and the one that
+    would be right for every FP3 rather than for this unit.
+
+    Until then the lens still focuses - by itself, or on a tap - it just cannot
+    be told a distance, and the app shows no focus row because the camera
+    advertises none.
 ## `wip/7.1.3/sensor` — SMGR over QMI/QRTR
 
 Accelerometer, gyroscope, magnetometer, proximity, ambient light. Only one commit

@@ -19,11 +19,15 @@ kind, and both are written to be offered upstream.
 | patch | what it adds |
 |---|---|
 | [`libcamera/0101-simple-autofocus.patch`](libcamera/0101-simple-autofocus.patch) | contrast-detection **autofocus** for libcamera's `simple` pipeline: a sharpness statistic in the software ISP's existing stats pass, accumulated into a 5×5 zone grid; an `Af` algorithm in the simple IPA; and the focus lens plumbed through the way the IPU3 handler does it. Publishes `AfMode`, `AfTrigger`, `AfMetering`, `AfWindows` |
+| [`libcamera/0102-ipa-simple-Allow-the-exposure-time-and-the-gain-to-b.patch`](libcamera/0102-ipa-simple-Allow-the-exposure-time-and-the-gain-to-b.patch) | **manual exposure and gain**: `ExposureTimeMode` / `AnalogueGainMode` and their values. The two are independent — with the exposure held, a darkening scene is answered with gain, and the other way round |
+| [`libcamera/0103-ipa-simple-Allow-the-white-balance-to-be-set.patch`](libcamera/0103-ipa-simple-Allow-the-white-balance-to-be-set.patch) | **manual white balance**: `AwbEnable` plus a settable `ColourTemperature`, and `rgbFromCCT()` in libipa to convert one into gains |
+| [`libcamera/0104-ipa-simple-Allow-the-focus-to-be-set-where-the-lens-.patch`](libcamera/0104-ipa-simple-Allow-the-focus-to-be-set-where-the-lens-.patch) | **manual focus**: `LensPosition` in dioptres — advertised only where the tuning file relates actuator codes to distances, which for this module it does not yet |
 | [`libcamera/imx363.yaml`](libcamera/imx363.yaml) | the tuning file that turns `Af` on for this sensor |
 | [`snapshot/0001-camera-inhibit-idle-while-viewfinder-active.patch`](snapshot/0001-camera-inhibit-idle-while-viewfinder-active.patch) | keeps the screen from blanking while the viewfinder is open, not only while recording ([GNOME/snapshot!461](https://gitlab.gnome.org/GNOME/snapshot/-/merge_requests/461)) |
 | [`snapshot/0002-camera-zoom.patch`](snapshot/0002-camera-zoom.patch) | **zoom** by pinch, scroll wheel or double tap, on `camerabin`'s own `zoom` property, so the saved picture is zoomed exactly as it was framed |
 | [`snapshot/0003-camera-viewfinder-resolution.patch`](snapshot/0003-camera-viewfinder-resolution.patch) | takes the picture at the **sensor's resolution** and previews at a smaller one, switching the source between them for the shot — the way Megapixels does it — and drops the preview a step when fewer than 20 fps actually arrive |
-| [`snapshot/0004-camera-tap-to-focus.patch`](snapshot/0004-camera-tap-to-focus.patch) | an **autofocus switch** in the preferences; with it off, one tap focuses and two focus and shoot. Reaches the control by binding the PipeWire node directly, because `pipewiresrc` carries no camera controls |
+| [`snapshot/0004-camera-tap-to-focus.patch`](snapshot/0004-camera-tap-to-focus.patch) | an **autofocus switch** in the preferences; with it off, one tap focuses and two focus and shoot. Reaches the control through `pw-cli set-param`, because `pipewiresrc` carries no camera controls |
+| [`snapshot/0005-camera-manual-controls.patch`](snapshot/0005-camera-manual-controls.patch) | a preferences group where **every control the camera publishes** can be taken over — exposure, gain, white balance, contrast, gamma. The rows are built from what `pw-dump` reports, not from a list in the source, so a control the app has never heard of still gets a working row |
 
 They are applied by the `libcamera` and `snapshot` aports in the pmaports
 checkout; the copies here are the source of truth for this port.
@@ -34,9 +38,18 @@ them libcamera builds only the CPU debayer, which **centre-crops** instead of
 scaling — a 1920×1080 preview then shows less than half the sensor's width, and
 looks like a camera stuck at 3× zoom.
 
-The `snapshot` aport additionally needs `pipewire-dev` in `makedepends`: the
-tap-to-focus patch talks to PipeWire directly, because GStreamer's
-`pipewiresrc` carries no camera controls.
+The `snapshot` patches need nothing extra from the aport, but the tap-to-focus
+one needs **`pw-cli` on the device** (it is in the `pipewire-tools` package). It
+sets the camera's controls by running that tool, because GStreamer's
+`pipewiresrc` carries none of them.
+
+☠️ **The in-process alternative was tried first and abandoned: the `pipewire`
+Rust crate cannot be cross compiled here.** Its `libspa-sys` runs bindgen, which
+`dlopen`s libclang from the *build script* — a binary of the build host's
+architecture, run inside the target's chroot. Neither libclang works: the
+target's is the wrong architecture for the loader, and the native one, reached
+through `/native`, is the wrong architecture for the process. Forking `pw-cli`
+costs one process per focus request and no build dependency at all.
 
 ☠️ **After upgrading libcamera, restart the PipeWire stack.** A running
 `wireplumber` holds the old library while the new IPA is loaded from disk, and

@@ -1,0 +1,714 @@
+From aa208a83672c9011d84fe103dabc51dd71d362ad Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Lajosh=C3=A1zi=2C=20L=C3=A1szl=C3=B3=20Gergely?=
+ <lajoshazilg@gmail.com>
+Date: Sun, 2 Aug 2026 05:03:59 +0200
+Subject: [PATCH] camera: let every camera setting be chosen by hand
+
+Automatic exposure, gain and white balance are right most of the time and
+wrong exactly when a picture is worth taking by hand: a scene that is meant
+to be dark, one that is meant to be warm, a shutter speed chosen to freeze
+something. Add a group in the preferences where each of them can be taken
+over, alongside the autofocus switch that was already there.
+
+Nothing in it is written per control. PipeWire's node describes what the
+camera offers - the libcamera name, the type, the bounds, and for the choices
+their labels - so the rows are built from what pw-dump reports rather than
+from a list in the source: a switch for the controls that decide who chooses
+(ExposureTimeMode, AnalogueGainMode, AwbEnable, AfMode), the value they govern
+revealed underneath, and a plain number for anything else the camera exposes,
+such as contrast and gamma. A camera offering a control this app has never
+heard of still gets a working row, under the name the camera gave it.
+
+A control the camera does not offer produces no row at all, which is how the
+focus distance behaves: libcamera only publishes LensPosition once the lens
+has been related to real distances, so the switch for it appears when that
+calibration does, and not before.
+
+Choices are remembered per control name and put back when the camera next
+becomes ready, so the camera starts where it was left.
+---
+ Cargo.lock                              |   1 +
+ aperture/Cargo.toml                     |   1 +
+ aperture/src/camera_control.rs          | 192 ++++++++++++++++++++-
+ aperture/src/lib.rs                     |   3 +-
+ aperture/src/viewfinder.rs              |  22 +++
+ data/org.gnome.Snapshot.gschema.xml.in  |   5 +
+ data/resources/ui/preferences_window.ui |   2 +-
+ src/widgets/camera.rs                   |  28 +++
+ src/widgets/camera_settings.rs          | 215 ++++++++++++++++++++++++
+ src/widgets/mod.rs                      |   2 +
+ src/widgets/preferences_window.rs       |  20 +++
+ src/widgets/window.rs                   |   7 +
+ 12 files changed, 494 insertions(+), 4 deletions(-)
+ create mode 100644 src/widgets/camera_settings.rs
+
+diff --git a/Cargo.lock b/Cargo.lock
+index d44eb3b..772e847 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -35,6 +35,7 @@ dependencies = [
+  "gtk4",
+  "log",
+  "rqrr",
++ "serde_json",
+ ]
+ 
+ [[package]]
+diff --git a/aperture/Cargo.toml b/aperture/Cargo.toml
+index fbd80fc..468cfa4 100644
+--- a/aperture/Cargo.toml
++++ b/aperture/Cargo.toml
+@@ -19,4 +19,5 @@ gst-pbutils = { workspace = true }
+ gst-video = { workspace = true }
+ gtk = { workspace = true }
+ log = { workspace = true }
++serde_json = "1.0"
+ rqrr = { version = "0.10", default-features = false }
+diff --git a/aperture/src/camera_control.rs b/aperture/src/camera_control.rs
+index 104d8e3..40fcfcd 100644
+--- a/aperture/src/camera_control.rs
++++ b/aperture/src/camera_control.rs
+@@ -58,6 +58,190 @@ impl AfRequest {
+     }
+ }
+ 
++/// What a camera control accepts.
++#[derive(Debug, Clone, PartialEq)]
++pub enum ControlKind {
++    /// A number anywhere between two bounds.
++    Range {
++        min: f64,
++        max: f64,
++        default: f64,
++        /// Whether it is a whole number, which decides how it is written out
++        integer: bool,
++    },
++    /// One of a fixed set of named values.
++    Choice {
++        values: Vec<(i32, String)>,
++        default: i32,
++    },
++    /// On or off.
++    Switch { default: bool },
++}
++
++/// A control the camera publishes, as PipeWire describes it.
++#[derive(Debug, Clone, PartialEq)]
++pub struct CameraControl {
++    /// The key `pw-cli` wants inside `Props`
++    pub key: String,
++    /// libcamera's name for it, e.g. `ExposureTime`
++    pub name: String,
++    pub kind: ControlKind,
++}
++
++impl CameraControl {
++    /// Whether this control is one of the four that decide whether another
++    /// control is listened to at all.
++    pub fn is_mode_for(&self) -> Option<&'static str> {
++        match self.name.as_str() {
++            "ExposureTimeMode" => Some("ExposureTime"),
++            "AnalogueGainMode" => Some("AnalogueGain"),
++            "AwbEnable" => Some("ColourTemperature"),
++            "AfMode" => Some("LensPosition"),
++            _ => None,
++        }
++    }
++
++    /// The value that hands this control back to the camera.
++    pub fn automatic_value(&self) -> Option<f64> {
++        match &self.kind {
++            /* AwbEnable is a plain switch: on means the camera decides. */
++            ControlKind::Switch { .. } => Some(1.0),
++            ControlKind::Choice { values, .. } => values
++                .iter()
++                /*
++                 * Continuous outranks Auto where both exist, which is only
++                 * AfMode: "Auto" there means one-shot on request, not by
++                 * itself.
++                 */
++                .find(|(_, name)| name.ends_with("Continuous"))
++                .or_else(|| values.iter().find(|(_, name)| name.ends_with("Auto")))
++                .map(|(value, _)| *value as f64),
++            ControlKind::Range { .. } => None,
++        }
++    }
++
++    /// The value that hands this control to the application.
++    pub fn manual_value(&self) -> Option<f64> {
++        match &self.kind {
++            ControlKind::Switch { .. } => Some(0.0),
++            ControlKind::Choice { values, .. } => values
++                .iter()
++                .find(|(_, name)| name.ends_with("Manual"))
++                .map(|(value, _)| *value as f64),
++            ControlKind::Range { .. } => None,
++        }
++    }
++}
++
++/// Asks PipeWire what the camera node offers.
++///
++/// The node describes itself: every control libcamera publishes is a property
++/// with a description, a type and its bounds, which is enough to build a user
++/// interface for a camera nobody wrote code for. Returns an empty list if the
++/// node cannot be read - a camera whose controls are unknown is still a camera.
++pub fn discover(node_id: u32) -> Vec<CameraControl> {
++    let output = Command::new("pw-dump")
++        .arg(node_id.to_string())
++        .stdin(Stdio::null())
++        .stderr(Stdio::null())
++        .output();
++
++    let output = match output {
++        Ok(output) if output.status.success() => output.stdout,
++        Ok(output) => {
++            log::warn!("pw-dump {node_id} failed: {}", output.status);
++            return Vec::new();
++        }
++        Err(err) => {
++            log::warn!("Could not run pw-dump: {err}");
++            return Vec::new();
++        }
++    };
++
++    let dump: serde_json::Value = match serde_json::from_slice(&output) {
++        Ok(dump) => dump,
++        Err(err) => {
++            log::warn!("Could not read what pw-dump said: {err}");
++            return Vec::new();
++        }
++    };
++
++    let Some(infos) = dump
++        .get(0)
++        .and_then(|node| node.pointer("/info/params/PropInfo"))
++        .and_then(|infos| infos.as_array())
++    else {
++        log::debug!("PipeWire node {node_id} publishes no controls");
++        return Vec::new();
++    };
++
++    infos.iter().filter_map(parse_control).collect()
++}
++
++fn parse_control(info: &serde_json::Value) -> Option<CameraControl> {
++    let id = info.get("id")?.as_str()?;
++    let name = info.get("description")?.as_str()?.to_owned();
++    let kind = info.get("type")?;
++
++    /*
++     * A control PipeWire has no name of its own for is reported as the hex of
++     * its property id, which is what it has to be set by. The rest keep their
++     * names both ways round.
++     */
++    let key = match id.strip_prefix("id-") {
++        Some(hex) => u32::from_str_radix(hex, 16).ok()?.to_string(),
++        None => id.to_owned(),
++    };
++
++    let default = kind.get("default")?;
++
++    let kind = if let Some(labels) = info.get("labels").and_then(|l| l.as_array()) {
++        /* [value, name, value, name, ...] */
++        let values = labels
++            .chunks_exact(2)
++            .filter_map(|pair| {
++                Some((
++                    pair[0].as_i64()? as i32,
++                    pair[1].as_str()?.to_owned(),
++                ))
++            })
++            .collect::<Vec<_>>();
++
++        if values.is_empty() {
++            return None;
++        }
++
++        ControlKind::Choice {
++            values,
++            default: default.as_i64()? as i32,
++        }
++    } else if let Some(default) = default.as_bool() {
++        ControlKind::Switch { default }
++    } else {
++        ControlKind::Range {
++            min: kind.get("min")?.as_f64()?,
++            max: kind.get("max")?.as_f64()?,
++            default: default.as_f64()?,
++            integer: default.is_i64() || default.is_u64(),
++        }
++    };
++
++    Some(CameraControl { key, name, kind })
++}
++
++/// Sets one control on a camera node, without blocking the caller.
++pub fn set_control(node_id: u32, control: &CameraControl, value: f64) {
++    let key = control.key.clone();
++    let literal = match &control.kind {
++        ControlKind::Switch { .. } => (value != 0.0).to_string(),
++        ControlKind::Choice { .. } => (value as i64).to_string(),
++        ControlKind::Range { integer: true, .. } => (value.round() as i64).to_string(),
++        ControlKind::Range { .. } => format!("{value}"),
++    };
++
++    std::thread::spawn(move || set_literal(node_id, &key, &literal));
++}
++
+ /// Applies an autofocus request to a camera node, without blocking the caller.
+ ///
+ /// Failures are logged rather than returned: nothing the user can do about
+@@ -65,12 +249,16 @@ impl AfRequest {
+ pub fn request_autofocus(node_id: u32, request: AfRequest) {
+     std::thread::spawn(move || {
+         for (control, value) in request.properties() {
+-            set_property(node_id, SPA_PROP_START_CUSTOM + control, value);
++            set_literal(
++                node_id,
++                &(SPA_PROP_START_CUSTOM + control).to_string(),
++                &value.to_string(),
++            );
+         }
+     });
+ }
+ 
+-fn set_property(node_id: u32, key: u32, value: i32) {
++fn set_literal(node_id: u32, key: &str, value: &str) {
+     let props = format!("{{ {key}: {value} }}");
+ 
+     let status = Command::new("pw-cli")
+diff --git a/aperture/src/lib.rs b/aperture/src/lib.rs
+index 20c310a..7b153f8 100644
+--- a/aperture/src/lib.rs
++++ b/aperture/src/lib.rs
+@@ -19,7 +19,7 @@ use std::sync::{LazyLock, Once, OnceLock};
+ use gst::prelude::*;
+ 
+ mod camera;
+-mod camera_control;
++pub mod camera_control;
+ mod code_detector;
+ mod device_provider;
+ mod enums;
+@@ -29,6 +29,7 @@ mod utils;
+ mod viewfinder;
+ 
+ pub use camera::Camera;
++pub use camera_control::{CameraControl, ControlKind};
+ pub use device_provider::DeviceProvider;
+ pub use enums::{CameraLocation, VideoFormat, ViewfinderState};
+ pub use error::{CaptureError, PipewireError, ProviderError};
+diff --git a/aperture/src/viewfinder.rs b/aperture/src/viewfinder.rs
+index a0ceddb..d486c48 100644
+--- a/aperture/src/viewfinder.rs
++++ b/aperture/src/viewfinder.rs
+@@ -1424,6 +1424,28 @@ impl Viewfinder {
+         self.request_autofocus(crate::camera_control::AfRequest::Trigger);
+     }
+ 
++    /// What the camera in use offers to be set, as it describes itself.
++    pub fn camera_controls(&self) -> Vec<crate::camera_control::CameraControl> {
++        let Some(node_id) = self.camera().and_then(|camera| camera.node_id()) else {
++            return Vec::new();
++        };
++
++        crate::camera_control::discover(node_id)
++    }
++
++    /// Sets one of those controls.
++    pub fn set_camera_control(
++        &self,
++        control: &crate::camera_control::CameraControl,
++        value: f64,
++    ) {
++        let Some(node_id) = self.camera().and_then(|camera| camera.node_id()) else {
++            return;
++        };
++
++        crate::camera_control::set_control(node_id, control, value);
++    }
++
+     fn request_autofocus(&self, request: crate::camera_control::AfRequest) {
+         let Some(camera) = self.camera() else {
+             return;
+diff --git a/data/org.gnome.Snapshot.gschema.xml.in b/data/org.gnome.Snapshot.gschema.xml.in
+index 1034341..a92fa61 100644
+--- a/data/org.gnome.Snapshot.gschema.xml.in
++++ b/data/org.gnome.Snapshot.gschema.xml.in
+@@ -34,6 +34,11 @@
+       <summary>Focus continuously</summary>
+       <description>Whether the camera keeps focusing by itself. When off, tap the picture to focus and double tap to focus and take a photo.</description>
+     </key>
++    <key name="camera-controls" type="a{sd}">
++      <default>{}</default>
++      <summary>Camera controls chosen by the user</summary>
++      <description>Values for the camera's own controls, by the name the camera gives them, for those the user has set rather than left to the camera. Controls the camera does not offer are ignored.</description>
++    </key>
+     <key name="show-composition-guidelines" type="b">
+       <default>false</default>
+       <summary>Show composition guidelines</summary>
+diff --git a/data/resources/ui/preferences_window.ui b/data/resources/ui/preferences_window.ui
+index f8ac6f5..8a077c8 100644
+--- a/data/resources/ui/preferences_window.ui
++++ b/data/resources/ui/preferences_window.ui
+@@ -3,7 +3,7 @@
+   <template class="PreferencesWindow" parent="AdwPreferencesDialog">
+     <property name="content-width">360</property>
+     <child>
+-      <object class="AdwPreferencesPage">
++      <object class="AdwPreferencesPage" id="general_page">
+         <property name="title" translatable="yes">General</property>
+         <property name="icon-name">applications-system-symbolic</property>
+         <child>
+diff --git a/src/widgets/camera.rs b/src/widgets/camera.rs
+index 8e2ea2b..a9d8ea3 100644
+--- a/src/widgets/camera.rs
++++ b/src/widgets/camera.rs
+@@ -441,6 +441,33 @@ impl Camera {
+         Self::default()
+     }
+ 
++    pub fn viewfinder(&self) -> aperture::Viewfinder {
++        self.imp().viewfinder.get()
++    }
++
++    /// Puts back the camera settings the user chose last time.
++    ///
++    /// Only the controls this camera actually offers are applied, and only
++    /// those the user has touched: a value stored for a camera that is no
++    /// longer plugged in, or for a control that has since disappeared, is left
++    /// where it is rather than being an error.
++    fn restore_camera_controls(&self) {
++        let viewfinder = self.viewfinder();
++        let controls = viewfinder.camera_controls();
++        if controls.is_empty() {
++            return;
++        }
++
++        let stored = crate::widgets::camera_settings::stored(self.imp().settings());
++
++        for control in &controls {
++            if let Some(value) = stored.get(&control.name) {
++                log::debug!("Restoring {} to {value}", control.name);
++                viewfinder.set_camera_control(control, *value);
++            }
++        }
++    }
++
+     fn on_portal_not_allowed(&self) {
+         // We don't start the device provider if we are not
+         // allowed to use cameras.
+@@ -720,6 +747,7 @@ impl Camera {
+             }
+             aperture::ViewfinderState::Ready => {
+                 imp.stack.set_visible_child_name("camera");
++                self.restore_camera_controls();
+             }
+             aperture::ViewfinderState::NoCameras => imp.stack.set_visible_child_name("not-found"),
+             aperture::ViewfinderState::Error => {
+diff --git a/src/widgets/camera_settings.rs b/src/widgets/camera_settings.rs
+new file mode 100644
+index 0000000..316daa1
+--- /dev/null
++++ b/src/widgets/camera_settings.rs
+@@ -0,0 +1,215 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++//! The camera's own settings, as rows in the preferences.
++//!
++//! Nothing here knows what an exposure time is. The camera describes its
++//! controls - name, type, bounds - and each one becomes a row: a switch for
++//! those that choose between the camera deciding and the user deciding, and a
++//! number for everything else. A camera that publishes a control nobody
++//! anticipated still gets a working row, and one that publishes none adds no
++//! group at all.
++
++use std::collections::HashMap;
++
++use adw::prelude::*;
++use aperture::camera_control::{CameraControl, ControlKind};
++use gettextrs::gettext;
++use gtk::gio;
++
++/// What the user is shown instead of libcamera's name, where there is a better
++/// one. Anything missing here is shown under the name the camera gave.
++fn label_for(name: &str) -> Option<&'static str> {
++    Some(match name {
++        "ExposureTime" => "Exposure Time",
++        "AnalogueGain" => "Analogue Gain",
++        "ColourTemperature" => "Colour Temperature",
++        "LensPosition" => "Focus Distance",
++        _ => return None,
++    })
++}
++
++/// The unit, where naming it saves an explanation.
++fn unit_for(name: &str) -> Option<&'static str> {
++    Some(match name {
++        "ExposureTime" => "Microseconds",
++        "AnalogueGain" => "Multiplier",
++        "ColourTemperature" => "Kelvin",
++        "LensPosition" => "Dioptres, 0 is infinity",
++        _ => return None,
++    })
++}
++
++fn title_for(control: &CameraControl) -> String {
++    match label_for(&control.name) {
++        Some(label) => gettext(label),
++        None => control.name.clone(),
++    }
++}
++
++/// Builds the group, or nothing if the camera has nothing to offer.
++pub fn group(
++    controls: &[CameraControl],
++    settings: &gio::Settings,
++    apply: impl Fn(&CameraControl, f64) + Clone + 'static,
++) -> Option<adw::PreferencesGroup> {
++    if controls.is_empty() {
++        return None;
++    }
++
++    let group = adw::PreferencesGroup::new();
++    group.set_title(&gettext("Camera"));
++    group.set_description(Some(&gettext(
++        "What the camera decides for itself, and what you decide instead",
++    )));
++
++    let saved = stored(settings);
++    let mut rows = 0;
++
++    /*
++     * The paired controls first, each as a switch that reveals its value, so
++     * that the thing being taken over sits next to the taking over.
++     */
++    for control in controls {
++        let Some(paired) = control.is_mode_for() else {
++            continue;
++        };
++        let Some(value) = controls.iter().find(|c| c.name == paired) else {
++            /*
++             * A camera can offer the mode without the value - our own focus
++             * does, until the lens has been related to a distance. A switch
++             * that reveals nothing is worse than no switch.
++             */
++            continue;
++        };
++
++        let (Some(auto), Some(manual)) = (control.automatic_value(), control.manual_value()) else {
++            continue;
++        };
++
++        let is_auto = saved
++            .get(&control.name)
++            .map(|stored| (stored - manual).abs() > f64::EPSILON)
++            .unwrap_or(true);
++
++        let switch = adw::SwitchRow::new();
++        switch.set_title(&format!("{} — {}", gettext("Automatic"), title_for(value)));
++        switch.set_active(is_auto);
++
++        let row = value_row(value, saved.get(&value.name).copied());
++        row.set_visible(!is_auto);
++
++        switch.connect_active_notify({
++            let control = control.clone();
++            let settings = settings.clone();
++            let apply = apply.clone();
++            let row = row.clone();
++            move |switch| {
++                let chosen = if switch.is_active() { auto } else { manual };
++                row.set_visible(!switch.is_active());
++                remember(&settings, &control.name, chosen);
++                apply(&control, chosen);
++            }
++        });
++
++        row.connect_value_notify({
++            let value = value.clone();
++            let settings = settings.clone();
++            let apply = apply.clone();
++            move |row| {
++                remember(&settings, &value.name, row.value());
++                apply(&value, row.value());
++            }
++        });
++
++        group.add(&switch);
++        group.add(&row);
++        rows += 1;
++    }
++
++    /* Then everything that is simply a number the camera always listens to. */
++    let paired: Vec<&str> = controls
++        .iter()
++        .filter_map(CameraControl::is_mode_for)
++        .collect();
++
++    for control in controls {
++        if control.is_mode_for().is_some() || paired.contains(&control.name.as_str()) {
++            continue;
++        }
++        if !matches!(control.kind, ControlKind::Range { .. }) {
++            continue;
++        }
++
++        let row = value_row(control, saved.get(&control.name).copied());
++        row.connect_value_notify({
++            let control = control.clone();
++            let settings = settings.clone();
++            let apply = apply.clone();
++            move |row| {
++                remember(&settings, &control.name, row.value());
++                apply(&control, row.value());
++            }
++        });
++
++        group.add(&row);
++        rows += 1;
++    }
++
++    (rows > 0).then_some(group)
++}
++
++fn value_row(control: &CameraControl, saved: Option<f64>) -> adw::SpinRow {
++    let ControlKind::Range {
++        min,
++        max,
++        default,
++        integer,
++    } = control.kind
++    else {
++        return adw::SpinRow::new(None::<&gtk::Adjustment>, 0.0, 0);
++    };
++
++    /*
++     * A hundred steps across the range, rounded to something a person would
++     * choose: the exposure time spans four decades on this camera, and a step
++     * of one microsecond would be unusable.
++     */
++    let step = if integer {
++        ((max - min) / 100.0).round().max(1.0)
++    } else {
++        (max - min) / 100.0
++    };
++    let digits = if integer { 0 } else { 2 };
++
++    let adjustment = gtk::Adjustment::new(
++        saved.unwrap_or(default).clamp(min, max),
++        min,
++        max,
++        step,
++        step * 10.0,
++        0.0,
++    );
++
++    let row = adw::SpinRow::new(Some(&adjustment), step, digits);
++    row.set_title(&title_for(control));
++    if let Some(unit) = unit_for(&control.name) {
++        row.set_subtitle(&gettext(unit));
++    }
++    row
++}
++
++/// Everything the user has chosen so far, by control name.
++pub fn stored(settings: &gio::Settings) -> HashMap<String, f64> {
++    settings
++        .value("camera-controls")
++        .get::<HashMap<String, f64>>()
++        .unwrap_or_default()
++}
++
++fn remember(settings: &gio::Settings, name: &str, value: f64) {
++    let mut all = stored(settings);
++    all.insert(name.to_owned(), value);
++
++    if let Err(err) = settings.set_value("camera-controls", &all.to_variant()) {
++        log::warn!("Could not remember {name}: {err}");
++    }
++}
+diff --git a/src/widgets/mod.rs b/src/widgets/mod.rs
+index 961f304..9f5d5a8 100644
+--- a/src/widgets/mod.rs
++++ b/src/widgets/mod.rs
+@@ -4,6 +4,7 @@ use gtk::prelude::*;
+ mod camera;
+ mod camera_controls;
+ mod camera_row;
++pub mod camera_settings;
+ mod flash_bin;
+ mod gallery;
+ mod gallery_button;
+@@ -22,6 +23,7 @@ mod window;
+ pub use camera::Camera;
+ pub use camera_controls::CameraControls;
+ pub use camera_row::CameraRow;
++
+ pub use flash_bin::FlashBin;
+ pub use gallery::Gallery;
+ pub use gallery_button::GalleryButton;
+diff --git a/src/widgets/preferences_window.rs b/src/widgets/preferences_window.rs
+index a23f879..68142cb 100644
+--- a/src/widgets/preferences_window.rs
++++ b/src/widgets/preferences_window.rs
+@@ -5,6 +5,7 @@ use gtk::CompositeTemplate;
+ use gtk::{gio, glib};
+ 
+ use crate::config;
++use crate::widgets::camera_settings;
+ 
+ mod imp {
+     use std::cell::{Cell, OnceCell};
+@@ -20,6 +21,8 @@ mod imp {
+         #[property(get, set, construct_only)]
+         pub is_app_recording: Cell<bool>,
+ 
++        #[template_child]
++        pub general_page: TemplateChild<adw::PreferencesPage>,
+         #[template_child]
+         pub experimental_group: TemplateChild<adw::PreferencesGroup>,
+     }
+@@ -97,4 +100,21 @@ impl PreferencesWindow {
+             .property("is-app-recording", is_recording)
+             .build()
+     }
++
++    /// Adds a group for the camera's own controls.
++    ///
++    /// The camera is asked what it offers rather than told what it has, so a
++    /// camera with no controls - or one that is not running - simply adds
++    /// nothing here.
++    pub fn add_camera_controls(
++        &self,
++        controls: &[aperture::CameraControl],
++        apply: impl Fn(&aperture::CameraControl, f64) + Clone + 'static,
++    ) {
++        let settings = self.imp().settings.get().unwrap();
++
++        if let Some(group) = camera_settings::group(controls, settings, apply) {
++            self.imp().general_page.add(&group);
++        }
++    }
+ }
+diff --git a/src/widgets/window.rs b/src/widgets/window.rs
+index 2596f15..a496db4 100644
+--- a/src/widgets/window.rs
++++ b/src/widgets/window.rs
+@@ -445,6 +445,13 @@ impl Window {
+         }
+         let is_recording = self.imp().camera.is_recording_active();
+         let preferences = crate::PreferencesWindow::new(is_recording);
++
++        let viewfinder = self.imp().camera.viewfinder();
++        preferences.add_camera_controls(&viewfinder.camera_controls(), {
++            let viewfinder = viewfinder.clone();
++            move |control, value| viewfinder.set_camera_control(control, value)
++        });
++
+         preferences.present(Some(self));
+     }
+ 
+-- 
+2.53.0
+
