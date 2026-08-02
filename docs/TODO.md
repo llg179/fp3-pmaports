@@ -511,41 +511,71 @@ or restart feedbackd.
    bounded duration. It belongs next to the other userspace drop-ins this repo
    carries (`userspace-audio/udev`, `pulse`, `ucm2`).
 
-## Parked: the PMI632 camera flash
+## ~~Parked: the PMI632 camera flash~~ — it works, 2026-08-03
 
-A device-tree node for the flash exists but was never enabled, because the
-probe path was not verified: `leds-qcom-flash.c` reads `FLASH_SUBTYPE_REG` and
-has to recognise the subtype value it gets back. Until someone checks that on
-hardware, enabling it risks a probe failure at boot.
+The parking reason was right and the fix was small. `leds-qcom-flash.c` accepts
+three flash-module subtypes and refuses everything else with *"flash LED subtype
+%#x is not yet supported"*; read over the SPMI regmap on the phone, the PMI632
+module answers `0x18` in `FLASH_TYPE` and **`0x05`** in `FLASH_SUBTYPE`, which is
+none of them. Enabling the node as it stood would have failed the probe exactly
+as feared.
 
-The numbers below are the useful part — they come from Qualcomm's downstream
-tree for this board and are not written down anywhere else:
+☠️ **The module is on the second USID, not the first.** `0xd300` reads back all
+`XX` on `0-02` and the real values on `0-03`. The charger at `0x1000` on `0-02`
+is the positive control that tells "wrong USID" from "the read path is broken".
 
-```dts
-/*
- * Camera flash: two flash channels ganged into a single white LED
- * (downstream gangs them with qcom,led-mask = <3> on the led-switch node).
- */
-pmi632_flash: led-controller@d300 {
-	compatible = "qcom,spmi-flash-led";
-	reg = <0xd300>;
-	status = "disabled";
+It is the three-channel block with two channels bonded out, so the fix is a
+fourth branch taking `mvflash_3ch_regs` with `max_channels = 2`. Measured with
+the module idle, the live registers are that layout exactly — timers at
+`0x40..0x42`, target currents at `0x43..0x45`, module enable `0x46`, current
+resolution `0x47`, strobe `0x49..0x4b`, channel enable `0x4c`, torch clamp
+`0xec` — which is also the map Qualcomm's downstream `qpnp-flash-led-v2` uses
+for this PMIC, from the same code path as PMI8998 and PM8150, rejecting only
+channel ids above 1. `CONFIG_LEDS_QCOM_FLASH` also had to be turned on; it was
+not in the config at all.
 
-	led-0 {
-		function = LED_FUNCTION_FLASH;
-		color = <LED_COLOR_ID_WHITE>;
-		led-sources = <1>, <2>;
-		led-max-microamp = <600000>;
-		flash-max-microamp = <2000000>;
-		flash-max-timeout-us = <1280000>;
-	};
-};
-```
+Measured on `linux-fp3-7.1.3-r34` (`#35-fp3`), three ways, because the first
+instrument lied:
 
-(`pmi632.dtsi` also needs `#include <dt-bindings/leds/common.h>`.)
+| | |
+|---|---|
+| probe | `white:flash` under `/sys/class/leds`, nothing in dmesg |
+| the hardware is programmed | `CHAN_EN 0x03` (both ganged channels), `MODULE_EN 0x80`, `ITARGET 0x3b` on both — 0x3b is 59, so (59+1) × 5 mA = 300 mA a channel, the 600 mA of `led-max-microamp` split in two |
+| current flows | USB input ADC, three interleaved passes: off 74 437 / 87 737 / 76 729 against on 139 900 / 153 524 / 144 928 — no overlap |
+| light comes out | the rear camera sees the scene go from mean 15.82, σ 0.81, 20 distinct values to mean 70.0, σ 34.4, ~240, repeatable to 0.09 across three passes |
 
-Note that a torch device appearing under `/sys/class/leds` would also give
-feedbackd something new to blink — see the item above before enabling it.
+☠️ **The battery is the wrong ammeter here, twice over,** and believing it
+produced a confident "no current flows" about a flash that was visibly lit.
+`pmi632-battery` exposes **no `current_now` at all** — the charger driver does
+not implement the property — and the check's `|| echo 0` turned that missing
+file into a reading of zero. Falling back to battery *voltage* droop was no
+better: with a cable attached the torch is fed from USB, so the pack never sees
+the load. The instrument that works is the PMIC's own USB input current ADC
+(`in_voltage_usb_in_i_uv_input`), and it needs interleaved repeats — a single
+on/off pair sits inside its noise. The positive control that would have caught
+the second error early is cheap: eight busy loops drop battery `voltage_now` by
+180 mV, so the channel *can* see a load of that size; the torch showing nothing
+meant the path, not the light.
+
+What is **not** carried over from downstream: on this PMIC the flash is fed by
+the charger's boost, and downstream sets `POWER_SUPPLY_PROP_FLASH_ACTIVE` on the
+charger around a strobe, via its own `schgm-flash` block at `0xA600`. Nothing in
+mainline does that. It does not stop the torch — the charger's `VREG_OK` (bit 4
+of `0xA607`) comes up on its own when the LED module is enabled, measured going
+`0x00` → `0x36` — but the full 2 A strobe has not been tried and may well need
+it. `FORCE_BOOST_CONTROL` at `0xA641` stays `0x00` throughout.
+
+Checks: [`tests/checks/42-camera-flash-test.sh`](../tests/checks/42-camera-flash-test.sh)
+for the registers and the current, and
+[`userspace-camera/flash-check.py`](../userspace-camera/flash-check.py) for the
+optical confirmation, which needs a scene and so cannot live in the unattended
+battery.
+
+Still open: the torch now appears under `/sys/class/leds`, which gives feedbackd
+something new to blink — see the missed-call item above.
+`CONFIG_V4L2_FLASH_LED_CLASS` is deliberately still off, so no
+`/dev/v4l-subdev` exists for it and libcamera cannot drive the flash yet; that
+was kept out so the bring-up measured one change.
 
 ## Untested: interconnect path for the SCM/crypto node
 
