@@ -227,6 +227,49 @@ the gaps are here and only here:
     (`SW_MICROPHONE_INSERT` only for the headset). **No TX gain control is
     exposed for the call path** is still open.
 
+Items 34-40 all come from one reviewer pass over the audio **driver** commits on
+2026-08-02 (`ca9aaa72`, `377269e4`, `254359e1`). **Nothing below is
+implemented**, and each has a counter-argument that has to be settled first —
+written out in [`TODO.md`](TODO.md#open-before-anything-is-submitted) item 15.
+The pass also asked where the six codec properties are defined: they are in the
+binding since 2026-07-30 (item 2 there); only the `wip` branch's discovery
+ordering makes it look otherwise.
+
+34. **A bare `BIT(2)` is written into `WCD9335_CODEC_RPM_CLK_MCLK_CFG`.** It
+    wants a macro, but neither we nor downstream can name the field truthfully —
+    so either a neutral name plus a comment, or an A/B that decides whether the
+    write is needed at all. The commit's "garbled playback without it" is not
+    backed by a recorded measurement.
+35. **The `0x20` written into the EFUSE sense-state field is dead.**
+    `SSTATE_MASK` is `GENMASK(4,1)` = `0x1e`, so the call only clears bits 4:1 —
+    correct behaviour, misleading constant. Writing `0` is arithmetically
+    identical, so no device time is needed. Inherited from downstream.
+36. **`WCD9335_CODEC_RPM_CLK_MCLK_CFG_12P288MHZ` is `BIT(0)`**, same as
+    `_9P6MHZ`; downstream writes `0x03,0x00` for 12.288 MHz. Pre-existing
+    upstream and unused, so a maintainer may prefer deleting the define to fixing
+    it. Standalone patch, own cycle, low priority.
+37. **The `usleep_range(1000, 1100)` before the TX-hold release has no cited
+    source** and runs per-ADC on every wcd9335 board. Removing it risks the
+    silent capture returning, so it costs cold-boot A/B time. The same commit
+    should say why the release is in the ADC widget's `POST_PMU` and not the
+    decimator's.
+38. **The reviewer asked for a table instead of the `switch`** in
+    `wcd9335_get_dmic_clk_val()`. Cheap — but the `switch` deliberately mirrors
+    mainline `wcd934x_get_dmic_clk_val()`, and converting wcd934x too means
+    touching a driver we cannot test. Pick one, do not drift.
+39. **The MBHC provenance needs reading, not patching.** MBHC really was in the
+    2018 series (11/13 in v3, 11/14 in v4, dropped in v5, and v6 is what was
+    accepted), but `254359e1` is superseded — item 23 replaced it with the shared
+    `wcd-mbhc-v2`, whose legacy backend cites only its OnePlus downstream source.
+    The question is whether anything there derives from the 2018 patch; citing it
+    otherwise would be a false derivation claim.
+40. **The TX-hold fix is codec-wide.** Mainline takes the hold and never releases
+    it, so nothing can regress. By inspection of the device trees — not measured
+    — OnePlus 3/3T are the only other wcd9335 board with analog mics wired, so
+    they gain working analog capture; db820c and the Xiaomi msm8996 boards see no
+    change. Belongs in the cover letter, with a Cc to maintainers who have the
+    hardware.
+
 ## `wip/7.1.3/camera` — Sony IMX363
 
 Three commits: a verbatim import, our power-path delta, the DT node. The driver

@@ -276,6 +276,102 @@ Then, in rough order of cost:
     needed for the pruning but worth one test: which slot of each pad pair is
     the real capsule — covering one mic port and re-sweeping answers it.
 
+15. **Review feedback on the audio *driver* commits — nothing implemented, each
+    point needs confirming first.** The same reviewer read three commits of
+    `wip/7.1.3/audio` on 2026-08-02 — `ca9aaa72` (mic bias and DMIC rate from
+    the DT), `377269e4` (the TX front-end hold) and `254359e1` (MBHC jack
+    detection) — and checking the comments turned up five more things we found
+    ourselves. As in item 14, none of it is done, and each point is written with
+    the argument against it, because three of them are cheaper to get wrong than
+    to leave alone.
+
+    One question the pass raised is **already answered**: *"where are
+    `qcom,micbias1-microvolt` … and `qcom,dmic-sample-rate` defined? I can't see
+    them in the bindings."* Item 2 above — the binding has carried all six since
+    2026-07-30. What misleads a reader is that `wip/7.1.3/audio` is
+    discovery-ordered, so there the driver commit precedes the binding commit; on
+    `submit/7.1.3/audio` the binding is patch 1 of 13. Nothing to change, but the
+    reply has to say so.
+
+    * **A bare `BIT(2)` goes into `WCD9335_CODEC_RPM_CLK_MCLK_CFG`** in
+      `wcd9335_codec_init()`, where every other field in this driver has a named
+      macro in `wcd9335.h`. *Against naming it:* we cannot name it **truthfully**
+      — there is no datasheet, and downstream has no name either, only an
+      unnamed `tasha_codec_reg_defaults[]` entry (`{MCLK_CFG, 0x04, 0x04}`, and
+      `0x05, 0x05` in the I²C variant, so the bit is independent of the MCLK
+      rate). A confident invented name is the mistake of item 11 repeated. The
+      honest options are a neutral name plus a comment saying the function is
+      undocumented, or an A/B on the device to find out whether the write is
+      needed at all — the commit claims garbled playback without it, and that
+      claim is not backed by a recorded measurement. Two adjacent
+      `regmap_update_bits()` on the same register should become one either way.
+    * **The `0x20` written into the EFUSE sense-state field is a dead value.**
+      `WCD9335_CHIP_TIER_CTRL_EFUSE_SSTATE_MASK` is `GENMASK(4, 1)` = `0x1e`, so
+      `0x20 & 0x1e == 0`: the call clears bits 4:1 and does nothing else. That
+      happens to be the intended "select state 0", but the constant reads as
+      "set bit 5". Writing `0` is arithmetically identical, so **no device time
+      is needed**. The oddity is inherited, not ours — downstream does the same
+      `0x1E, 0x20` — so the only argument against is that it stops being a
+      verbatim copy, which a comment covers. Cheapest item here.
+    * **`WCD9335_CODEC_RPM_CLK_MCLK_CFG_12P288MHZ` is `BIT(0)`**, the same as
+      `_9P6MHZ`; downstream writes `0x03,0x00` for 12.288 MHz, so it should be
+      `0`. Pre-existing upstream, independent of this series, and a clean
+      standalone patch. *Against:* the define is **unused**, so a maintainer may
+      prefer deleting it to fixing it, and a patch found by reading rather than
+      by measuring is easy to read as noise. Low priority, own submission cycle.
+    * **The `usleep_range(1000, 1100)` before the TX-hold release has no cited
+      source.** It runs per-ADC on every wcd9335 board. Downstream has no sleep
+      at that site — its settle time came from the HPF delayed work's scheduling
+      delay, which mainline dropped along with the release itself. *Against
+      touching it:* removing it risks bringing back the silent capture this
+      commit fixes, and proving that costs cold-boot A/B time on the device.
+      Keeping it with a measured justification is an acceptable outcome; keeping
+      it with none is not. The same commit message should also say why the
+      release sits in the ADC widget's `POST_PMU` and not the decimator's — DAPM
+      powers the decimator and its mux first, so the amic lookup there runs
+      before the analog front end is up. Without that sentence the first review
+      comment will be "move it to the decimator handler".
+    * **The reviewer asked for a table instead of the `switch`** in
+      `wcd9335_get_dmic_clk_val()`. Cheap, no functional change, and the six
+      `WCD9335_DMIC_CLK_DIV_*` values are `0x0`–`0x5` in the same order as the
+      dividers `{2, 3, 4, 6, 8, 16}`. *Against:* the `switch` is a deliberate
+      copy of mainline `wcd934x_get_dmic_clk_val()` (`wcd934x.c`, same divider
+      set, same fallback), and converting only ours ends the symmetry that makes
+      folding both into one helper obvious later. Converting wcd934x too doubles
+      the work on a driver **we cannot test**. Decide which, do not drift into it.
+    * **The MBHC provenance needs checking, not patching.** `254359e1` links the
+      v3 **cover letter** of Srinivas Kandagatla's 2018 WCD9335 series, which
+      never mentions MBHC — hence the reviewer's "I cannot find references to
+      the MBHC support dropped from the series". It is there: MBHC is patch
+      11/13 in v3 and 11/14 in v4 (patchwork
+      [10587057](https://patchwork.kernel.org/patch/10587057/), with its bindings
+      patch [10587061](https://patchwork.kernel.org/patch/10587061/)), gone in v5
+      (8 patches), and v6 — also 8 — is what was accepted, which is why mainline
+      has never carried MBHC. But `254359e1` is a **superseded** commit: item 11
+      replaced that private implementation with the shared `wcd-mbhc-v2`, and
+      `f5759717`, the legacy comparator backend, cites only its OnePlus
+      downstream source. So the open question is not the broken link, it is
+      whether **anything** in `f5759717` derives from the 2018 patch. If it does,
+      it must be cited; if it does not, adding the citation would be a false
+      derivation claim — the camera mistake in mirror image. Answer it by reading,
+      not by assuming either way.
+    * **The TX-hold fix is codec-wide, and one other mainline board notices.**
+      Mainline takes the hold in `wcd9335_codec_enable_adc()` and never releases
+      it, so the change cannot regress anyone: it supplies a missing half. By
+      inspection of the device trees — not measured, and it has to be worded that
+      way — `msm8996-oneplus-common.dtsi` is the only other wcd9335 board wiring
+      analog mics (AMIC2/4/5), so OnePlus 3/3T gain working analog capture, while
+      `apq8096-db820c.dtsi` and the Xiaomi msm8996/msm8996pro boards declare no
+      AMIC routes and their ADC widgets never power up. Worth stating in the
+      cover letter and worth a Cc to the OnePlus 3 maintainers, who have hardware
+      we do not. *Against:* a Cc invites a wait, and an unverified cross-board
+      claim is worse than none — hence "by inspection".
+
+    **Order, if any of it is confirmed:** the EFUSE constant first (no device
+    time, no judgement call), then the DMIC table and the cover-letter wording,
+    then the provenance read. The `BIT(2)` naming and the 1 ms sleep are last
+    because both really want a measurement, not a decision.
+
 Two things were checked and are **not** defects: the three `ENOTSUPP`
 comparisons in the audio machine driver (the ASoC core returns exactly that, and
 the base file plus six other qcom machine drivers compare against it), and the
