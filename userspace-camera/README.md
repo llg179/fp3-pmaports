@@ -22,7 +22,8 @@ kind, and both are written to be offered upstream.
 | [`libcamera/imx363.yaml`](libcamera/imx363.yaml) | the tuning file that turns `Af` on for this sensor |
 | [`snapshot/0001-camera-inhibit-idle-while-viewfinder-active.patch`](snapshot/0001-camera-inhibit-idle-while-viewfinder-active.patch) | keeps the screen from blanking while the viewfinder is open, not only while recording ([GNOME/snapshot!461](https://gitlab.gnome.org/GNOME/snapshot/-/merge_requests/461)) |
 | [`snapshot/0002-camera-zoom.patch`](snapshot/0002-camera-zoom.patch) | **zoom** by pinch, scroll wheel or double tap, on `camerabin`'s own `zoom` property, so the saved picture is zoomed exactly as it was framed |
-| [`snapshot/0003-camera-viewfinder-resolution.patch`](snapshot/0003-camera-viewfinder-resolution.patch) | gives the **viewfinder its own resolution**, pins still capture to the sensor's largest, and drops the viewfinder a step when fewer than 20 fps actually arrive |
+| [`snapshot/0003-camera-viewfinder-resolution.patch`](snapshot/0003-camera-viewfinder-resolution.patch) | takes the picture at the **sensor's resolution** and previews at a smaller one, switching the source between them for the shot — the way Megapixels does it — and drops the preview a step when fewer than 20 fps actually arrive |
+| [`snapshot/0004-camera-tap-to-focus.patch`](snapshot/0004-camera-tap-to-focus.patch) | an **autofocus switch** in the preferences; with it off, one tap focuses and two focus and shoot. Reaches the control by binding the PipeWire node directly, because `pipewiresrc` carries no camera controls |
 
 They are applied by the `libcamera` and `snapshot` aports in the pmaports
 checkout; the copies here are the source of truth for this port.

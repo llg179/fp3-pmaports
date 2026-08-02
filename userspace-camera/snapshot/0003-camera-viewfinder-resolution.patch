@@ -1,37 +1,44 @@
-From f54d3e6ba3edf9634be1e3058d9d519a1fd3de1b Mon Sep 17 00:00:00 2001
+From e5f2b73c9c3e5dae23b575e65f22e3fdea10f3d8 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Lajosh=C3=A1zi=2C=20L=C3=A1szl=C3=B3=20Gergely?=
  <lajoshazilg@gmail.com>
 Date: Sat, 1 Aug 2026 21:15:10 +0200
-Subject: [PATCH] camera: give the viewfinder its own resolution, and lower it
- when it is slow
+Subject: [PATCH] camera: take the picture at the sensor's resolution, not the
+ preview's
 
 The source's capsfilter is shared by the viewfinder and by still capture, so
 the two have always had one resolution between them: whatever is smooth enough
-to preview is also what gets saved, and whatever is worth saving makes the
-preview crawl. On a phone with a 12 MP sensor and a software ISP the two
-numbers are nowhere near each other - measured on a Fairphone 3, the pipeline
-sustains about 6 fps at the sensor's full 4032x3024 and about 30 fps at
-1920x1080.
+to preview is also what gets saved. On a phone with a 12 MP sensor and a
+software ISP the two numbers are nowhere near each other - measured on a
+Fairphone 3, the pipeline sustains about 6 fps at the sensor's full resolution
+and about 30 fps at 1920x1080, which is what it was quietly saving pictures at.
 
-Separate them. Still capture is pinned to the sensor's largest resolution
-through camerabin's image-capture-caps, and the viewfinder gets its own
-viewfinder-caps, starting at the largest resolution that is not more than
-1920x1080 - a phone screen cannot show more, and every pixel above that is
-debayered in software for nothing.
+Do what Megapixels does: define a preview mode and a capture mode, and switch
+between them for the shot. Its documentation states the trade-off exactly -
+"usually the maximum resolution of the sensor will be used for taking pictures
+but at that resolution the framerate will generally be too low for realtime
+preview" - and it picks "the resolution closest to the display resolution as
+the preview mode".
+<https://libmegapixels-12f3eb.pages.debian.net/config.html>
 
-Then measure rather than assume: a pad probe counts the buffers that actually
-reach the video sink, and if fewer than 20 frames per second arrive for two
-consecutive two-second windows, the viewfinder drops to the next smaller
-resolution the camera offers and the pipeline restarts. It never drops below
-640x480 and never raises the resolution again, so it settles instead of
-oscillating, and it says what it did in the log either way.
+The switch has to happen on the source. Setting camerabin's image-capture-caps
+instead asks the running pipeline to renegotiate, and a PipeWire source cannot:
+it answers 'streaming stopped, reason not-negotiated (-4)', the viewfinder
+freezes and no picture is saved. So take_picture() constrains the source to the
+largest resolution, waits for the pipeline to come back up, fires the capture,
+and image-done puts the preview resolution back. If the pipeline does not come
+back up in five seconds the shot is taken anyway, because a picture at the
+wrong resolution beats a shutter press that does nothing.
 
-The saved picture is unaffected by all of it, which is the point.
+With the two separated, lowering the preview costs nothing: a pad probe counts
+the buffers that actually reach the video sink, and if fewer than 20 arrive per
+second for two consecutive two-second windows the preview drops to the next
+smaller resolution the camera offers. Never below 640x480, never back up, and
+never while a picture is being taken.
 ---
- aperture/src/camera.rs     |  23 +++++
+ aperture/src/camera.rs     |  23 +++
  aperture/src/utils.rs      |   2 +-
- aperture/src/viewfinder.rs | 187 +++++++++++++++++++++++++++++++++++++
- 3 files changed, 211 insertions(+), 1 deletion(-)
+ aperture/src/viewfinder.rs | 277 ++++++++++++++++++++++++++++++++++++-
+ 3 files changed, 300 insertions(+), 2 deletions(-)
 
 diff --git a/aperture/src/camera.rs b/aperture/src/camera.rs
 index 6aa9e75..b2d85d1 100644
@@ -76,17 +83,21 @@ index 72ab13b..9f3948e 100644
      pub width: i32,
      pub height: i32,
 diff --git a/aperture/src/viewfinder.rs b/aperture/src/viewfinder.rs
-index b3247a1..8d449d4 100644
+index b3247a1..ef97757 100644
 --- a/aperture/src/viewfinder.rs
 +++ b/aperture/src/viewfinder.rs
-@@ -75,6 +75,15 @@ mod imp {
+@@ -75,6 +75,19 @@ mod imp {
  
          pub timeout_handler: RefCell<Option<glib::SourceId>>,
  
 +        /// Resolutions the current camera offers, largest first.
 +        pub(crate) resolutions: RefCell<Vec<crate::utils::Size>>,
-+        /// Index into `resolutions` the viewfinder is currently asking for.
++        /// Index into `resolutions` the preview currently runs at.
 +        pub viewfinder_res: Cell<usize>,
++        /// Resolution a photo is taken at: the largest the source offers.
++        pub capture_res: Cell<usize>,
++        /// Set while a picture is being taken at a different resolution.
++        pub restore_res: Cell<Option<usize>>,
 +        /// Buffers seen by the video sink since the last measurement.
 +        pub frame_count: std::sync::Arc<std::sync::atomic::AtomicU32>,
 +        pub fps_source: RefCell<Option<glib::SourceId>>,
@@ -95,7 +106,7 @@ index b3247a1..8d449d4 100644
          pub picture: gtk::Picture,
          pub offload: gtk::GraphicsOffload,
      }
-@@ -365,6 +374,14 @@ mod imp {
+@@ -365,6 +378,14 @@ mod imp {
                  .expect("Missing GStreamer Base Plug-ins");
              camerabin.set_property("image-filter", &videoconvert_image);
  
@@ -110,7 +121,7 @@ index b3247a1..8d449d4 100644
              self.sink_paintable.set(paintablesink).unwrap();
  
              self.picture
-@@ -585,6 +602,19 @@ impl Default for Viewfinder {
+@@ -585,6 +606,22 @@ impl Default for Viewfinder {
  }
  
  impl Viewfinder {
@@ -126,11 +137,70 @@ index b3247a1..8d449d4 100644
 +    const SLOW_WINDOWS: u32 = 2;
 +    /// Length of one measurement window, in seconds.
 +    const FPS_WINDOW: u32 = 2;
++    /// How many 100 ms waits to allow the pipeline for coming back up after
++    /// switching resolution for a picture.
++    const CAPTURE_WAIT_TRIES: u32 = 50;
 +
      /// Creates a new [`Viewfinder`][crate::Viewfinder]
      ///
      /// # Returns
-@@ -753,6 +783,8 @@ impl Viewfinder {
+@@ -647,11 +684,54 @@ impl Viewfinder {
+         let camerabin = imp.camerabin();
+         camerabin.set_property_from_str("mode", "mode-image");
+         camerabin.set_property("location", location.as_ref().display().to_string());
+-        camerabin.emit_by_name::<()>("start-capture", &[]);
++
++        // Take the picture at the sensor's resolution rather than the
++        // preview's, by switching the source over and back around the shot.
++        let preview = imp.viewfinder_res.get();
++        let capture = imp.capture_res.get();
++
++        if preview == capture {
++            camerabin.emit_by_name::<()>("start-capture", &[]);
++            return Ok(());
++        }
++
++        imp.restore_res.set(Some(preview));
++        self.switch_source_resolution(capture);
++
++        glib::spawn_future_local(glib::clone!(
++            #[weak(rename_to = obj)]
++            self,
++            async move {
++                obj.capture_when_running().await;
++            }
++        ));
+ 
+         Ok(())
+     }
+ 
++    /// Waits for the pipeline to come back up after a resolution switch, then
++    /// takes the picture.
++    ///
++    /// If it does not come back up, the shot is taken anyway: a picture at the
++    /// wrong resolution beats a shutter press that does nothing.
++    async fn capture_when_running(&self) {
++        let camerabin = self.imp().camerabin().clone();
++
++        for _ in 0..Self::CAPTURE_WAIT_TRIES {
++            if camerabin.current_state() == gst::State::Playing {
++                break;
++            }
++
++            glib::timeout_future(std::time::Duration::from_millis(100)).await;
++        }
++
++        if camerabin.current_state() != gst::State::Playing {
++            log::warn!("Pipeline did not come back up before the capture");
++        }
++
++        camerabin.emit_by_name::<()>("start-capture", &[]);
++    }
++
+     /// Starts recording a video.
+     ///
+     /// The recording will be saved to `location`. This method throws an error
+@@ -753,6 +833,8 @@ impl Viewfinder {
  
      /// Starts the viewfinder.
      pub fn start_stream(&self) {
@@ -139,7 +209,7 @@ index b3247a1..8d449d4 100644
          glib::spawn_future_local(glib::clone!(
              #[weak(rename_to = obj)]
              self,
-@@ -825,6 +857,8 @@ impl Viewfinder {
+@@ -825,6 +907,8 @@ impl Viewfinder {
      ///
      /// A black frame will be shown after this methods has been called.
      pub fn stop_stream(&self) {
@@ -148,7 +218,19 @@ index b3247a1..8d449d4 100644
          if let Err(err) = self.imp().camerabin().set_state(gst::State::Null) {
              log::error!("Could not pause camerabin: {err}");
              self.imp().set_state(ViewfinderState::Error);
-@@ -1254,12 +1288,165 @@ impl Viewfinder {
+@@ -860,6 +944,11 @@ impl Viewfinder {
+     fn on_image_done(&self, file: &gio::File) {
+         self.imp().is_taking_picture.set(false);
+ 
++        // Back to the preview resolution the shot interrupted.
++        if let Some(index) = self.imp().restore_res.take() {
++            self.switch_source_resolution(index);
++        }
++
+         self.emit_picture_done(Some(file));
+     }
+ 
+@@ -1254,12 +1343,198 @@ impl Viewfinder {
              capsfilter.set_property("caps", &caps);
          }
  
@@ -160,12 +242,23 @@ index b3247a1..8d449d4 100644
          Ok(())
      }
  
-+    /// Pins still capture to the sensor's largest resolution, and starts the
-+    /// viewfinder at one small enough to be smooth.
++    /// Chooses the resolution the preview runs at, and the one a photo is
++    /// taken at.
 +    ///
-+    /// The two are deliberately separate. The source's capsfilter is shared by
-+    /// both paths, so without an explicit `image-capture-caps` a smaller
-+    /// viewfinder would quietly shrink the saved picture as well.
++    /// These cannot be the same on a phone: the sensor's full resolution is
++    /// worth having in a picture and far too slow to preview. The approach is
++    /// Megapixels', which defines a preview mode and a capture mode per device
++    /// and switches between them for the shot - "usually the maximum
++    /// resolution of the sensor will be used for taking pictures but at that
++    /// resolution the framerate will generally be too low for realtime
++    /// preview", and it picks "the resolution closest to the display
++    /// resolution as the preview mode".
++    /// <https://libmegapixels-12f3eb.pages.debian.net/config.html>
++    ///
++    /// The switch has to happen on the source rather than on camerabin's
++    /// image-capture-caps: with a PipeWire source the pipeline cannot
++    /// renegotiate while it runs, and asking it to produces
++    /// `streaming stopped, reason not-negotiated` and a frozen viewfinder.
 +    fn setup_capture_sizes(&self, camera: &crate::Camera) {
 +        let imp = self.imp();
 +
@@ -175,53 +268,71 @@ index b3247a1..8d449d4 100644
 +            return;
 +        }
 +
-+        let largest = resolutions[0];
-+        imp.camerabin()
-+            .set_property("image-capture-caps", &Self::size_caps(largest));
-+        log::info!(
-+            "Still capture pinned to {}x{}",
-+            largest.width,
-+            largest.height
-+        );
-+
-+        // Start at the largest resolution that is not obviously too much to
-+        // debayer and paint in software: the viewfinder only has to fill a
-+        // phone screen.
-+        let start = resolutions
++        let preview = resolutions
 +            .iter()
 +            .position(|s| (s.width as i64) * (s.height as i64) <= Self::MAX_VIEWFINDER_PIXELS)
-+            .unwrap_or(resolutions.len() - 1);
++            .unwrap_or(0);
++
++        log::info!(
++            "Capture at {}x{}, preview at {}x{}",
++            resolutions[0].width,
++            resolutions[0].height,
++            resolutions[preview].width,
++            resolutions[preview].height
++        );
 +
 +        imp.resolutions.replace(resolutions);
++        imp.capture_res.set(0);
++        imp.restore_res.set(None);
 +        imp.slow_windows.set(0);
-+        self.set_viewfinder_resolution(start);
++        self.apply_source_resolution(preview);
 +    }
 +
 +    fn size_caps(size: crate::utils::Size) -> gst::Caps {
-+        gst::Caps::builder("video/x-raw")
-+            .field("width", size.width)
-+            .field("height", size.height)
-+            .build()
++        crate::SUPPORTED_ENCODINGS
++            .iter()
++            .map(|encoding| {
++                gst::Caps::builder(*encoding)
++                    .field("width", size.width)
++                    .field("height", size.height)
++                    .build()
++            })
++            .collect::<gst::Caps>()
 +    }
 +
-+    fn set_viewfinder_resolution(&self, index: usize) {
++    /// Constrains the source to one resolution. Does not restart anything.
++    fn apply_source_resolution(&self, index: usize) {
 +        let imp = self.imp();
-+        let resolutions = imp.resolutions.borrow();
 +
-+        let Some(size) = resolutions.get(index).copied() else {
-+            return;
++        let size = {
++            let resolutions = imp.resolutions.borrow();
++            match resolutions.get(index).copied() {
++                Some(size) => size,
++                None => return,
++            }
 +        };
-+        drop(resolutions);
 +
 +        imp.viewfinder_res.set(index);
-+        imp.camerabin()
-+            .set_property("viewfinder-caps", &Self::size_caps(size));
-+        log::info!("Viewfinder at {}x{}", size.width, size.height);
++
++        if let Some(capsfilter) = imp.capsfilter.get() {
++            capsfilter.set_property("caps", &Self::size_caps(size));
++            log::debug!("Source constrained to {}x{}", size.width, size.height);
++        }
 +    }
 +
-+    /// Drops the viewfinder to the next smaller resolution, if there is one
-+    /// worth dropping to. Returns whether anything changed.
-+    fn lower_viewfinder_resolution(&self) -> bool {
++    /// Switches the source to another resolution and restarts the pipeline.
++    fn switch_source_resolution(&self, index: usize) {
++        if self.imp().viewfinder_res.get() == index {
++            return;
++        }
++
++        self.apply_source_resolution(index);
++        self.reset_pipeline();
++    }
++
++    /// Drops the preview to the next smaller resolution, if there is one worth
++    /// dropping to. Returns whether anything changed.
++    fn lower_preview_resolution(&self) -> bool {
 +        let imp = self.imp();
 +        let next = imp.viewfinder_res.get() + 1;
 +
@@ -237,7 +348,7 @@ index b3247a1..8d449d4 100644
 +            return false;
 +        }
 +
-+        self.set_viewfinder_resolution(next);
++        self.switch_source_resolution(next);
 +        true
 +    }
 +
@@ -283,9 +394,14 @@ index b3247a1..8d449d4 100644
 +            .swap(0, std::sync::atomic::Ordering::Relaxed);
 +        let fps = f64::from(frames) / f64::from(Self::FPS_WINDOW);
 +
-+        // A stream that has just started, or one that is not running at all,
-+        // says nothing about how fast the pipeline can go.
-+        if !matches!(self.state(), ViewfinderState::Ready) || frames == 0 {
++        // A stream that has just started, one that is not running, or one in
++        // the middle of taking a picture says nothing about how fast the
++        // pipeline can go.
++        if !matches!(self.state(), ViewfinderState::Ready)
++            || frames == 0
++            || imp.restore_res.get().is_some()
++            || imp.is_taking_picture.get()
++        {
 +            imp.slow_windows.set(0);
 +            return;
 +        }
@@ -305,9 +421,8 @@ index b3247a1..8d449d4 100644
 +
 +        imp.slow_windows.set(0);
 +
-+        if self.lower_viewfinder_resolution() {
-+            log::info!("Only {fps:.1} fps; lowering the viewfinder resolution");
-+            self.reset_pipeline();
++        if self.lower_preview_resolution() {
++            log::info!("Only {fps:.1} fps; lowering the preview resolution");
 +        }
 +    }
 +
