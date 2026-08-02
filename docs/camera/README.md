@@ -74,10 +74,57 @@ v4l2-ctl -d /dev/video0 \
   --stream-mmap=4 --stream-count=2 --stream-to=/tmp/f.raw
 ```
 
+☠️ The `media-ctl` step must also set the **sensor** pad, not just the CAMSS
+ones, whenever anything has run the camera at another resolution first — a
+libcamera or PipeWire session leaves the sensor at its preview size, and the
+recipe above then fails the same `-EPIPE` as a cold boot does:
+
+```sh
+media-ctl -d /dev/media0 -V "'imx363 0-001a':0 [fmt:SRGGB10_1X10/4032x3024]"
+```
+
 ☠️ **The pixel format is `pRAA`, not `RG10`**, and the `media-ctl` step is not
 optional. Either mistake produces `VIDIOC_STREAMON returned -1 (Broken pipe)`
 with nothing in dmesg, which reads exactly like a broken driver; both cost this
 project weeks. See [`bringup/`](bringup/README.md#two-ways-to-make-streaming-fail-that-look-like-a-broken-driver).
+
+## The CSIPHY timer clock, and why the camera used to vanish
+
+☠️ **`gcc_camss_csi0phytimer_clk status stuck at 'off'` was a wrong mux value
+in mainline's `gcc-msm8953.c`, not a settle or a sequencing problem.** Fixed
+2026-08-02 on `wip/7.1.3/camera`.
+
+The three `csi*phytimer` RCGs placed `GPLL0_DIV2` at **source select 2**. No
+other mux in the camera block does: every one of them puts it at 4 or 5, and
+on `csi0` select 2 is not a listed source at all. Selecting a source the RCG
+does not have leaves `CMD_RCGR` with `ROOT_OFF` set, so the branch never
+starts and `clk_branch2_enable()` times out into `-EBUSY`.
+
+Why it looked intermittent for months: only the **100 MHz** entry in
+`ftbl_csi_phytimer_clk_src` comes from `GPLL0_DIV2`, and CAMSS picks it from
+the sensor's link frequency. A 321 MHz link (the 1920x1080-ish preview modes)
+lands on 100 MHz and could never stream; the full-resolution path lands on
+200 MHz, comes from `GPLL0`, and always worked. Same phone, same boot, two
+different answers depending on which mode the sensor was in.
+
+| | with select 2 | with select 4 |
+|---|---|---|
+| `CMD_RCGR` | `0x80000000` — `ROOT_OFF` set | root on |
+| `CBCR` | `0x80000001` — enabled, `CLK_OFF` never clears | running |
+| capture runs | 0 of 9 | **9 of 9, across two boots, nothing in dmesg** |
+
+Two explanations were tried and **disproven** before this one, both worth not
+repeating: an immediate retry at the same rate (2026-07-26 — both attempts
+fail, so it is not a settle), and GPLL0's output gates being closed
+(2026-08-02 — `USER_CTL` reads `0x3`, opening all three to `0x7` changes
+nothing).
+
+☠️ **The failure did not stop at the camera.** A single `-EBUSY` wedges
+WirePlumber's `CameraManager` thread, and from then on the whole session
+manager is unresponsive — `wpctl status` hangs, `pw-dump` returns nothing with
+status 0 — so the camera node disappears from PipeWire and every app reports
+*no camera found*. Until the clock fix, the recovery was `systemctl --user
+restart wireplumber`.
 
 ## The focus actuator
 

@@ -288,6 +288,16 @@ the power path.
     Bayer order, stride) against a known scene, and the link frequencies in the
     DT still disagree with the driver's mode tables. Details in
     [`docs/camera/README.md`](https://github.com/llg179org/fp3-pmaports/blob/main/docs/camera/README.md).
+24c. ~~**The CSIPHY timer clock intermittently refuses to start** (`-EBUSY`,
+    parked 2026-07-26).~~ **Fixed 2026-08-02**, and it was not a settle
+    problem: `gcc-msm8953.c` placed `GPLL0_DIV2` at source select **2** for the
+    three `csi*phytimer` RCGs, where every other camera mux in the file uses 4
+    or 5. `ROOT_OFF` therefore never cleared and the only table entry derived
+    from that source - 100 MHz, the one a 321 MHz link frequency picks - could
+    never stream, while the 200/266 MHz GPLL0 entries always could. 9 of 9
+    capture runs across two boots after the change, with nothing in dmesg.
+    Carries a `Fixes:` tag and is upstream material. Detail in
+    [`docs/camera/README.md`](https://github.com/llg179org/fp3-pmaports/blob/main/docs/camera/README.md#the-csiphy-timer-clock-and-why-the-camera-used-to-vanish).
 24b. **Untested: the camera's exposure and gain controls.** The V4L2 controls
     exist on the sensor subdev; nothing has checked that writing them moves the
     image. Cheap to settle now that `focus-sweep.py` can hold one stream open -

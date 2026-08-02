@@ -1,0 +1,471 @@
+From 7773600378f6b1a1538feb1d0c3e54edc07dcdee Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Lajosh=C3=A1zi=2C=20L=C3=A1szl=C3=B3=20Gergely?=
+ <lajoshazilg@gmail.com>
+Date: Sun, 2 Aug 2026 19:22:39 +0200
+Subject: [PATCH] gallery: zoom and pan the picture being viewed
+
+Snapshot shows a saved picture scaled to fit and stops there, which throws
+away most of what the camera recorded: the rear sensor writes 4032x3024 and
+the screen shows about a tenth of those pixels. Checking whether a shot came
+out sharp - the one thing a viewer is for right after taking it - could only
+be done by leaving the app.
+
+Replace the GtkPicture the gallery shows a photograph in with a widget that
+draws the same paintable through a zoom factor and an offset, driven by a
+pinch, a scroll wheel or a double tap, and dragged around once magnified.
+The offset is clamped so the picture always covers the window: a drag cannot
+push it off-screen and leave nothing to drag back.
+
+The drag claims the gesture only while there is more picture than window, so
+at fit size the gallery's own swipe still pages through the pictures, and
+paging away resets the view rather than returning to a picture magnified and
+half off-centre from last time.
+---
+ src/widgets/gallery_picture.rs  |   6 +-
+ src/widgets/mod.rs              |   3 +
+ src/widgets/zoomable_picture.rs | 376 ++++++++++++++++++++++++++++++++
+ 3 files changed, 382 insertions(+), 3 deletions(-)
+ create mode 100644 src/widgets/zoomable_picture.rs
+
+diff --git a/src/widgets/gallery_picture.rs b/src/widgets/gallery_picture.rs
+index b730ee6..4604d59 100644
+--- a/src/widgets/gallery_picture.rs
++++ b/src/widgets/gallery_picture.rs
+@@ -12,7 +12,7 @@ mod imp {
+ 
+     #[derive(Debug, Default)]
+     pub struct GalleryPicture {
+-        pub picture: OnceCell<gtk::Picture>,
++        pub picture: OnceCell<crate::ZoomablePicture>,
+     }
+ 
+     #[glib::object_subclass]
+@@ -57,7 +57,7 @@ impl GalleryPicture {
+         let frame = image.next_frame_future().await?;
+         let texture = glycin_gtk4::frame_get_texture(&frame);
+ 
+-        let picture = imp.picture.get_or_init(gtk::Picture::default);
++        let picture = imp.picture.get_or_init(crate::ZoomablePicture::default);
+ 
+         self.upcast_ref::<crate::GalleryItem>()
+             .set_item(picture.upcast_ref());
+@@ -68,7 +68,7 @@ impl GalleryPicture {
+             picture.update_property(&[gtk::accessible::Property::Label(label)]);
+         }
+ 
+-        picture.set_paintable(Some(&texture));
++        picture.set_paintable(Some(texture.upcast_ref::<gdk::Paintable>()));
+         self.set_thumbnail(&texture);
+ 
+         Ok(())
+diff --git a/src/widgets/mod.rs b/src/widgets/mod.rs
+index 9f5d5a8..a11afdb 100644
+--- a/src/widgets/mod.rs
++++ b/src/widgets/mod.rs
+@@ -19,6 +19,7 @@ mod shutter_button;
+ mod sliding_view;
+ mod video_player;
+ mod window;
++mod zoomable_picture;
+ 
+ pub use camera::Camera;
+ pub use camera_controls::CameraControls;
+@@ -38,6 +39,7 @@ pub use shutter_button::ShutterButton;
+ pub use sliding_view::SlidingView;
+ pub use video_player::VideoPlayer;
+ pub use window::Window;
++pub use zoomable_picture::ZoomablePicture;
+ 
+ pub fn init() {
+     Camera::static_type();
+@@ -48,4 +50,5 @@ pub fn init() {
+     GalleryItem::static_type();
+     FlashBin::static_type();
+     SlidingView::static_type();
++    ZoomablePicture::static_type();
+ }
+diff --git a/src/widgets/zoomable_picture.rs b/src/widgets/zoomable_picture.rs
+new file mode 100644
+index 0000000..5d97e25
+--- /dev/null
++++ b/src/widgets/zoomable_picture.rs
+@@ -0,0 +1,376 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++//! A picture that can be zoomed into and dragged around.
++//!
++//! `GtkPicture` scales its paintable to fit and stops there, which is enough
++//! for a thumbnail and not enough for looking at a photograph: the detail a
++//! phone camera records is well past what the screen shows at fit size. This
++//! is the same widget with a zoom factor and an offset, driven by a pinch, a
++//! scroll wheel or a double tap, and pannable by dragging once there is
++//! anything to pan to.
++//!
++//! The drag only claims the gesture while the picture is zoomed in, so at fit
++//! size the swipe that pages through the gallery still works.
++
++use adw::prelude::*;
++use adw::subclass::prelude::*;
++use gtk::{gdk, glib, graphene};
++
++/// Largest magnification, as a multiple of the fit size.
++const MAX_ZOOM: f64 = 8.0;
++/// What a double tap zooms to when the picture is at fit size.
++const DOUBLE_TAP_ZOOM: f64 = 2.5;
++
++mod imp {
++    use std::cell::Cell;
++    use std::cell::RefCell;
++
++    use glib::Properties;
++
++    use super::*;
++
++    #[derive(Debug, Default, Properties)]
++    #[properties(wrapper_type = super::ZoomablePicture)]
++    pub struct ZoomablePicture {
++        #[property(get, set = Self::set_paintable, nullable, explicit_notify)]
++        pub paintable: RefCell<Option<gdk::Paintable>>,
++        #[property(get, set = Self::set_zoom, explicit_notify, default = 1.0)]
++        pub zoom: Cell<f64>,
++
++        /// Where the magnified picture sits under the window, in widget
++        /// pixels, measured from the centred position.
++        pub offset: Cell<(f64, f64)>,
++    }
++
++    impl ZoomablePicture {
++        fn set_paintable(&self, paintable: Option<&gdk::Paintable>) {
++            self.paintable.replace(paintable.cloned());
++            self.obj().reset();
++            self.obj().queue_resize();
++            self.obj().notify_paintable();
++        }
++
++        fn set_zoom(&self, zoom: f64) {
++            let zoom = zoom.clamp(1.0, MAX_ZOOM);
++
++            if (zoom - self.zoom.get()).abs() < f64::EPSILON {
++                return;
++            }
++
++            self.zoom.set(zoom);
++            self.obj().clamp_offset();
++            self.obj().queue_draw();
++            self.obj().notify_zoom();
++        }
++
++        /// The rectangle the paintable occupies at fit size, in widget
++        /// coordinates - what `GtkPicture` would draw.
++        pub fn fitted(&self) -> Option<(f64, f64, f64, f64)> {
++            let paintable = self.paintable.borrow().clone()?;
++            let widget = self.obj();
++
++            let width = widget.width() as f64;
++            let height = widget.height() as f64;
++            let ratio = paintable.intrinsic_aspect_ratio();
++
++            if width <= 0.0 || height <= 0.0 || ratio <= 0.0 {
++                return None;
++            }
++
++            let (w, h) = if width / height > ratio {
++                (height * ratio, height)
++            } else {
++                (width, width / ratio)
++            };
++
++            Some(((width - w) / 2.0, (height - h) / 2.0, w, h))
++        }
++    }
++
++    #[glib::object_subclass]
++    impl ObjectSubclass for ZoomablePicture {
++        const NAME: &'static str = "ZoomablePicture";
++        type Type = super::ZoomablePicture;
++        type ParentType = gtk::Widget;
++    }
++
++    #[glib::derived_properties]
++    impl ObjectImpl for ZoomablePicture {
++        fn constructed(&self) {
++            self.parent_constructed();
++
++            self.zoom.set(1.0);
++            self.obj().setup_gestures();
++        }
++    }
++
++    impl WidgetImpl for ZoomablePicture {
++        fn measure(&self, orientation: gtk::Orientation, _for_size: i32) -> (i32, i32, i32, i32) {
++            // Minimum zero, natural the paintable's own size: the same
++            // contract `GtkPicture` offers with `can-shrink` set, so dropping
++            // this in where one was changes no layout.
++            let natural = self
++                .paintable
++                .borrow()
++                .as_ref()
++                .map(|paintable| {
++                    if orientation == gtk::Orientation::Horizontal {
++                        paintable.intrinsic_width()
++                    } else {
++                        paintable.intrinsic_height()
++                    }
++                })
++                .unwrap_or(0);
++
++            (0, natural.max(0), -1, -1)
++        }
++
++        fn size_allocate(&self, _width: i32, _height: i32, _baseline: i32) {
++            self.obj().clamp_offset();
++        }
++
++        fn snapshot(&self, snapshot: &gtk::Snapshot) {
++            let Some(paintable) = self.paintable.borrow().clone() else {
++                return;
++            };
++            let Some((x, y, w, h)) = self.fitted() else {
++                return;
++            };
++
++            let widget = self.obj();
++            let zoom = self.zoom.get();
++            let (dx, dy) = self.offset.get();
++
++            snapshot.push_clip(&graphene::Rect::new(
++                0.0,
++                0.0,
++                widget.width() as f32,
++                widget.height() as f32,
++            ));
++
++            // Magnify about the centre of the fitted picture, then slide it by
++            // the pan offset, so a zoom with no drag keeps looking at what was
++            // in the middle.
++            let cx = x + w / 2.0 + dx;
++            let cy = y + h / 2.0 + dy;
++            snapshot.translate(&graphene::Point::new(
++                (cx - w * zoom / 2.0) as f32,
++                (cy - h * zoom / 2.0) as f32,
++            ));
++
++            paintable.snapshot(snapshot, w * zoom, h * zoom);
++
++            snapshot.pop();
++        }
++
++        fn unmap(&self) {
++            // Paging back to a picture should show it whole, not wherever it
++            // was left magnified.
++            self.obj().reset();
++            self.parent_unmap();
++        }
++    }
++}
++
++glib::wrapper! {
++    pub struct ZoomablePicture(ObjectSubclass<imp::ZoomablePicture>)
++        @extends gtk::Widget,
++        @implements gtk::ConstraintTarget, gtk::Buildable, gtk::Accessible;
++}
++
++impl Default for ZoomablePicture {
++    fn default() -> Self {
++        glib::Object::new()
++    }
++}
++
++impl ZoomablePicture {
++    /// Back to fit size, centred.
++    pub fn reset(&self) {
++        let imp = self.imp();
++
++        imp.offset.set((0.0, 0.0));
++
++        if (imp.zoom.get() - 1.0).abs() > f64::EPSILON {
++            imp.zoom.set(1.0);
++            self.notify_zoom();
++        }
++
++        self.queue_draw();
++    }
++
++    /// Keeps the magnified picture covering the window it is seen through.
++    ///
++    /// Without this a drag could push the picture off the screen entirely and
++    /// leave the user looking at nothing, with no cue about which way to drag
++    /// back.
++    fn clamp_offset(&self) {
++        let imp = self.imp();
++
++        let Some((_, _, w, h)) = imp.fitted() else {
++            return;
++        };
++
++        let zoom = imp.zoom.get();
++        let (dx, dy) = imp.offset.get();
++
++        // Half the overhang on each side; zero once the picture fits, which
++        // pins it back to the centre.
++        let slack_x = (w * zoom - self.width() as f64).max(0.0) / 2.0;
++        let slack_y = (h * zoom - self.height() as f64).max(0.0) / 2.0;
++
++        imp.offset
++            .set((dx.clamp(-slack_x, slack_x), dy.clamp(-slack_y, slack_y)));
++    }
++
++    /// Zooms about a point, so what is under the fingers stays under them.
++    fn zoom_at(&self, zoom: f64, x: f64, y: f64) {
++        let imp = self.imp();
++
++        let Some((fx, fy, w, h)) = imp.fitted() else {
++            return;
++        };
++
++        let old = imp.zoom.get();
++        let new = zoom.clamp(1.0, MAX_ZOOM);
++
++        if (new - old).abs() < f64::EPSILON {
++            return;
++        }
++
++        let (dx, dy) = imp.offset.get();
++        let cx = fx + w / 2.0 + dx;
++        let cy = fy + h / 2.0 + dy;
++        let scale = new / old;
++
++        // The anchor keeps its distance from the picture's centre in picture
++        // pixels, which in widget pixels means scaling that distance.
++        imp.offset
++            .set((dx + (cx - x) * (scale - 1.0), dy + (cy - y) * (scale - 1.0)));
++        imp.zoom.set(new);
++
++        self.clamp_offset();
++        self.queue_draw();
++        self.notify_zoom();
++    }
++
++    fn drag_by(&self, dx: f64, dy: f64) {
++        let imp = self.imp();
++        let (x, y) = imp.offset.get();
++
++        imp.offset.set((x + dx, y + dy));
++        self.clamp_offset();
++        self.queue_draw();
++    }
++
++    /// True while there is more picture than window, in either axis.
++    fn is_pannable(&self) -> bool {
++        let imp = self.imp();
++
++        let Some((_, _, w, h)) = imp.fitted() else {
++            return false;
++        };
++
++        let zoom = imp.zoom.get();
++
++        w * zoom > self.width() as f64 + 1.0 || h * zoom > self.height() as f64 + 1.0
++    }
++
++    fn setup_gestures(&self) {
++        // Pinch.
++        let zoom_gesture = gtk::GestureZoom::new();
++        let zoom_start = std::rc::Rc::new(std::cell::Cell::new(1.0_f64));
++        let zoom_centre = std::rc::Rc::new(std::cell::Cell::new((0.0_f64, 0.0_f64)));
++        zoom_gesture.connect_begin(glib::clone!(
++            #[weak(rename_to = widget)]
++            self,
++            #[strong]
++            zoom_start,
++            #[strong]
++            zoom_centre,
++            move |gesture, _| {
++                zoom_start.set(widget.zoom());
++                if let Some(point) = gesture.bounding_box_center() {
++                    zoom_centre.set(point);
++                }
++            }
++        ));
++        zoom_gesture.connect_scale_changed(glib::clone!(
++            #[weak(rename_to = widget)]
++            self,
++            #[strong]
++            zoom_start,
++            #[strong]
++            zoom_centre,
++            move |gesture, scale| {
++                let (x, y) = gesture.bounding_box_center().unwrap_or(zoom_centre.get());
++                widget.zoom_at(zoom_start.get() * scale, x, y);
++                gesture.set_state(gtk::EventSequenceState::Claimed);
++            }
++        ));
++        self.add_controller(zoom_gesture);
++
++        // Drag, but only while there is somewhere to drag to: otherwise the
++        // gallery's own swipe has to keep the sequence.
++        let drag = gtk::GestureDrag::new();
++        let last = std::rc::Rc::new(std::cell::Cell::new((0.0_f64, 0.0_f64)));
++        drag.connect_drag_begin(glib::clone!(
++            #[strong]
++            last,
++            move |_, _, _| last.set((0.0, 0.0))
++        ));
++        drag.connect_drag_update(glib::clone!(
++            #[weak(rename_to = widget)]
++            self,
++            #[strong]
++            last,
++            move |gesture, x, y| {
++                if !widget.is_pannable() {
++                    return;
++                }
++
++                let (px, py) = last.get();
++                last.set((x, y));
++                widget.drag_by(x - px, y - py);
++
++                gesture.set_state(gtk::EventSequenceState::Claimed);
++            }
++        ));
++        self.add_controller(drag);
++
++        // Double tap toggles, anchored where it was tapped.
++        let taps = gtk::GestureClick::new();
++        taps.set_button(gtk::gdk::BUTTON_PRIMARY);
++        taps.connect_pressed(glib::clone!(
++            #[weak(rename_to = widget)]
++            self,
++            move |_, n_press, x, y| {
++                if n_press != 2 {
++                    return;
++                }
++
++                if widget.zoom() > 1.0 {
++                    widget.reset();
++                } else {
++                    widget.zoom_at(DOUBLE_TAP_ZOOM, x, y);
++                }
++            }
++        ));
++        self.add_controller(taps);
++
++        // Scroll wheel, for the desktop.
++        let scroll =
++            gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::VERTICAL);
++        scroll.connect_scroll(glib::clone!(
++            #[weak(rename_to = widget)]
++            self,
++            #[upgrade_or]
++            glib::Propagation::Proceed,
++            move |_, _dx, dy| {
++                let (x, y) = (widget.width() as f64 / 2.0, widget.height() as f64 / 2.0);
++                widget.zoom_at(widget.zoom() * (1.0 - dy * 0.1), x, y);
++                glib::Propagation::Stop
++            }
++        ));
++        self.add_controller(scroll);
++    }
++}
+-- 
+2.53.0
+

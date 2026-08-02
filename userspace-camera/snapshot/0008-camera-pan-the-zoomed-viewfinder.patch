@@ -1,0 +1,288 @@
+From 59f4c3ea1b245209f50ef9c373e484907772af02 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Lajosh=C3=A1zi=2C=20L=C3=A1szl=C3=B3=20Gergely?=
+ <lajoshazilg@gmail.com>
+Date: Sun, 2 Aug 2026 19:22:24 +0200
+Subject: [PATCH] camera: aim the zoom by dragging the viewfinder
+
+The zoom added earlier is camerabin's own, and camerabin only ever crops
+about the centre of the frame. On a phone that is half a zoom: the thing
+worth zooming into is rarely dead centre, and with no way to aim, framing it
+means moving the whole phone until the subject is centred - at 4x, a small
+movement of the hand throws the subject out of frame entirely.
+
+Move the zoom onto a videocrop of our own, placed inside the source bin so it
+sits upstream of camerabin's tee, and add a pan offset alongside the factor.
+Being upstream of the tee is the point: the still and the video are cropped
+exactly as the viewfinder was framed, which is what camerabin's zoom already
+gave and what a preview-only pan would have quietly broken.
+
+Dragging moves the framed window against the finger by as much as the finger
+moved, so the picture follows the hand. The gesture bubbles rather than
+captures, so the controls laid over the viewfinder keep their own drags, and
+it claims the sequence only while zoomed in - at 1x a drag is left alone.
+Zooming back out forgets the aim, since there is nothing left to aim at.
+---
+ aperture/src/viewfinder.rs | 121 +++++++++++++++++++++++++++++++++++--
+ src/widgets/camera.rs      |  49 +++++++++++++++
+ 2 files changed, 164 insertions(+), 6 deletions(-)
+
+diff --git a/aperture/src/viewfinder.rs b/aperture/src/viewfinder.rs
+index 3586357..49febe2 100644
+--- a/aperture/src/viewfinder.rs
++++ b/aperture/src/viewfinder.rs
+@@ -18,6 +18,12 @@ use crate::code_detector::QrCodeDetector;
+ /// quality and file size. Candidate for a preference.
+ const DEFAULT_BITRATE: u32 = 2048;
+ const PROVIDER_TIMEOUT: u64 = 2;
++/// Smallest window the digital zoom will crop down to, in source pixels.
++///
++/// A guard rather than a preference: the zoom range is camerabin's, and on a
++/// small preview resolution its top factor would otherwise ask for a crop of
++/// a few pixels, which negotiates but shows nothing useful.
++const MIN_CROP_SIZE: i32 = 64;
+ 
+ #[derive(Debug)]
+ enum StateChangeState {
+@@ -56,11 +62,21 @@ mod imp {
+         enable_hw_encoding: Cell<bool>,
+         #[property(get, set = Self::set_zoom, explicit_notify, default = 1.0)]
+         zoom: Cell<f64>,
++        /// Where the zoomed window sits, as a fraction of the room the crop
++        /// leaves: -1 is hard against one edge, 0 is centred, 1 is the other
++        /// edge. At 1x there is no room, so both are pinned to 0.
++        #[property(get, set = Self::set_pan_x, explicit_notify)]
++        pan_x: Cell<f64>,
++        #[property(get, set = Self::set_pan_y, explicit_notify)]
++        pan_y: Cell<f64>,
+         #[property(get, set = Self::set_preview_resolution, explicit_notify)]
+         pub preview_resolution: RefCell<String>,
+         #[property(get = Self::max_zoom, type = f64)]
+         max_zoom: PhantomData<f64>,
+ 
++        /// Crops the source frame; this is where zoom and pan are applied.
++        pub videocrop: OnceCell<gst::Element>,
++
+         pub qrcode_branch: RefCell<Option<gst::Element>>,
+         pub devices: OnceCell<crate::DeviceProvider>,
+         pub camera_src: RefCell<Option<gst::Element>>,
+@@ -108,7 +124,7 @@ mod imp {
+             self.camerabin.get().unwrap()
+         }
+ 
+-        /// The largest zoom factor `camerabin` will accept.
++        /// The largest zoom factor the crop will accept.
+         fn max_zoom(&self) -> f64 {
+             self.camerabin
+                 .get()
+@@ -116,12 +132,14 @@ mod imp {
+                 .unwrap_or(1.0)
+         }
+ 
+-        /// Digital zoom, applied by `camerabin` itself.
++        /// Digital zoom, applied by a `videocrop` inside the source bin.
+         ///
+         /// This crops in the source rather than magnifying the displayed
+         /// paintable, so the pictures and videos that are saved are zoomed
+         /// too, and the preview keeps the sensor's resolution instead of
+-        /// showing an upscaled thumbnail.
++        /// showing an upscaled thumbnail. It is our own crop rather than
++        /// camerabin's `zoom` property because camerabin only ever crops
++        /// about the centre, and a zoom you cannot aim is half a zoom.
+         fn set_zoom(&self, zoom: f64) {
+             let zoom = zoom.clamp(1.0, self.max_zoom());
+ 
+@@ -131,13 +149,82 @@ mod imp {
+ 
+             self.zoom.replace(zoom);
+ 
+-            if let Some(camerabin) = self.camerabin.get() {
+-                camerabin.set_property("zoom", zoom as f32);
++            // At 1x there is no room to pan into, so the aim is forgotten
++            // rather than kept for the next zoom, which would otherwise start
++            // off-centre for no reason the user can see.
++            if zoom <= 1.0 && (self.pan_x.get() != 0.0 || self.pan_y.get() != 0.0) {
++                self.pan_x.set(0.0);
++                self.pan_y.set(0.0);
++                self.obj().notify_pan_x();
++                self.obj().notify_pan_y();
+             }
+ 
++            self.apply_crop();
++
+             self.obj().notify_zoom();
+         }
+ 
++        fn set_pan_x(&self, pan: f64) {
++            let pan = pan.clamp(-1.0, 1.0);
++
++            if (pan - self.pan_x.get()).abs() < f64::EPSILON {
++                return;
++            }
++
++            self.pan_x.replace(pan);
++            self.apply_crop();
++            self.obj().notify_pan_x();
++        }
++
++        fn set_pan_y(&self, pan: f64) {
++            let pan = pan.clamp(-1.0, 1.0);
++
++            if (pan - self.pan_y.get()).abs() < f64::EPSILON {
++                return;
++            }
++
++            self.pan_y.replace(pan);
++            self.apply_crop();
++            self.obj().notify_pan_y();
++        }
++
++        /// The frame size the crop element is being fed, if it is negotiated.
++        fn source_size(&self) -> Option<(i32, i32)> {
++            let caps = self.videocrop.get()?.static_pad("sink")?.current_caps()?;
++            let s = caps.structure(0)?;
++
++            Some((s.get("width").ok()?, s.get("height").ok()?))
++        }
++
++        /// Turns the current zoom and pan into `videocrop` borders.
++        ///
++        /// The crop is recomputed from the source size every time rather than
++        /// nudged, so a resolution switch under a held zoom cannot leave the
++        /// borders describing a frame that no longer exists.
++        pub(super) fn apply_crop(&self) {
++            let Some(videocrop) = self.videocrop.get() else {
++                return;
++            };
++            let Some((width, height)) = self.source_size() else {
++                return;
++            };
++
++            let zoom = self.zoom.get().max(1.0);
++            let keep_w = ((width as f64 / zoom).round() as i32).clamp(MIN_CROP_SIZE, width);
++            let keep_h = ((height as f64 / zoom).round() as i32).clamp(MIN_CROP_SIZE, height);
++
++            // Room left over by the crop, split between the two sides by pan.
++            let slack_x = width - keep_w;
++            let slack_y = height - keep_h;
++            let left = ((slack_x as f64 / 2.0) * (1.0 + self.pan_x.get())).round() as i32;
++            let top = ((slack_y as f64 / 2.0) * (1.0 + self.pan_y.get())).round() as i32;
++
++            videocrop.set_property("left", left);
++            videocrop.set_property("right", slack_x - left);
++            videocrop.set_property("top", top);
++            videocrop.set_property("bottom", slack_y - top);
++        }
++
+         /// The size the viewfinder runs at, as "WIDTHxHEIGHT".
+         ///
+         /// Empty means the viewfinder chooses, which it does by trying sizes
+@@ -1297,15 +1384,23 @@ impl Viewfinder {
+         let caps_post_decode = gst::Caps::builder("video/x-raw").build();
+         capsfilter_post_decode.set_property("caps", &caps_post_decode);
+ 
++        // Zoom and pan happen here, inside the source bin and therefore
++        // upstream of camerabin's tee: what the viewfinder shows is what the
++        // still and the recording are cropped to.
++        let videocrop = gst::ElementFactory::make("videocrop").build()?;
++
+         bin.add_many([
+             device_src,
+             &capsfilter,
+             &decodebin3,
+             &capsfilter_post_decode,
++            &videocrop,
+         ])?;
+         gst::Element::link_many([device_src, &capsfilter, &decodebin3])?;
++        gst::Element::link(&capsfilter_post_decode, &videocrop)?;
+ 
+         self.imp().capsfilter.set(capsfilter).unwrap();
++        let _ = self.imp().videocrop.set(videocrop.clone());
+ 
+         let (sender, receiver) = futures_channel::oneshot::channel::<bool>();
+         let sender = std::sync::Arc::new(std::sync::Mutex::new(Some(sender)));
+@@ -1334,7 +1429,21 @@ impl Viewfinder {
+             }
+         ));
+ 
+-        let pad = capsfilter_post_decode.static_pad("src").unwrap();
++        // The crop element negotiates its sink caps only once the source is
++        // running, and the borders are computed from those, so re-apply them
++        // whenever the frame size underneath changes.
++        if let Some(sink_pad) = videocrop.static_pad("sink") {
++            sink_pad.connect_notify_local(
++                Some("caps"),
++                glib::clone!(
++                    #[weak(rename_to = viewfinder)]
++                    self,
++                    move |_, _| viewfinder.imp().apply_crop()
++                ),
++            );
++        }
++
++        let pad = videocrop.static_pad("src").unwrap();
+         let ghost_pad = gst::GhostPad::with_target(&pad)?;
+         ghost_pad.set_active(true)?;
+ 
+diff --git a/src/widgets/camera.rs b/src/widgets/camera.rs
+index 160aa56..24cbc95 100644
+--- a/src/widgets/camera.rs
++++ b/src/widgets/camera.rs
+@@ -198,6 +198,55 @@ mod imp {
+             ));
+             obj.add_controller(zoom_gesture);
+ 
++            // Pan: once zoomed in, dragging aims the crop. A zoom that always
++            // crops about the centre can frame nothing that is not already in
++            // the middle of the sensor, so this is what makes the zoom usable
++            // rather than a convenience on top of it.
++            //
++            // The gesture bubbles rather than captures, so the controls laid
++            // over the viewfinder - the sliders especially - keep their own
++            // drags, and it only claims the sequence while there is something
++            // to pan: at 1x the drag is left alone for whatever else wants it.
++            let drag = gtk::GestureDrag::new();
++            let pan_start = std::rc::Rc::new(std::cell::Cell::new((0.0_f64, 0.0_f64)));
++            drag.connect_drag_begin(glib::clone!(
++                #[weak]
++                obj,
++                #[strong]
++                pan_start,
++                move |_, _, _| {
++                    let viewfinder = &obj.imp().viewfinder;
++                    pan_start.set((viewfinder.pan_x(), viewfinder.pan_y()));
++                }
++            ));
++            drag.connect_drag_update(glib::clone!(
++                #[weak]
++                obj,
++                #[strong]
++                pan_start,
++                move |gesture, dx, dy| {
++                    let viewfinder = &obj.imp().viewfinder;
++                    let zoom = viewfinder.zoom();
++                    let width = viewfinder.width() as f64;
++                    let height = viewfinder.height() as f64;
++
++                    if zoom <= 1.0 || width <= 0.0 || height <= 0.0 {
++                        return;
++                    }
++
++                    // Move the framed window against the finger, by as much
++                    // as the finger moved: the picture follows the hand. The
++                    // pan unit spans the whole slack the crop leaves, which is
++                    // a (zoom - 1) fraction of the frame, hence the divisor.
++                    let (start_x, start_y) = pan_start.get();
++                    viewfinder.set_pan_x(start_x - 2.0 * dx / (width * (zoom - 1.0)));
++                    viewfinder.set_pan_y(start_y - 2.0 * dy / (height * (zoom - 1.0)));
++
++                    gesture.set_state(gtk::EventSequenceState::Claimed);
++                }
++            ));
++            obj.add_controller(drag);
++
+             let scroll = gtk::EventControllerScroll::new(
+                 gtk::EventControllerScrollFlags::VERTICAL,
+             );
+-- 
+2.53.0
+

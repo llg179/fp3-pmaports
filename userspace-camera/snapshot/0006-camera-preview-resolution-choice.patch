@@ -1,50 +1,50 @@
-From bcb1b4187f812737e1c56e3b4a9c7ee14e6d7480 Mon Sep 17 00:00:00 2001
+From 2f3eb822999b11754c06447bc97edc2772d07052 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Lajosh=C3=A1zi=2C=20L=C3=A1szl=C3=B3=20Gergely?=
  <lajoshazilg@gmail.com>
 Date: Sun, 2 Aug 2026 07:30:57 +0200
-Subject: [PATCH] camera: choose the viewfinder resolution, and remember it
+Subject: [PATCH 6/7] camera: choose the viewfinder resolution, and remember it
 
-A camera offers sizes it cannot always stream. Asked for one of those, the
-pipeline answers 'Failed to start streaming: Resource busy' and the viewfinder
-is dead - no picture, and no error the user can act on. Measured on a Fairphone
-3, each size in its own process starting from idle so that nothing here is a
-matter of reconfiguring in a hurry: of the 47 sizes that camera advertises,
-everything below about 1.8 megapixels fails and everything above it works -
-160x120, 320x240, 400x240, 640x480, 800x600, 1024x768, 1280x720, 1280x1024,
-1400x1050 and 1680x1050 all refuse, while 1600x1200, 1920x1080 and the sensor's
-own 4032x3024 stream.
+A camera offers sizes it cannot always deliver. Asked for one of those, this
+pipeline either refuses outright - 'Failed to start streaming: Resource busy'
+- or, worse, starts without complaint and delivers nothing at all, leaving a
+black rectangle where the viewfinder should be. Measured on a Fairphone 3,
+each size in its own process from idle: of the 47 sizes that camera
+advertises, everything below about 1.8 megapixels fails, while 1600x1200,
+1920x1080 and 3840x2400 work.
 
 Which ones work therefore cannot be derived, only tried. On first use the
 viewfinder bisects the list - which is ordered by pixel count - for the
-smallest size that streams: a size that fails reports it through the pipeline's
-error, which is an answer rather than a breakdown, so the search moves on
-instead of giving up the camera. Bisecting matters: walking up from the
-smallest would have cost thirty pipeline restarts on the camera above, in front
-of a user looking at a black screen, where six suffice.
+smallest size that works: bisecting matters, because walking up from the
+smallest would have cost thirty pipeline restarts on the camera above, in
+front of a user looking at a black screen, where six suffice.
 
-The bisection assumes that a size which streams keeps streaming as it grows.
-Where that does not hold the result is merely not the smallest one that works,
-never a size that does not, because only a size seen to stream is settled on.
+What counts as working is buffers arriving at the video sink, not the absence
+of an error. That distinction was learned the hard way: judged by errors
+alone, the search settled on 1024x600 - which reports nothing, streams
+nothing, and shows a black viewfinder for ever. A size that produces no
+pictures within the settling time is treated exactly like one that refused.
 
-The winner is published as the preview-resolution property, and the application
-binds that to a setting in both directions. The search therefore happens once
-in the lifetime of an installation rather than at every start, and a size
-chosen by hand in the preferences takes precedence. Choosing one that turns out
-not to stream is not fatal either: the search simply runs again.
+A size that was chosen rather than found is checked the same way, since it may
+come from an older version, a different camera, or a person picking from the
+menu; if nothing arrives, the stored choice is dropped and the search runs.
+
+The winner is published as the preview-resolution property, and the
+application binds that to a setting in both directions, so the search happens
+once in the lifetime of an installation rather than at every start.
 
 Smallest-first is deliberate. It is the cheapest to debayer in software and so
-the fastest preview, and the picture is taken at the sensor's full resolution
-regardless of what the viewfinder runs at.
+the fastest preview, and the picture is taken at the largest size the source
+offers regardless of what the viewfinder runs at.
 ---
  aperture/src/lib.rs                    |   2 +-
- aperture/src/utils.rs                  |  19 ++-
- aperture/src/viewfinder.rs             | 217 +++++++++++++++++++++++--
+ aperture/src/utils.rs                  |  19 +-
+ aperture/src/viewfinder.rs             | 279 ++++++++++++++++++++++++-
  data/org.gnome.Snapshot.gschema.xml.in |   5 +
  src/widgets/camera.rs                  |   9 +
- src/widgets/camera_settings.rs         |  56 +++++++
+ src/widgets/camera_settings.rs         |  56 +++++
  src/widgets/preferences_window.rs      |  13 +-
  src/widgets/window.rs                  |   2 +-
- 8 files changed, 309 insertions(+), 14 deletions(-)
+ 8 files changed, 371 insertions(+), 14 deletions(-)
 
 diff --git a/aperture/src/lib.rs b/aperture/src/lib.rs
 index 7b153f8..9feecc9 100644
@@ -92,7 +92,7 @@ index 9f3948e..88a2aeb 100644
      use std::sync::LazyLock;
  
 diff --git a/aperture/src/viewfinder.rs b/aperture/src/viewfinder.rs
-index 38f1386..706f7e9 100644
+index 38f1386..3514204 100644
 --- a/aperture/src/viewfinder.rs
 +++ b/aperture/src/viewfinder.rs
 @@ -56,6 +56,8 @@ mod imp {
@@ -104,12 +104,14 @@ index 38f1386..706f7e9 100644
          #[property(get = Self::max_zoom, type = f64)]
          max_zoom: PhantomData<f64>,
  
-@@ -85,6 +87,13 @@ mod imp {
+@@ -85,6 +87,15 @@ mod imp {
          pub restore_res: Cell<Option<usize>>,
          /// Whether the camera should keep focusing by itself.
          pub autofocus: Cell<bool>,
 +        /// Index being tried while looking for a preview size that streams.
 +        pub probe: Cell<Option<usize>>,
++        /// Buffers the video sink has seen; only ever read to judge a probe.
++        pub frame_count: std::sync::Arc<std::sync::atomic::AtomicU32>,
 +        /// Largest index seen to stream, and largest index still unknown.
 +        pub probe_lo: Cell<usize>,
 +        pub probe_hi: Cell<usize>,
@@ -118,7 +120,7 @@ index 38f1386..706f7e9 100644
  
          pub picture: gtk::Picture,
          pub offload: gtk::GraphicsOffload,
-@@ -125,6 +134,22 @@ mod imp {
+@@ -125,6 +136,22 @@ mod imp {
              self.obj().notify_zoom();
          }
  
@@ -141,7 +143,22 @@ index 38f1386..706f7e9 100644
          pub(crate) fn set_state(&self, state: ViewfinderState) {
              if state != self.state.replace(state) {
                  self.obj().notify_state();
-@@ -601,6 +626,8 @@ impl Viewfinder {
+@@ -377,6 +404,14 @@ mod imp {
+                 .expect("Missing GStreamer Base Plug-ins");
+             camerabin.set_property("image-filter", &videoconvert_image);
+ 
++            if let Some(pad) = paintablesink.static_pad("sink") {
++                let counter = self.frame_count.clone();
++                pad.add_probe(gst::PadProbeType::BUFFER, move |_, _| {
++                    counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
++                    gst::PadProbeReturn::Ok
++                });
++            }
++
+             self.sink_paintable.set(paintablesink).unwrap();
+ 
+             self.picture
+@@ -601,6 +636,8 @@ impl Viewfinder {
      /// smaller than the sensor, and every pixel above this is debayered in
      /// software for nothing.
      const MAX_VIEWFINDER_PIXELS: i64 = 1920 * 1080;
@@ -150,7 +167,7 @@ index 38f1386..706f7e9 100644
      /// How many 100 ms waits to allow the pipeline for coming back up after
      /// switching resolution for a picture.
      const CAPTURE_WAIT_TRIES: u32 = 50;
-@@ -949,6 +976,12 @@ impl Viewfinder {
+@@ -949,6 +986,12 @@ impl Viewfinder {
              err.debug()
          );
  
@@ -163,7 +180,7 @@ index 38f1386..706f7e9 100644
          self.cancel_current_operation();
  
          if self.imp().camerabin().current_state() != gst::State::Playing {
-@@ -1356,24 +1389,188 @@ impl Viewfinder {
+@@ -1356,24 +1399,240 @@ impl Viewfinder {
              return;
          }
  
@@ -215,14 +232,47 @@ index 38f1386..706f7e9 100644
 +
 +        match index {
 +            Some(index) => {
-+                log::info!(
-+                    "Preview at {}",
-+                    self.preview_resolution()
-+                );
++                log::info!("Preview at {}", self.preview_resolution());
++                imp.frame_count.store(0, std::sync::atomic::Ordering::Relaxed);
 +                self.switch_source_resolution(index);
++                self.verify_chosen_resolution();
 +            }
 +            None => self.start_probe(),
 +        }
++    }
++
++    /// A size that was chosen rather than found still has to deliver.
++    ///
++    /// The one stored may have come from an older version, another camera, or
++    /// a person picking from the menu, and a size this camera cannot deliver
++    /// produces no error at all - just a black rectangle. Check that pictures
++    /// arrive, and go looking for a size if they do not.
++    fn verify_chosen_resolution(&self) {
++        let source = glib::timeout_add_seconds_local_once(
++            Self::PROBE_SECONDS,
++            glib::clone!(
++                #[weak(rename_to = obj)]
++                self,
++                move || {
++                    let imp = obj.imp();
++                    imp.probe_timeout.take();
++
++                    if imp.frame_count.load(std::sync::atomic::Ordering::Relaxed) > 0 {
++                        return;
++                    }
++
++                    log::warn!(
++                        "Nothing arrives at {}; looking for a size that works",
++                        obj.preview_resolution()
++                    );
++                    imp.preview_resolution.replace(String::new());
++                    obj.notify_preview_resolution();
++                    obj.start_probe();
++                }
++            ),
++        );
++
++        self.imp().probe_timeout.replace(Some(source));
 +    }
 +
 +    /// Looks for the smallest size that actually streams.
@@ -284,6 +334,7 @@ index 38f1386..706f7e9 100644
 +
 +        log::info!("Trying {size} for the preview");
 +        imp.probe.set(Some(index));
++        imp.frame_count.store(0, std::sync::atomic::Ordering::Relaxed);
 +        self.switch_source_resolution(index);
 +
 +        // No error within the settling time means this size works.
@@ -299,6 +350,15 @@ index 38f1386..706f7e9 100644
 +    }
 +
 +    /// The size being tried has streamed: smaller ones are still worth trying.
++    /// The settling time is up: decide by whether pictures actually arrived.
++    ///
++    /// Not erroring is not the same as working. A size this camera cannot
++    /// deliver fails loudly through libcamera - 'Resource busy' - but quietly
++    /// through PipeWire: the pipeline starts, reports nothing, and shows a
++    /// black rectangle for ever. Measured on a Fairphone 3, where the search
++    /// settled on 1024x600 on that evidence and the viewfinder stayed dark.
++    /// So the test is buffers at the video sink, which is the only thing that
++    /// distinguishes a working size from a silent one.
 +    fn probe_succeeded(&self) {
 +        let imp = self.imp();
 +        imp.probe_timeout.take();
@@ -307,6 +367,15 @@ index 38f1386..706f7e9 100644
 +            return;
 +        };
 +
++        let frames = imp.frame_count.load(std::sync::atomic::Ordering::Relaxed);
++        if frames == 0 {
++            log::info!("Nothing arrived at that size; trying a larger one");
++            imp.probe.set(Some(index));
++            self.probe_failed();
++            return;
++        }
++
++        log::debug!("{frames} frames arrived while trying that size");
 +        imp.probe_lo.set(index);
 +        imp.probe_found.set(true);
 +

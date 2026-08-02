@@ -1,4 +1,4 @@
-# Maintainer: Lajosházi, László Gergely
+# Maintainer: Lajosházi, László Gergely <lajoshazilg@gmail.com>
 #
 # Fairphone 3 mainline kernel: the latest msm8953-mainline release plus the
 # WCD9335 SLIMbus audio, Sony IMX363 camera and PMI632 charger work.
@@ -11,10 +11,10 @@
 # a new base, bump pkgver and _commit together - that is the single version edit
 # (see the repo's docs/rolling-a-new-base.md).
 _flavor="fp3"
-_commit="1285dfaa61d56a2eb55ce93937e6ecd9345abc88"
+_commit="9e5cf5ff3ca9ce71fa37a1277724742873aeeff5"
 pkgname=linux-$_flavor
 pkgver=7.1.3
-pkgrel=32
+pkgrel=33
 pkgdesc="msm8953-mainline for the Fairphone 3: WCD9335 audio, IMX363 camera, PMI632 charger"
 arch="aarch64"
 _carch="arm64"
@@ -71,6 +71,6 @@ package() {
 	echo "$_commit" >"$pkgdir/usr/share/kernel/$_flavor/fp3-commit"
 }
 sha512sums="
-117b897f5d4ccd2ba431a7223df54d0bf5b7b98ad83d27b1f9a450a21e5c10b132cf97f7e58422b2141de71aefccae6084a332113008356d959d569ab6a7acd0  linux-fp3-1285dfaa61d56a2eb55ce93937e6ecd9345abc88.tar.gz
+6a40608a03142bdfca2855dcd80bca6f79a7bfa53fe1b0f7160dfd9d14dc4c670fb9301f4f3fded8e2f7f62b7b61ac5125a69d771e77c90f919e1966956cf180  linux-fp3-9e5cf5ff3ca9ce71fa37a1277724742873aeeff5.tar.gz
 c29309de9e65673dd0b7bb383c3d6ed52d92343e52a830ebe84ee46906d3d404b99edf6ff2730461f4b6785e8f6485df445be347f8360bbf1c6293b873c7bc7f  config-fp3.aarch64
 "

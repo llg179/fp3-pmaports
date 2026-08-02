@@ -1,8 +1,8 @@
-From ba141905427d871d0e2addbb8b43490cc207a71a Mon Sep 17 00:00:00 2001
+From 7c5dd0fb8304af5ee6b29a4bd884861236cc261a Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Lajosh=C3=A1zi=2C=20L=C3=A1szl=C3=B3=20Gergely?=
  <lajoshazilg@gmail.com>
 Date: Sun, 2 Aug 2026 08:23:11 +0200
-Subject: [PATCH] camera: never set a control the camera does not offer
+Subject: [PATCH 7/7] camera: never set a control the camera does not offer
 
 Asking for a control that is not there is not a no-op. PipeWire answers
 ENOENT, logs an error for every attempt, and the write is simply lost - so a
@@ -124,7 +124,7 @@ index 40fcfcd..a8538c7 100644
      });
  }
 diff --git a/aperture/src/viewfinder.rs b/aperture/src/viewfinder.rs
-index 706f7e9..3c8c994 100644
+index 3514204..3586357 100644
 --- a/aperture/src/viewfinder.rs
 +++ b/aperture/src/viewfinder.rs
 @@ -87,6 +87,8 @@ mod imp {
@@ -135,8 +135,8 @@ index 706f7e9..3c8c994 100644
 +        pub controls: RefCell<Vec<crate::camera_control::CameraControl>>,
          /// Index being tried while looking for a preview size that streams.
          pub probe: Cell<Option<usize>>,
-         /// Largest index seen to stream, and largest index still unknown.
-@@ -1396,6 +1398,7 @@ impl Viewfinder {
+         /// Buffers the video sink has seen; only ever read to judge a probe.
+@@ -1406,6 +1408,7 @@ impl Viewfinder {
          );
  
          imp.resolutions.replace(resolutions);
@@ -144,7 +144,7 @@ index 706f7e9..3c8c994 100644
          imp.capture_res.set(0);
          self.set_autofocus(imp.autofocus.get());
          imp.restore_res.set(None);
-@@ -1597,12 +1600,20 @@ impl Viewfinder {
+@@ -1659,12 +1662,20 @@ impl Viewfinder {
      }
  
      /// What the camera in use offers to be set, as it describes itself.
@@ -169,7 +169,7 @@ index 706f7e9..3c8c994 100644
      }
  
      /// Sets one of those controls.
-@@ -1628,7 +1639,8 @@ impl Viewfinder {
+@@ -1690,7 +1701,8 @@ impl Viewfinder {
              return;
          };
  
