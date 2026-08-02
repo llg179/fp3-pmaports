@@ -528,11 +528,6 @@ the power path.
     before its driver registers one would stall the notifier and take the
     working rear camera down with it.
 
-    ☠️ **No port yet, deliberately.** CAMSS does not finish registering until
-    every endpoint in its graph binds a subdevice, so wiring this sensor in
-    before its driver registers one would stall the notifier and take the
-    working rear camera down with it.
-
     **What blocks it is a licence question, not engineering.** There is no
     mainline V4L2 driver for this part anywhere - searched, and the one
     mainline-adjacent project that mentions the sensor supports the hi846
