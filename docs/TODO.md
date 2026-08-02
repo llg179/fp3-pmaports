@@ -190,6 +190,92 @@ Then, in rough order of cost:
     the earlier series realigned those too, which is drive-by churn on code this
     work does not otherwise touch.
 
+14. **Review feedback on the audio device tree — accepted in principle, not yet
+    acted on.** An msm8953-mainline reviewer read the DTS commit
+    (`2f76a315`, *wire up WCD9335 audio*) on 2026-08-02 and raised three things.
+    Nothing below is implemented: each point needs the pro-and-contra written out
+    and confirmed before anything is changed, because two of them touch the
+    device tree the phone currently runs on.
+
+    * **"Does it really have 6 digital mics?"** — no, and this one is already
+      **measured**. The six-DMIC / AMIC1..6 block was transcribed from
+      Fairphone's downstream `msm8953-audio.dtsi`, which is Qualcomm reference
+      boilerplate: it also lists ANC headset mics, `Analog Mic6` and
+      `SpkrLeft/Right IN`, none of which exist on this phone (the speaker is a
+      single mono AW8898 on Quinary MI2S). Swept on the device with a 1 kHz tone
+      from its own speaker, `DEC0` capture on `hw:0,1`, Goertzel at 1 kHz, three
+      repeats per input:
+
+      | input | 1 kHz bin | verdict |
+      |---|---|---|
+      | DMIC0 / DMIC1 | ~2200–2700 | live — bottom mic, next to the speaker |
+      | DMIC2 / DMIC3 | ~520–630 | live — top mic, 5× quieter because it is further away |
+      | DMIC4 / DMIC5 | exact 0 (3/3, every run) | not populated |
+      | AMIC2, headset plugged in | 1437 | live — headset mic |
+      | AMIC2, empty jack | 0.25 | noise floor only |
+      | AMIC1, 3, 4, 5, 6 | exact 0 | not populated |
+
+      The headset gives the positive control the first sweep lacked: AMIC2 moves
+      from noise floor to 1437 while every other analog input stays at exact
+      digital zero, so those zeroes are absence, not a broken measurement.
+      `wcd9335_codec_enable_dmic()` maps DMIC0/1 → `CPE_SS_DMIC0_CTL`, DMIC2/3 →
+      `DMIC1_CTL`, DMIC4/5 → `DMIC2_CTL`, i.e. three clk/data pad pairs of two
+      channels each — so **two populated DMIC lines, which is exactly the two
+      built-in mics the FP3 has**, and the odd slots are the same data line read
+      on the other edge.
+
+      Two corrections fall out of this. `"AMIC5", "MIC BIAS3"`, which the commit
+      message describes as the handset mic, is **measurably wrong** — AMIC5 is
+      dead and the built-in mic is DMIC0, which is also what
+      `fp3-mic-select handset` uses. And `qcom,micbias4-microvolt` has nothing
+      left to bias.
+
+      ☠️ **Measurement trap for whoever redoes this:** individual captures
+      occasionally return exact digital silence (the decimator power-sequencing
+      quirk described in
+      [`../userspace-audio/README.md`](../userspace-audio/README.md)), and on
+      back-to-back mux changes the previous value leaks into the next reading —
+      DMIC3 came out identical to DMIC2 in two separate sweeps. Repeat at least
+      three times per input and do not conclude from a single run.
+
+    * **"Only one other sdm632/sdm450 device tree defines `audio-routing`, and
+      not with a list this long."** The comparison is against the wrong family
+      and the answer is defensible: every other msm8953/sdm450 board drives the
+      **PM8953 internal codec**, whose routes live in the codec driver, so three
+      `AMIC → MIC BIAS` lines suffice. FP3 is the only msm8953 board with an
+      external WCD9335 over SLIMbus, where `MCLK` and `MIC BIAS1..4` are
+      `SND_SOC_DAPM_SUPPLY` widgets with no in-codec route, so the board has to
+      pull them in. The precedent is on the msm8996 side —
+      `msm8996-oneplus-common.dtsi` and `apq8096-db820c.dtsi`. The *length*,
+      though, is only justified for the inputs that exist, so this point is
+      settled by the DMIC pruning above rather than argued away.
+
+    * **"The wcd9335 codec node looks weird too — any similar examples?"** Yes,
+      and the node is near-verbatim from them: `msm8996-xiaomi-common.dtsi`
+      (same `slim217,1a0` `codec@1,0`, `slim-ifc-dev`, `intr1`/`intr2`,
+      `reset-gpios`, mclk + slimbus clocks, the `vdd-*` set, and a `divclk1`
+      `gpio-gate-clock` even carrying the same `divclk1_cdc` label),
+      `apq8096-db820c.dtsi`, `msm8996-oneplus-common.dtsi`,
+      `msm8996pro-xiaomi-{natrium,scorpio}.dts`. Only the msm8953 addresses and
+      the FP3 supply/GPIO/pinmux instantiations are new, because no msm8953
+      board in-tree instantiates the SLIMbus NGD at all. **One genuine defect
+      surfaced by the question:** on msm8996 the `slimbam` and `slim_msm` nodes
+      live in the SoC `.dtsi` (`msm8996.dtsi`) and the board only writes
+      `&slim_msm { ... }`; ours sit in the board `.dts` under `&soc`. They
+      belong in `msm8953.dtsi`, status `disabled`, with the board enabling them
+      and adding the codec child.
+
+    The reviewer also confirmed the quinary DAI link is fine as it stands.
+
+    **What a v2 would be**, once confirmed: cut `audio-routing` to `RX_BIAS`/
+    `MCLK`, AMIC2 on MIC BIAS2, DMIC0 on MIC BIAS1 and DMIC2 on MIC BIAS3; drop
+    `qcom,micbias4-microvolt`; move the NGD/BAM nodes to `msm8953.dtsi`. It
+    touches `wip/7.1.3/audio`, `integration/7.1.3` and `debug-int/7.1.3`, and
+    the mics have to be re-measured on the device afterwards, since the pruned
+    routes are the ones that power the capture path. Open sub-question, not
+    needed for the pruning but worth one test: which slot of each pad pair is
+    the real capsule — covering one mic port and re-sweeping answers it.
+
 Two things were checked and are **not** defects: the three `ENOTSUPP`
 comparisons in the audio machine driver (the ASoC core returns exactly that, and
 the base file plus six other qcom machine drivers compare against it), and the
