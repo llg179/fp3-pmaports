@@ -203,6 +203,52 @@ source tree mid-compile and dies with
 
 which points at the kernel source rather than at the concurrent command.
 
+**A `--src` build silently drops tracked files the tree's own `.gitignore`
+names.** `pmbootstrap build --src <tree>` rsyncs the tree with
+`--exclude-from=<tree>/.gitignore`, and rsync does not understand git's `!`
+negation lines: the kernel ignores `*.bc` and then un-ignores
+`kernel/time/timeconst.bc`, so git keeps the file and rsync leaves it out. The
+build dies far from the cause with
+
+```
+make[2]: *** No rule to make target 'kernel/time/timeconst.bc',
+        needed by 'include/generated/timeconst.h'.  Stop.
+```
+
+The copy persists between runs, so the repair is to put the file into it and
+build again, not to rebuild the copy:
+
+```sh
+sudo cp <tree>/kernel/time/timeconst.bc \
+    work/chroot_native/tmp/pmbootstrap-local-source-copy/kernel/time/
+```
+
+The whole class is `git ls-files -i -c --exclude-standard` in the source tree —
+anything it lists is tracked *and* ignored, and therefore missing from the copy.
+
+**Also clean the tree before a `--src` build.** Object files from a host `make`
+are copied in too, and the chroot's compiler then links against objects built by
+a different one. `git clean -xdf` (keep `.config` aside) before handing a tree
+to `--src`.
+
+**Pass `--arch aarch64` or you get a package for the host.** Without it the
+build succeeds, `BUILD_RC=0`, and the apk lands in
+`work/packages/edge/x86_64/` — where the deploy step will not look for it. Half
+an hour, and the only symptom is that the file "is not there".
+
+**`--lax` reuses a buildroot that may not have the toolchain a package needs.**
+For `linux-fp3` this is free speed; for a Rust package it can fail at configure
+time with
+
+```
+meson.build:1:0: ERROR: Unknown compiler(s): [['rustc']]
+```
+
+because the reused `buildroot_aarch64` was never given `rustc`. Dropping `--lax`
+zaps and repopulates it, which fixes it at the cost of the ccache. Rule of
+thumb: `--lax` for repeat builds of a package that already built in this
+buildroot, plain `--force` the first time.
+
 **`apk add` finishing with `1 error` is usually the network, not the package.**
 With no route to the repositories the phone reports
 
