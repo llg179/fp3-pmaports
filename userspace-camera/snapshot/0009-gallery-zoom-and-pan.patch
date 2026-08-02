@@ -1,8 +1,8 @@
-From 7773600378f6b1a1538feb1d0c3e54edc07dcdee Mon Sep 17 00:00:00 2001
+From 9615c4f11feca507c19e9e64312b81341c6643a5 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Lajosh=C3=A1zi=2C=20L=C3=A1szl=C3=B3=20Gergely?=
  <lajoshazilg@gmail.com>
-Date: Sun, 2 Aug 2026 19:22:39 +0200
-Subject: [PATCH] gallery: zoom and pan the picture being viewed
+Date: Sun, 2 Aug 2026 21:01:52 +0200
+Subject: [PATCH 2/2] gallery: zoom and pan the picture being viewed
 
 Snapshot shows a saved picture scaled to fit and stops there, which throws
 away most of what the camera recorded: the rear sensor writes 4032x3024 and
