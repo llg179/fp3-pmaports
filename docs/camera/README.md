@@ -88,6 +88,51 @@ optional. Either mistake produces `VIDIOC_STREAMON returned -1 (Broken pipe)`
 with nothing in dmesg, which reads exactly like a broken driver; both cost this
 project weeks. See [`bringup/`](bringup/README.md#two-ways-to-make-streaming-fail-that-look-like-a-broken-driver).
 
+## The flash
+
+The PMI632's two flash channels are ganged into the single white LED next to the
+rear lens, and it works as a torch: `/sys/class/leds/white:flash`, 600 mA total
+across the two channels, `brightness` for torch and `flash_strobe` for a timed
+flash. The bring-up and its numbers are in
+[`../TODO.md`](../TODO.md#parked-the-pmi632-camera-flash--it-works-2026-08-03).
+
+Two things to know before measuring anything about it:
+
+* ☠️ **The phone has no battery ammeter.** `pmi632-battery` exposes no
+  `current_now`, and with a cable attached the torch is fed from USB, so battery
+  voltage does not droop either. The instrument that works is the PMIC's own USB
+  input current ADC, `in_voltage_usb_in_i_uv_input`, with the states interleaved.
+* **The camera is the honest instrument for "does it light".**
+  [`../../userspace-camera/flash-check.py`](../../userspace-camera/flash-check.py)
+  holds one capture open and switches the torch underneath it. Pointed at a matte
+  surface a hand's width away it reads mean 15.8 unlit against 70.0 lit,
+  repeatable to 0.09 over three passes.
+
+`CONFIG_V4L2_FLASH_LED_CLASS` is off, so there is no `/dev/v4l-subdev` for the
+flash and libcamera cannot fire it yet. Nor is the charger-side `FLASH_ACTIVE`
+handshake implemented, which downstream uses around a full-current strobe; the
+torch does not need it, a 2 A strobe may.
+
+## The front camera
+
+The Samsung S5K4H7 at `1-0010` identifies itself — `S5K4H7 detected, model ID
+0x487b` — and does nothing else. Its driver registers no subdevice, so `cam -l`
+still reports one camera. Why it stops there, and why that is a licence question
+rather than an engineering one, is in
+[`../FP3-TODO.md`](../FP3-TODO.md).
+
+☠️ **The second CCI bus needs `cci1_default` in the board's `&cci` pinctrl-0.**
+`msm8953.dtsi` muxes both buses; a board that overrides `pinctrl-0` to add its
+own MCLK pin silently drops the other bus's pins with it. A bus with no pins
+answers `-110` (transfer never completed), which is a different failure from
+`-ENXIO` (nobody at that address) — worth reading carefully, because the rest of
+the sensor's description can be perfectly correct while this is missing.
+
+☠️ **`imx363 0-001a: Error reading reg 0x0016: -110` at boot is unrelated to
+it.** It lands about 300 ms after the front sensor is detected and looks caused
+by it; moving `s5k4h7.ko` aside and rebooting shows the same error without it.
+The rear camera binds and captures normally regardless.
+
 ## The CSIPHY timer clock, and why the camera used to vanish
 
 ☠️ **`gcc_camss_csi0phytimer_clk status stuck at 'off'` was a wrong mux value
