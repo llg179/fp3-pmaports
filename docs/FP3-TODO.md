@@ -302,9 +302,19 @@ the power path.
     exist on the sensor subdev; nothing has checked that writing them moves the
     image. Cheap to settle now that `focus-sweep.py` can hold one stream open -
     the same brightness statistic it already prints per frame is the measurement.
-25. **Parked: the PMI632 flash LED.** The node exists, but
-    `leds-qcom-flash.c` subtype detection is unverified on this hardware and
-    risks a probe failure until it is. Kept out of the tree for now.
+25. ~~**Parked: the PMI632 flash LED.**~~ **Works, 2026-08-03.** The parking
+    reason was correct: the module reports subtype **`0x05`**, which
+    `leds-qcom-flash.c` refuses outright, so enabling the node as it stood would
+    have failed the probe. It is the three-channel block with two channels
+    bonded out, so the driver takes a fourth branch with `max_channels = 2`;
+    `CONFIG_LEDS_QCOM_FLASH` was not in the config either. ☠️ The module is on
+    the **second** PMI632 USID (`0-03`), not the charger's. Confirmed three
+    ways — registers programmed, USB input current separating over interleaved
+    passes, and the rear camera measuring the lit scene — after the battery
+    ammeter, which does not exist on this device, produced a confident false
+    negative. Not carried over: the charger-side `FLASH_ACTIVE` handshake that
+    downstream uses around a strobe. Detail in
+    [`TODO.md`](TODO.md#parked-the-pmi632-camera-flash--it-works-2026-08-03).
 33. **The focus actuator is at 0x0c and is not an LC898217.** ☠️ **This
     corrects the same item written earlier the same day.** `lc898217.c` plus its
     binding and MAINTAINERS entry landed 2026-08-01 and are worth keeping — the
@@ -487,16 +497,32 @@ the power path.
     (SPA's own rectangle type is a size with no origin, so it would have to be
     an array of four ints), and the app has to turn a tap into a window. Both
     are upstream work in PipeWire, not on this phone.
-33h. **The front camera has no driver.** The device tree names it - `/* Samsung
-    S5K4H7YX (front) @ 0x10 - TODO: needs s5k4h7 driver */` - and nothing in the
-    tree drives it: `s5k2xx.c` covers `s5k3l8`, `s5k3p8sp`, `s5k2p6sx` and
-    `s5k2x7sp`, and no binding exists for the 4H7YX. `cam -l` therefore reports
-    exactly one camera, and **no camera application can show a front view**,
-    whichever one is installed - a question that came up while surveying the
-    alternatives (Megapixels 2.1.0 ships PinePhone configs only and has no
-    autofocus at all by its author's own account; Millipixels is a Librem 5 fork
-    with no Fairphone config). The work is a sensor driver, a DT node and the
-    second CSI-PHY, all in the camera category.
+33h. **The front camera has no driver, and the blocker is now named.** Started
+    2026-08-03: the sensor is described (`camera@10` on `cci_i2c1`) and a
+    bring-up driver exists that powers it and reads its model ID, but it
+    registers no subdevice, so `cam -l` still reports one camera and **no
+    application can show a front view**. Every rail it needs was already in the
+    board file - `pm8953_l22` also feeds the rear sensor and `vreg_cam2_dig_1p2`
+    on GPIO 46 was declared and unused - with reset on GPIO 129, MCLK1, CCI
+    master 1 and a 270 degree mount, all read out of Fairphone's downstream
+    `msm8953-camera-sensor-mtp.dtsi`, which also puts it on CSIPHY2/CSID1.
+
+    ☠️ **No port yet, deliberately.** CAMSS does not finish registering until
+    every endpoint in its graph binds a subdevice, so wiring this sensor in
+    before its driver registers one would stall the notifier and take the
+    working rear camera down with it.
+
+    **What blocks it is a licence question, not engineering.** There is no
+    mainline V4L2 driver for this part anywhere - searched, and the one
+    mainline-adjacent project that mentions the sensor supports the hi846
+    variant of the same board instead. The register sequences exist only in
+    vendor Android trees (MediaTek `imgsensor`, a Qualcomm CAMX
+    `s5k4h7_setting.h`), and the ones found **carry no licence statement at
+    all**: no SPDX line, no GPL notice, no `MODULE_LICENSE`. Copying them into a
+    GPL-2.0 file is the same class of decision as the actuator in the licence
+    audit, and it is a human's. What the bring-up driver does use is the model
+    ID and where to read it - register 0x0000 holds 0x487b - which is a fact
+    about the hardware, corroborated independently in two vendor trees.
 33i. **The libcamera package installs a menu entry for a binary it does not
     build.** The aport ships `qcam.desktop` while building with
     `-Dqcam=disabled`, so `/usr/share/applications/qcam.desktop` points at a
