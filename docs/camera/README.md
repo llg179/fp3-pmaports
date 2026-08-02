@@ -95,6 +95,25 @@ validated against two parts mainline documents, then confirmed through the lens
 by the sweep above. **Which physical direction a rising code moves the lens is
 still an inference** — no position has been related to a subject distance.
 
+## Driving it by hand
+
+Useful when something in the app path is suspect, because it takes every layer
+above libcamera out of the picture:
+
+```sh
+# which node is the camera
+pw-dump | grep -B5 'Video/Source'
+
+# focus once (AfMode=Auto, then AfTrigger=Start), and watch the IPA react
+pw-cli set-param <node> Props '{ 16777249: 1 }'
+pw-cli set-param <node> Props '{ 16777254: 0 }'
+journalctl --user -u wireplumber --since -1min | grep IPASoftAf
+```
+
+☠️ The IPA runs inside whichever process opened the camera — **wireplumber**,
+not the application — so that is where its log goes. Looking for it in the
+app's journal finds nothing and reads like "autofocus never ran".
+
 ## Checking it works
 
 | check | covers |
@@ -139,18 +158,22 @@ Measured 2026-08-01 on `linux-fp3-7.1.3-r32` (`#33-fp3`) with libcamera 0.7.1,
 | PipeWire | device `imx363 [libcamera]`, source *Built-in Back Camera*, offering a ladder of sizes from 160×120 up |
 | controls offered | `Contrast`, `Gamma`, **`AfMode`, `AfTrigger`, `AfMetering`, `AfWindows`** |
 | autofocus | continuous by default; a scan is 19 measurements, so **~3.5 s at 1920×1080** and ~14 s at full resolution — statistics arrive once every four frames |
+| reaching a control from an app | only by binding the PipeWire node directly. `pw-cli set-param <node> Props '{ 16777249: 1 }'` sets `AfMode`; the id is `SPA_PROP_START_CUSTOM` (0x1000000) plus libcamera's control id (`AfMode` 33, `AfTrigger` 38) |
 
 Autofocus is ours: libcamera's `simple` IPA had no AF algorithm at all, so one
 was written and is carried as [a patch](../../userspace-camera/libcamera/) on the
 package. What it does, and how to check it, is in
 [`bringup/`](bringup/README.md#autofocus-in-libcamera).
 
-☠️ **Only `AfMode` and `AfTrigger` reach an application.** PipeWire's libcamera
-plugin maps controls to properties only for `bool`, `int32` and `float`, and
-returns early for any array control (`if (cid.isArray()) return nullptr;` in
-`spa/plugins/libcamera/libcamera-source.cpp`). `AfWindows` is an array of
-rectangles, so tap-to-focus needs a PipeWire change as well — see
-[FP3-TODO 33g](../FP3-TODO.md).
+☠️ **Only `AfMode` and `AfTrigger` reach an application, and not through
+GStreamer.** PipeWire's libcamera plugin maps controls to properties only for
+`bool`, `int32` and `float`, and returns early for any array control
+(`if (cid.isArray()) return nullptr;` in
+`spa/plugins/libcamera/libcamera-source.cpp`), so `AfWindows` never arrives —
+focusing on a *tapped point* still needs a change there
+([FP3-TODO 33g](../FP3-TODO.md)). And `pipewiresrc` carries no camera controls
+at all, so an application has to bind the node itself; the Snapshot patches do
+exactly that, using the `object.id` the GStreamer device already carries.
 
 ☠️ **Two libcamera clients at once can wedge the focus lens until reboot.**
 Opening the lens subdevice runtime-resumes the actuator, and if that happens

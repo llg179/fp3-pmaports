@@ -34,6 +34,10 @@ them libcamera builds only the CPU debayer, which **centre-crops** instead of
 scaling — a 1920×1080 preview then shows less than half the sensor's width, and
 looks like a camera stuck at 3× zoom.
 
+The `snapshot` aport additionally needs `pipewire-dev` in `makedepends`: the
+tap-to-focus patch talks to PipeWire directly, because GStreamer's
+`pipewiresrc` carries no camera controls.
+
 ☠️ **After upgrading libcamera, restart the PipeWire stack.** A running
 `wireplumber` holds the old library while the new IPA is loaded from disk, and
 the mismatch shows up as *"no camera found"* in every app —

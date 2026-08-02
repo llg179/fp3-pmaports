@@ -493,3 +493,66 @@ No focus peak (50322.1..50922.2, drift 325.9), staying at 0
 
 1.2% between the best and the worst position, and the algorithm says so instead
 of driving the lens to the noise.
+
+## The picture and the preview cannot be the same size
+
+Once autofocus worked, the first real use found two things a measurement had
+not: the preview showed a much narrower field of view than another phone's
+camera, and taking a picture froze the viewfinder with nothing saved.
+
+The narrow view was the CPU debayer, and it is not subtle once seen —
+`window_.width = outputCfg.size.width` out of a 4032-wide frame, taken from the
+middle. It does not scale, it crops, so a 1920×1080 preview shows 48% of the
+sensor's width and looks exactly like a camera stuck at about 3× zoom. libcamera
+has a GPU debayer that *does* scale, and it was not being built at all: the aport
+lacked `mesa-dev` and `-Dsoftisp-gpu=enabled`. With them it runs — `GL_RENDERER:
+FD506`, Mesa 26.1.1. The frame rate is the same either way (~6 fps at full
+resolution, ~30 fps at 1920×1080), so the debayering was never the limit.
+
+The freeze was self-inflicted, and the log named it exactly:
+
+```
+GstPipeWireSrc:pipewiresrc0: streaming stopped, reason not-negotiated (-4)
+```
+
+☠️ **A running PipeWire source cannot renegotiate.** Pinning camerabin's
+`image-capture-caps` to the sensor's resolution asks the live pipeline to change
+what it already agreed on; it stops instead, the viewfinder freezes, and no
+picture is saved. The symptom points at whatever was changed most recently in
+the app — the zoom, in this case — rather than at the capture path.
+
+Which leaves a real constraint: **the preview and the picture come out of one
+stream**, so one resolution has to serve both, and on this phone they want very
+different numbers. The way out is the one Megapixels documents — a preview mode
+and a capture mode per device, "usually the maximum resolution of the sensor
+will be used for taking pictures but at that resolution the framerate will
+generally be too low for realtime preview"
+([libmegapixels config format](https://libmegapixels-12f3eb.pages.debian.net/config.html))
+— applied to the source rather than to camerabin: constrain the source to the
+largest resolution, wait for the pipeline to come back, fire the shutter, and put
+the preview resolution back afterwards.
+
+## Reaching a control from an application
+
+Autofocus that only ever runs by itself is half a feature; a camera app wants to
+say *focus now*. Finding the route took three measurements and no code.
+
+1. **What does the transport carry?** `pw-dump` showed the camera node
+   advertising `AfMode` and `AfTrigger` as properties — and not `AfWindows`. The
+   reason is in the plugin rather than in libcamera:
+   `if (cid.isArray()) return nullptr;`, plus a type switch that handles only
+   `bool`, `int32` and `float`
+   (`spa/plugins/libcamera/libcamera-source.cpp`).
+2. **Does setting it actually reach the IPA?** Set by hand on the running node
+   with `pw-cli set-param <node> Props '{ 16777249: 1 }'`, and the IPA logged a
+   scan. Ten minutes, and it removed the risk from a 40-minute build.
+3. **Can the application get there?** Not through GStreamer:
+   `pipewiresrc` has properties for the path, the client name and the buffering,
+   and none for the camera's controls. So the app binds the node itself — the
+   `GstDevice` already carries its id in `object.id` — and sets `Props` on it,
+   which is what `pw-cli` does.
+
+☠️ **The IPA runs in whichever process opened the camera.** On a phone that is
+`wireplumber`, not the application, so `journalctl --user -u wireplumber` is
+where autofocus logs appear. Looking in the app's own log finds nothing, which
+reads like autofocus never running.

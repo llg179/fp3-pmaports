@@ -403,20 +403,38 @@ the power path.
     nothing else touching the camera is also fine. Unclear yet whether the fault
     is the CCI driver's arbitration, the actuator's resume ordering, or a shared
     regulator dropping mid-transfer; each is a separate measurement.
-33g. **Tap-to-focus stops in PipeWire, not in libcamera.** The zones and the
-    `AfWindows`/`AfMetering` controls that a tap needs are implemented, but
-    PipeWire's libcamera plugin maps a control to a node property only for
-    `bool`, `int32` and `float`, and returns early for any array control
-    (`if (cid.isArray()) return nullptr;` in
-    `spa/plugins/libcamera/libcamera-source.cpp`, read from the source on
-    2026-08-01). `AfWindows` is an array of rectangles, so it never reaches an
-    application, while `AfMode` and `AfTrigger` do - both appear in `pw-dump` as
-    node properties. Finishing tap-to-focus therefore needs three more things:
-    the SPA plugin has to carry rectangles (SPA's own rectangle type is a size,
-    with no origin, so it would have to be an array of four ints); GStreamer's
-    `pipewiresrc`, which is what Aperture builds the source from, has to offer a
-    way to set node properties; and Snapshot needs the tap gesture that turns a
-    point into a window. None of it is on this phone's side of the fence.
+33g. **Focusing on demand works; focusing on a *point* still stops in
+    PipeWire.** The zones and the `AfMetering`/`AfWindows` controls a tapped
+    point needs are implemented in the IPA, but PipeWire's libcamera plugin maps
+    a control to a node property only for `bool`, `int32` and `float` and
+    returns early for any array (`if (cid.isArray()) return nullptr;` in
+    `spa/plugins/libcamera/libcamera-source.cpp`, read from the source
+    2026-08-01), so `AfWindows` never leaves libcamera. `AfMode` and `AfTrigger`
+    do, which is enough for "focus now" and is what the app uses: Snapshot's
+    autofocus switch and its tap-to-focus bind the PipeWire node directly - the
+    `GstDevice` carries the id in `object.id` - because `pipewiresrc` has no
+    properties for camera controls either. Verified by hand before any code was
+    written: `pw-cli set-param <node> Props '{ 16777249: 1 }'` made the IPA
+    scan. What is left for a *point*: the SPA plugin has to carry rectangles
+    (SPA's own rectangle type is a size with no origin, so it would have to be
+    an array of four ints), and the app has to turn a tap into a window. Both
+    are upstream work in PipeWire, not on this phone.
+33h. **The front camera has no driver.** The device tree names it - `/* Samsung
+    S5K4H7YX (front) @ 0x10 - TODO: needs s5k4h7 driver */` - and nothing in the
+    tree drives it: `s5k2xx.c` covers `s5k3l8`, `s5k3p8sp`, `s5k2p6sx` and
+    `s5k2x7sp`, and no binding exists for the 4H7YX. `cam -l` therefore reports
+    exactly one camera, and **no camera application can show a front view**,
+    whichever one is installed - a question that came up while surveying the
+    alternatives (Megapixels 2.1.0 ships PinePhone configs only and has no
+    autofocus at all by its author's own account; Millipixels is a Librem 5 fork
+    with no Fairphone config). The work is a sensor driver, a DT node and the
+    second CSI-PHY, all in the camera category.
+33i. **The libcamera package installs a menu entry for a binary it does not
+    build.** The aport ships `qcam.desktop` while building with
+    `-Dqcam=disabled`, so `/usr/share/applications/qcam.desktop` points at a
+    missing `/usr/bin/qcam`. Either drop the desktop file or build `qcam` - it
+    would be a useful instrument, since it can set AF controls without going
+    through PipeWire at all, but it pulls Qt onto a phone.
 ## `wip/7.1.3/sensor` — SMGR over QMI/QRTR
 
 Accelerometer, gyroscope, magnetometer, proximity, ambient light. Only one commit
