@@ -1,0 +1,67 @@
+diff --git a/cross/crossdirect/APKBUILD b/cross/crossdirect/APKBUILD
+index df0bf0a4ee..ddcbcc1dfc 100644
+--- a/cross/crossdirect/APKBUILD
++++ b/cross/crossdirect/APKBUILD
+@@ -20,7 +20,7 @@
+ maintainer="Oliver Smith <ollieparanoid@postmarketos.org>"
+ pkgname=crossdirect
+ pkgver=5.3.1
+-pkgrel=1
++pkgrel=2
+ pkgdesc="Wrappers to launch native programs (e.g. cross compilers) in foreign chroots"
+ url="https://postmarketOS.org"
+ arch="all"
+@@ -126,7 +126,7 @@ package() {
+ }
+ 
+ sha512sums="
+-0f4b48f250425dc57f63955fc8b38477d23db793bee367c3fbe03c3d2a559ba576434d07518310db4cae9d90d501af4051b80038b10fae94b980e537fc9374ad  cargo.sh
++5d65b55ef1a977d7ced2d15e092cce6fd104ce1c6c3bbeb2a31a5f21cfa4f12d69d2d9a302f32772c943fc945e8589c54d5b0c39ab30cdc791af73154e4c323b  cargo.sh
+ b2e602b7fc95ed403d29f0d754879d5f773c39ee33e726bb10cff17b3c088406dac84f2ca6d8ad563c64370007d98af805d6ee9cd4a06fe3d4c61c0cb90c5c0c  crossdirect.c
+ 73e2b5d2d8ef7c6002b3a787d14945586991493b8d81f59e5c0beda0d3b290543e1fdc6f288da726c5dd121c0861d2a894410b7b749a537df0df5b409e102330  exec_native.sh
+ ea9bf8db3810d03d0a7395057f3d6e57f7127d87c55deaedc171c255288f5f3cc6fbcc680a5a1b92786cf573875d5dc22521173799fe2639acc97d0715ff905b  rust-qemu-linker.sh
+diff --git a/cross/crossdirect/cargo.sh b/cross/crossdirect/cargo.sh
+index d29b40fc15..491cc737ad 100644
+--- a/cross/crossdirect/cargo.sh
++++ b/cross/crossdirect/cargo.sh
+@@ -16,13 +16,25 @@ triplet=$(/usr/bin/rustc -vV | sed -n 's/host: //p')
+ cmd=$1
+ shift
+ 
++# `cargo auditable build ...` is `cargo build ...` with the dependency list
++# embedded in the binary, so what decides whether this can be cross compiled is
++# the word after it, not the word itself. Without this the wrapper falls into
++# the unsupported branch below and the whole build runs under QEMU - which is
++# not a small difference: it is the whole Rust dependency tree, every time.
++wrapper=
++if [ "$cmd" = "auditable" ]; then
++	wrapper=$cmd
++	cmd=$1
++	shift
++fi
++
+ case "$cmd" in
+ 	build|test|run)
+ 		;;
+ 	*)
+-		echo "WARNING: crossdirect: 'cargo $cmd $*' command not supported, running in QEMU (slow!)" >&2
++		echo "WARNING: crossdirect: 'cargo $wrapper $cmd $*' command not supported, running in QEMU (slow!)" >&2
+ 		export PATH="$(echo "$PATH" | sed 's,/native/usr/lib/crossdirect/[^:]*:,,')"
+-		exec /usr/bin/cargo "$cmd" "$@"
++		exec /usr/bin/cargo $wrapper "$cmd" "$@"
+ 		;;
+ esac
+ 
+@@ -51,10 +63,10 @@ if [ -z "$target_specified" ]; then
+ fi
+ 
+ if [ -n "$target_already_specified" ]; then
+-	exec /usr/bin/cargo "$cmd" "$@"
++	exec /usr/bin/cargo $wrapper "$cmd" "$@"
+ fi
+ 
+-/usr/bin/cargo "$cmd" --target=$triplet "$@"
++/usr/bin/cargo $wrapper "$cmd" --target=$triplet "$@"
+ 
+ # copy target/$triplet/{release,debug,...} to target/{release,debug,...}
+ if [ -d "$target_dir/$triplet" ]; then

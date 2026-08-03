@@ -1,0 +1,572 @@
+From 3ecc2ed207cf43219a1a1e0d22e672d3070ff1e0 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Lajosh=C3=A1zi=2C=20L=C3=A1szl=C3=B3=20Gergely?=
+ <lajoshazilg@gmail.com>
+Date: Mon, 3 Aug 2026 11:46:20 +0200
+Subject: [PATCH] camera: keep a resolution change from looking like a broken
+ camera
+
+Every resolution change tears the pipeline down and builds it again, and a
+pipeline error during that was reported to the user as "Could not play camera
+stream" over a camera that was about to come back on its own. Only the size
+probe was recognised as deliberate; a size chosen in the preferences, and the
+switch to the capture resolution and back that every still photograph makes,
+were not. Those are the two places it was reported from.
+
+An error while a switch is in flight now returns to the last size that was seen
+to deliver frames, or looks for one if nothing has yet, and says so in the log
+instead of in the user's face. The switch back after a capture is verified the
+same way a chosen size is, rather than assumed to have worked.
+
+The idle inhibitor is part of the same failure. It was released whenever the
+viewfinder left Ready - which it does on every resolution change - so the idle
+timer got a window each time the camera did anything. Measured on a Fairphone 3:
+the screen blanked mid-reconfiguration while the viewfinder was open, the
+software ISP's GPU debayer went on drawing into buffers that were no longer
+mapped, and some 28000 unhandled IOMMU faults later the camera was dead until
+the application restarted. Loading now keeps the inhibitor; only NoCameras and
+Error release it.
+
+Also adds what the size question was missing on both sides: a photo resolution
+of its own, rather than always the sensor's largest, and a JPEG quality with an
+estimate of what a picture will cost at it. The estimate is labelled as one -
+what a JPEG actually costs depends on the picture, and no formula can be right.
+
+And a flash photograph focuses again once the light is on. The focus the
+viewfinder was holding was reached in the dark, which is the situation the flash
+exists to fix; focusing before the light measures the wrong scene.
+---
+ aperture/src/viewfinder.rs             | 141 ++++++++++++++++++++++++-
+ data/org.gnome.Snapshot.gschema.xml.in |  11 ++
+ src/widgets/camera.rs                  |  61 ++++++++++-
+ src/widgets/camera_settings.rs         | 127 +++++++++++++++++++++-
+ src/widgets/preferences_window.rs      |  16 ++-
+ 5 files changed, 346 insertions(+), 10 deletions(-)
+
+diff --git a/aperture/src/viewfinder.rs b/aperture/src/viewfinder.rs
+index ef2e204..02596be 100644
+--- a/aperture/src/viewfinder.rs
++++ b/aperture/src/viewfinder.rs
+@@ -17,6 +17,9 @@ use crate::code_detector::QrCodeDetector;
+ /// This is the Gstreamer 1.26 default value for x264enc, chosen as reasonable compromise between
+ /// quality and file size. Candidate for a preference.
+ const DEFAULT_BITRATE: u32 = 2048;
++/// JPEG quality used when nothing has asked for another one. What this library
++/// encoded at before the quality could be set at all.
++const DEFAULT_JPEG_QUALITY: u32 = 95;
+ const PROVIDER_TIMEOUT: u64 = 2;
+ /// Smallest window the digital zoom will crop down to, in source pixels.
+ ///
+@@ -71,6 +74,20 @@ mod imp {
+         pan_y: Cell<f64>,
+         #[property(get, set = Self::set_preview_resolution, explicit_notify)]
+         pub preview_resolution: RefCell<String>,
++        /// What size a photograph is taken at, empty meaning the largest the
++        /// camera offers. Unlike the preview this is never probed: a size that
++        /// does not stream shows up immediately in the viewfinder, but a
++        /// capture size is only exercised for the length of one shot.
++        #[property(get, set = Self::set_photo_resolution, explicit_notify)]
++        pub photo_resolution: RefCell<String>,
++        /// JPEG quality, 1-100. Only consulted for JPEG output.
++        ///
++        /// ☠️ Read through the getter, never straight off the cell: a derived
++        /// Default leaves it at zero, which is not "the default quality" but
++        /// the worst one the encoder can produce.
++        #[property(get = Self::quality, set = Self::set_jpeg_quality, explicit_notify,
++                   type = u32, default = DEFAULT_JPEG_QUALITY, minimum = 1, maximum = 100)]
++        pub jpeg_quality: Cell<u32>,
+         #[property(get = Self::max_zoom, type = f64)]
+         max_zoom: PhantomData<f64>,
+ 
+@@ -114,6 +131,10 @@ mod imp {
+         pub probe_hi: Cell<usize>,
+         pub probe_found: Cell<bool>,
+         pub probe_timeout: RefCell<Option<glib::SourceId>>,
++        /// Last preview index seen to deliver frames, to fall back to.
++        pub good_res: Cell<Option<usize>>,
++        /// Set while a resolution change is being applied to the pipeline.
++        pub switching: Cell<bool>,
+ 
+         pub picture: gtk::Picture,
+         pub offload: gtk::GraphicsOffload,
+@@ -241,6 +262,38 @@ mod imp {
+             self.obj().apply_preview_resolution();
+         }
+ 
++        /// The size photographs are taken at, as "WIDTHxHEIGHT".
++        ///
++        /// Empty means the largest the camera offers, which is what this did
++        /// before there was a choice. Nothing is switched here: the size is
++        /// looked up and remembered, and the switch happens around the shot.
++        fn set_photo_resolution(&self, value: String) {
++            if value == *self.photo_resolution.borrow() {
++                return;
++            }
++
++            self.photo_resolution.replace(value);
++            self.obj().notify_photo_resolution();
++            self.obj().apply_photo_resolution();
++        }
++
++        fn quality(&self) -> u32 {
++            match self.jpeg_quality.get() {
++                0 => DEFAULT_JPEG_QUALITY,
++                set => set,
++            }
++        }
++
++        fn set_jpeg_quality(&self, value: u32) {
++            let value = value.clamp(1, 100);
++            if value == self.jpeg_quality.replace(value) {
++                return;
++            }
++
++            self.obj().notify_jpeg_quality();
++            self.obj().apply_jpeg_quality();
++        }
++
+         pub(crate) fn set_state(&self, state: ViewfinderState) {
+             if state != self.state.replace(state) {
+                 self.obj().notify_state();
+@@ -1049,9 +1102,16 @@ impl Viewfinder {
+     fn on_image_done(&self, file: &gio::File) {
+         self.imp().is_taking_picture.set(false);
+ 
+-        // Back to the preview resolution the shot interrupted.
++        // Back to the preview resolution the shot interrupted. Confirm it came
++        // back rather than assuming it did: this switch, and the one into the
++        // capture resolution before it, are where "Could not play camera
++        // stream" was reported from after a photograph.
+         if let Some(index) = self.imp().restore_res.take() {
++            self.imp()
++                .frame_count
++                .store(0, std::sync::atomic::Ordering::Relaxed);
+             self.switch_source_resolution(index);
++            self.verify_chosen_resolution();
+         }
+ 
+         self.emit_picture_done(Some(file));
+@@ -1081,6 +1141,34 @@ impl Viewfinder {
+             return;
+         }
+ 
++        // ☠️ The same is true of every other resolution change, and this used to
++        // be where they turned into "Could not play camera stream" in the user's
++        // face. Only the probe was recognised as deliberate; a size chosen from
++        // the menu, and the switch to the capture resolution and back that every
++        // still photograph makes, were not - so the pipeline error each of those
++        // can raise was reported as the camera having broken down. It had not:
++        // the previous size was still there to go back to. Reported on a
++        // Fairphone 3, where the toast appeared on switching the viewfinder and
++        // again after taking a picture, both times over a camera that recovered
++        // on its own a moment later.
++        if self.imp().switching.replace(false) {
++            if let Some(good) = self.imp().good_res.get() {
++                if good != self.imp().viewfinder_res.get() {
++                    log::warn!("That size did not play; going back to the last one that did");
++                    self.imp().restore_res.set(None);
++                    self.switch_source_resolution(good);
++                    return;
++                }
++            }
++            // Nothing is known to have worked yet, so there is nowhere to go
++            // back to and the probe is the honest answer.
++            log::warn!("The chosen size did not play; looking for one that does");
++            self.imp().preview_resolution.replace(String::new());
++            self.notify_preview_resolution();
++            self.start_probe();
++            return;
++        }
++
+         self.cancel_current_operation();
+ 
+         if self.imp().camerabin().current_state() != gst::State::Playing {
+@@ -1196,7 +1284,7 @@ impl Viewfinder {
+         let image_properties_map = ElementProperties::builder_map()
+             .item(
+                 ElementPropertiesMapItem::builder("jpegenc")
+-                    .field("quality", 95)
++                    .field("quality", self.jpeg_quality() as i32)
+                     // idct-method "float": Slowest, most accurate method.
+                     .field("idct-method", 2)
+                     .build(),
+@@ -1507,6 +1595,10 @@ impl Viewfinder {
+         imp.capture_res.set(0);
+         self.set_autofocus(imp.autofocus.get());
+         imp.restore_res.set(None);
++        // Another camera's sizes; nothing is known to work on this one yet.
++        imp.good_res.set(None);
++        imp.switching.set(false);
++        self.apply_photo_resolution();
+         self.apply_preview_resolution();
+     }
+ 
+@@ -1544,6 +1636,44 @@ impl Viewfinder {
+         }
+     }
+ 
++    /// Points captures at the chosen size, or at the largest one.
++    ///
++    /// Nothing about the running pipeline changes here. The index is only read
++    /// when the shutter runs, which is where the source is switched over and
++    /// back, so a photo size can be changed while the viewfinder keeps running.
++    fn apply_photo_resolution(&self) {
++        let imp = self.imp();
++
++        if imp.resolutions.borrow().is_empty() {
++            return;
++        }
++
++        let index = crate::utils::Size::parse(&self.photo_resolution()).and_then(|size| {
++            imp.resolutions
++                .borrow()
++                .iter()
++                .position(|offered| *offered == size)
++        });
++
++        // Index 0 is the largest the camera offers, and the default: an empty
++        // or unrecognised setting means full size, never a smaller guess.
++        let index = index.unwrap_or(0);
++        log::info!("Photographs at {}", imp.resolutions.borrow()[index]);
++        imp.capture_res.set(index);
++    }
++
++    /// Puts a changed JPEG quality into the encoder.
++    ///
++    /// The quality lives in the image encoding profile, which camerabin only
++    /// reads when the profile is set, so the profiles are rebuilt. That is
++    /// cheap and happens while the viewfinder keeps running: the image branch
++    /// is not built until a capture starts.
++    fn apply_jpeg_quality(&self) {
++        if self.imp().camerabin.get().is_some() {
++            self.setup_recording();
++        }
++    }
++
+     /// A size that was chosen rather than found still has to deliver.
+     ///
+     /// The one stored may have come from an older version, another camera, or
+@@ -1561,6 +1691,10 @@ impl Viewfinder {
+                     imp.probe_timeout.take();
+ 
+                     if imp.frame_count.load(std::sync::atomic::Ordering::Relaxed) > 0 {
++                        // This size delivers, so it is where a later one that
++                        // does not can be sent back to.
++                        imp.good_res.set(Some(imp.viewfinder_res.get()));
++                        imp.switching.set(false);
+                         return;
+                     }
+ 
+@@ -1679,6 +1813,8 @@ impl Viewfinder {
+         }
+ 
+         log::debug!("{frames} frames arrived while trying that size");
++        imp.good_res.set(Some(index));
++        imp.switching.set(false);
+         imp.probe_lo.set(index);
+         imp.probe_found.set(true);
+ 
+@@ -1838,6 +1974,7 @@ impl Viewfinder {
+             return;
+         }
+ 
++        self.imp().switching.set(true);
+         self.apply_source_resolution(index);
+         self.reset_pipeline();
+ 
+diff --git a/data/org.gnome.Snapshot.gschema.xml.in b/data/org.gnome.Snapshot.gschema.xml.in
+index 284864b..5d9b66b 100644
+--- a/data/org.gnome.Snapshot.gschema.xml.in
++++ b/data/org.gnome.Snapshot.gschema.xml.in
+@@ -39,6 +39,17 @@
+       <summary>Viewfinder resolution</summary>
+       <description>The size the viewfinder runs at, as WIDTHxHEIGHT. Empty means the application chooses it, which it does by trying sizes until one streams and then storing the answer here. A size the camera does not offer is ignored and the search runs again.</description>
+     </key>
++    <key name="photo-resolution" type="s">
++      <default>''</default>
++      <summary>Photo resolution</summary>
++      <description>The size a photograph is taken at, as WIDTHxHEIGHT. Empty means the largest size the camera offers. Independent of the viewfinder resolution: the source is switched to this size around the shot and back afterwards.</description>
++    </key>
++    <key name="jpeg-quality" type="u">
++      <default>95</default>
++      <range min="1" max="100"/>
++      <summary>JPEG quality</summary>
++      <description>Quality of JPEG pictures, from 1 to 100. Higher keeps more detail and costs more space; what a given quality actually costs depends on the picture.</description>
++    </key>
+     <key name="camera-controls" type="a{sd}">
+       <default>{}</default>
+       <summary>Camera controls chosen by the user</summary>
+diff --git a/src/widgets/camera.rs b/src/widgets/camera.rs
+index 511fad4..311438f 100644
+--- a/src/widgets/camera.rs
++++ b/src/widgets/camera.rs
+@@ -13,6 +13,17 @@ use super::CameraControls;
+ use crate::enums::ControlsLayout;
+ use crate::{config, utils};
+ 
++/// How long the exposure loop is given to answer the flash before the shutter
++/// runs. Not measured against the exposure loop's actual settling time - the
++/// algorithm does not publish where it is - so it is an estimate, and the thing
++/// to change first if flash pictures come out metered for the dark.
++const EXPOSURE_SETTLE_MS: u64 = 600;
++
++/// How long a focus run under the flash is given. The request is fire and
++/// forget - it reaches the camera through PipeWire and reports nothing back -
++/// so this is a wait, not a wait-for.
++const FOCUS_SETTLE_MS: u64 = 900;
++
+ mod imp {
+     use std::cell::{Cell, OnceCell, RefCell};
+ 
+@@ -314,6 +325,18 @@ mod imp {
+                 .bind("preview-resolution", &*self.viewfinder, "preview-resolution")
+                 .build();
+ 
++            // These two only ever travel the other way: nothing in the
++            // viewfinder discovers a photo size or a quality, so a write back
++            // would only be the setting overwriting itself.
++            settings
++                .bind("photo-resolution", &*self.viewfinder, "photo-resolution")
++                .flags(gio::SettingsBindFlags::GET)
++                .build();
++            settings
++                .bind("jpeg-quality", &*self.viewfinder, "jpeg-quality")
++                .flags(gio::SettingsBindFlags::GET)
++                .build();
++
+             self.viewfinder.set_autofocus(settings.boolean("autofocus"));
+             settings.connect_changed(
+                 Some("autofocus"),
+@@ -400,15 +423,30 @@ mod imp {
+             // Inhibit idle (screen blanking and locking) the whole time the
+             // viewfinder is active, not only while recording, so the display
+             // does not turn off mid-capture. See GNOME/snapshot#366.
++            //
++            // ☠️ `Loading` keeps the inhibitor. The viewfinder passes through it
++            // on every resolution change - including the one a still capture
++            // makes and the ones the size probe makes at startup - so releasing
++            // the inhibitor there hands the idle timer a window each time the
++            // camera does anything. Measured on a Fairphone 3: the screen
++            // blanked while the viewfinder was open and mid-reconfigure, the
++            // software ISP's GPU debayer went on drawing into buffers that were
++            // no longer mapped, and some 28000 unhandled IOMMU faults later the
++            // stream was dead until the application was restarted. Blanking is
++            // the last thing that should happen during a reconfiguration, which
++            // is exactly when this used to allow it.
+             self.viewfinder.connect_state_notify(|viewfinder| {
+                 let Some(window) = viewfinder.root().and_downcast::<crate::Window>() else {
+                     return;
+                 };
+ 
+-                if matches!(viewfinder.state(), aperture::ViewfinderState::Ready) {
+-                    window.inhibit("Camera viewfinder is active");
+-                } else {
+-                    window.uninhibit();
++                match viewfinder.state() {
++                    aperture::ViewfinderState::Ready | aperture::ViewfinderState::Loading => {
++                        window.inhibit("Camera viewfinder is active")
++                    }
++                    aperture::ViewfinderState::NoCameras | aperture::ViewfinderState::Error => {
++                        window.uninhibit()
++                    }
+                 }
+             });
+ 
+@@ -654,9 +692,22 @@ impl Camera {
+         // picture would come out as overexposed as the light was late. It goes
+         // out again when the picture is stored, or here if the capture never
+         // starts.
++        //
++        // Then focus again, under that light. The focus the viewfinder was
++        // holding was reached in the dark, where a contrast-detection algorithm
++        // has the least contrast to work with - which is the situation the flash
++        // exists to fix. Focusing before the light is on measures the wrong
++        // scene.
++        // There is no completion signal to wait on: the request goes to the
++        // camera through PipeWire and nothing comes back, so the wait is a fixed
++        // one, long enough for the simple pipeline's contrast sweep on this
++        // hardware.
+         if self.flash_wants_light() {
+             self.set_flash_lit(true);
+-            glib::timeout_future(std::time::Duration::from_millis(600)).await;
++            glib::timeout_future(std::time::Duration::from_millis(EXPOSURE_SETTLE_MS)).await;
++
++            imp.viewfinder.trigger_autofocus();
++            glib::timeout_future(std::time::Duration::from_millis(FOCUS_SETTLE_MS)).await;
+         }
+ 
+         if let Err(err) = imp.viewfinder.take_picture(path) {
+diff --git a/src/widgets/camera_settings.rs b/src/widgets/camera_settings.rs
+index a7c8328..1aac408 100644
+--- a/src/widgets/camera_settings.rs
++++ b/src/widgets/camera_settings.rs
+@@ -13,7 +13,7 @@ use std::collections::HashMap;
+ use adw::prelude::*;
+ use aperture::camera_control::{CameraControl, ControlKind};
+ use gettextrs::gettext;
+-use gtk::gio;
++use gtk::{gio, glib};
+ 
+ /// What the user is shown instead of libcamera's name, where there is a better
+ /// one. Anything missing here is shown under the name the camera gave.
+@@ -101,6 +101,131 @@ pub fn resolution_row(
+     Some(row)
+ }
+ 
++/// A row for choosing what size a photograph is taken at.
++///
++/// Separate from the viewfinder's size on purpose: the two answer different
++/// questions. A small preview is about how much work the phone does to show
++/// you the scene, and a small photo is about the file you keep.
++pub fn photo_resolution_row(
++    resolutions: &[aperture::utils::Size],
++    settings: &gio::Settings,
++) -> Option<adw::ComboRow> {
++    if resolutions.is_empty() {
++        return None;
++    }
++
++    let full = gettext("Full Size");
++    let mut labels = vec![full.clone()];
++    labels.extend(resolutions.iter().map(|size| {
++        format!(
++            "{}\u{00d7}{} ({})",
++            size.width,
++            size.height,
++            megapixels(size)
++        )
++    }));
++
++    let model = gtk::StringList::new(&labels.iter().map(String::as_str).collect::<Vec<_>>());
++
++    let row = adw::ComboRow::new();
++    row.set_title(&gettext("Photo Resolution"));
++    row.set_subtitle(&gettext("What a photograph is taken at, whatever the viewfinder shows"));
++    row.set_model(Some(&model));
++
++    let stored = settings.string("photo-resolution");
++    let selected = aperture::utils::Size::parse(&stored)
++        .and_then(|size| resolutions.iter().position(|offered| *offered == size))
++        .map(|index| index + 1)
++        .unwrap_or(0);
++    row.set_selected(selected as u32);
++
++    row.connect_selected_notify({
++        let settings = settings.clone();
++        let resolutions = resolutions.to_vec();
++        move |row| {
++            let value = match row.selected() {
++                0 => String::new(),
++                index => match resolutions.get(index as usize - 1) {
++                    Some(size) => size.to_string(),
++                    None => return,
++                },
++            };
++
++            if let Err(err) = settings.set_string("photo-resolution", &value) {
++                log::warn!("Could not store the photo resolution: {err}");
++            }
++        }
++    });
++
++    Some(row)
++}
++
++fn megapixels(size: &aperture::utils::Size) -> String {
++    let mp = (size.width as f64 * size.height as f64) / 1_000_000.0;
++    format!("{mp:.1} MP")
++}
++
++/// JPEG bytes per pixel at a given quality, for the size estimate below.
++///
++/// ☠️ This is an estimate and the row says so. What a JPEG actually costs
++/// depends on the picture - a wall and a tree at the same quality differ by
++/// several times - so no formula can be right. The curve here is the usual
++/// shape, anchored so that quality 85 lands near a quarter of a byte per pixel,
++/// which is where ordinary photographs sit. It is meant to answer "roughly how
++/// much does moving this slider cost me", not to predict a file.
++fn bytes_per_pixel(quality: u32) -> f64 {
++    let q = quality as f64 / 100.0;
++    0.06 + 0.9 * q.powi(4)
++}
++
++/// A row for the JPEG quality, showing what it costs.
++pub fn jpeg_quality_row(
++    resolutions: &[aperture::utils::Size],
++    settings: &gio::Settings,
++) -> adw::SpinRow {
++    let row = adw::SpinRow::with_range(1.0, 100.0, 1.0);
++    row.set_title(&gettext("JPEG Quality"));
++    row.set_value(settings.uint("jpeg-quality") as f64);
++
++    // The size shown is for the size photographs are actually taken at, which
++    // is the stored photo resolution, or the largest the camera offers.
++    let stored = settings.string("photo-resolution");
++    let size = aperture::utils::Size::parse(&stored)
++        .filter(|size| resolutions.contains(size))
++        .or_else(|| resolutions.first().copied());
++
++    // Takes the row as an argument rather than capturing it: a closure that
++    // holds the widget it is connected to keeps that widget alive for ever.
++    fn show_estimate(row: &adw::SpinRow, size: Option<aperture::utils::Size>, quality: u32) {
++        let text = match size {
++            Some(size) => {
++                let pixels = size.width as f64 * size.height as f64;
++                let bytes = pixels * bytes_per_pixel(quality);
++                // Translators: an estimated file size, e.g. "About 2.4 MB per picture".
++                gettext("About {} per picture, give or take")
++                    .replace("{}", &glib::format_size(bytes as u64))
++            }
++            None => String::new(),
++        };
++        row.set_subtitle(&text);
++    }
++
++    show_estimate(&row, size, settings.uint("jpeg-quality"));
++
++    row.connect_value_notify({
++        let settings = settings.clone();
++        move |row| {
++            let quality = row.value().round() as u32;
++            show_estimate(row, size, quality);
++            if let Err(err) = settings.set_uint("jpeg-quality", quality) {
++                log::warn!("Could not store the JPEG quality: {err}");
++            }
++        }
++    });
++
++    row
++}
++
+ /// Builds the group, or nothing if the camera has nothing to offer.
+ pub fn group(
+     controls: &[CameraControl],
+diff --git a/src/widgets/preferences_window.rs b/src/widgets/preferences_window.rs
+index 67d3952..030d9da 100644
+--- a/src/widgets/preferences_window.rs
++++ b/src/widgets/preferences_window.rs
+@@ -123,8 +123,20 @@ impl PreferencesWindow {
+         if let Some(row) = camera_settings::resolution_row(resolutions, settings) {
+             /* First, because it is the one that changes what is on screen. */
+             group.add(&row);
+-            self.imp().general_page.add(&group);
+-        } else if group.parent().is_none() && !resolutions.is_empty() {
++        }
++
++        /*
++         * Then what the picture costs: the size it is taken at and, since it
++         * is the other half of the same question, the quality it is kept at.
++         * The quality row shows the size the two of them work out to, so it
++         * goes directly under the resolution it is computed from.
++         */
++        if let Some(row) = camera_settings::photo_resolution_row(resolutions, settings) {
++            group.add(&row);
++            group.add(&camera_settings::jpeg_quality_row(resolutions, settings));
++        }
++
++        if group.parent().is_none() && !resolutions.is_empty() {
+             self.imp().general_page.add(&group);
+         }
+     }
+-- 
+2.53.0
+

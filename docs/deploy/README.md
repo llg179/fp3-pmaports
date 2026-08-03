@@ -286,3 +286,55 @@ boots, and a later comparison across boots then shows a *perfect* correlation
 that is really just missing data. If you are about to compare boots, check that
 each one still has a plausible number of lines
 (`journalctl -b -N -k | wc -l`).
+
+## ☠️ Rust packages were building under emulation, and one word was why
+
+Measured 2026-08-03 building `snapshot` for aarch64 on this machine:
+
+| | compile phase |
+|---|---|
+| before | **~35 min** |
+| after | **6 min 27 s** |
+
+Same package, same source, same `pkgrel` — the only difference was one line in
+`cross/crossdirect/cargo.sh`. pmbootstrap says *"Building package (cross
+compiling: crossdirect)"* either way, so the log line is not evidence that any
+cross compiling happened; what gives it away is buried further down:
+
+```
+WARNING: crossdirect: 'cargo auditable build --manifest-path … --release'
+         command not supported, running in QEMU (slow!)
+```
+
+crossdirect's `cargo` wrapper recognises `build`, `test` and `run` — as the
+**first** word. pmaports patches the GNOME Rust applications to build with
+[`cargo auditable`](https://github.com/rust-secure-code/cargo-auditable) so the
+binary carries its dependency list, which makes the first word `auditable`. The
+wrapper does not know it, removes itself from `PATH` and hands the whole build
+to an emulated `cargo`, so every crate in the tree is compiled by an aarch64
+`rustc` under `qemu-aarch64-static`. `sccache` does not help either: it is
+wired up correctly by pmbootstrap, but the wrapper that would reach it is the
+one being bypassed, which is why `work/cache_sccache` stays empty.
+
+The fix is [`crossdirect-cargo-auditable.patch`](crossdirect-cargo-auditable.patch)
+— look past a wrapper subcommand to the one that decides, and carry the wrapper
+along. Apply it to the pmaports checkout and rebuild `crossdirect` (14 seconds,
+native):
+
+```sh
+git -C pmaports apply fp3-pmaports/docs/deploy/crossdirect-cargo-auditable.patch
+cd pmos && ./pmb build crossdirect
+```
+
+☠️ **It cannot be sent upstream.** postmarketOS does not accept AI-assisted
+contributions, so this lives here and has to be reapplied after a
+`pmbootstrap pull`. Check whether it is still needed by grepping the build log
+for `command not supported` — that warning is the whole diagnosis.
+
+☠️ **Two plausible explanations were wrong before this one**, and both would
+have been reported as fact if the log had not been read. It is not a missing
+`sccache` (pmbootstrap sets `RUSTC_WRAPPER` and mounts `work/cache_sccache`),
+and it is not meson resolving `cargo` to an absolute path and missing the
+wrapper — the log says `Program cargo found: YES
+(/native/usr/lib/crossdirect/aarch64/cargo)`, so it found it. The wrapper was
+reached and declined the job.

@@ -34,6 +34,8 @@ kind, and both are written to be offered upstream.
 | [`snapshot/0009-gallery-zoom-and-pan.patch`](snapshot/0009-gallery-zoom-and-pan.patch) | **zoom and pan in the viewer**: pinch, scroll or double tap a saved picture and drag it around, so a shot can be checked for sharpness without leaving the app. Claims the drag only while magnified, leaving the gallery's swipe intact at fit size |
 | [`snapshot/0010-camera-flash-mode.patch`](snapshot/0010-camera-flash-mode.patch) | **the flash**, which Snapshot has no control for at all: off, automatic and always, as a menu button beside the countdown one. Driven as a torch through the kernel's LED flash class, found by the class's own attributes rather than by name, so a machine without one shows no button. The light comes on 600 ms **before** the capture, because a torch lit with the shutter is metered as though it were not there |
 
+| [`snapshot/0011-camera-resolution-and-flash-focus.patch`](snapshot/0011-camera-resolution-and-flash-focus.patch) | stops a resolution change from looking like a broken camera — a pipeline error while one is in flight goes back to the last size that delivered frames instead of reaching the user as *"Could not play camera stream"*, and the idle inhibitor is no longer released on every reconfiguration. Adds a **photo resolution** of its own and a **JPEG quality** with an estimate of what a picture costs at it, and makes a flash photograph **focus again once the light is on** |
+
 They are applied by the `libcamera` and `snapshot` aports in the pmaports
 checkout; the copies here are the source of truth for this port.
 

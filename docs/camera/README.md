@@ -363,3 +363,39 @@ reboot.** Each bind leaves the previous ancillary media link behind, one of them
 with a sink id of 0, and libcamera then refuses the whole media device with
 `Failed to find MediaObject with id 0` — the camera disappears from every app,
 with the actuator still working perfectly through V4L2. A reboot clears it.
+
+☠️ **The viewfinder dies after a couple of dozen resolution changes, and the
+size it was asked for has nothing to do with it.** Measured 2026-08-03 on
+`linux-fp3-7.1.3-r37` (`#38-fp3`) with libcamera 0.7.1 and `snapshot-50.0-r19`:
+
+| what was driven | how far it got |
+|---|---|
+| Snapshot's viewfinder, on screen, one size per round | **24 sizes streamed, then the stream was gone** — and stayed gone at a size that had streamed a minute earlier |
+| the same PipeWire node through `pipewiresrc ! fakesink`, no application, no screen | **40 reconfigurations across 7 sizes, every one delivered frames**, `dmesg` clean |
+| `cam -c1 -C10 -s width=1920,height=1080` immediately after the viewfinder died | **30 fps, no errors** |
+
+So the camera, the driver and the PipeWire node reconfigure fine; what does not
+survive is the on-screen render path. `dmesg` shows the software ISP's GPU
+debayer faulting on buffers that are no longer mapped — tens of thousands of
+`*** gpu fault` / `Unhandled context fault` pairs from `1c48000.iommu-ctx`,
+`adreno_fault_handler: … callbacks suppressed`. The faults start well before the
+death, around the tenth reconfiguration, so they are not individually fatal;
+they accumulate.
+
+Two things follow. The first is that **"Could not play camera stream" is not a
+size problem**, which is how it was first read: no size has yet been shown not
+to stream. The second is that whatever reduces the number of reconfigurations
+helps, which is why a photograph is worth taking at the preview's own size
+rather than switching the source to the sensor's and back around every shot —
+see the `photo-resolution` setting in
+[`userspace-camera/`](../../userspace-camera/README.md).
+
+☠️ **A screen blank during a reconfiguration is the aggravated case, not the
+cause.** The first run of this measurement was unattended, the session's idle
+timer fired five minutes in, and the stream died with the panel dark — which
+looked like a clean explanation until the same death was reproduced with the
+screen on throughout. Snapshot's idle inhibitor was contributing: it was
+released whenever the viewfinder left `Ready`, which it does on every resolution
+change, so the camera handed the idle timer a window each time it did anything.
+Fixed in
+[`snapshot/0011`](../../userspace-camera/snapshot/0011-camera-resolution-and-flash-focus.patch).
