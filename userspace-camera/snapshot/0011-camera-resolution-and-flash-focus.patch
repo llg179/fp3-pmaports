@@ -15,7 +15,21 @@ were not. Those are the two places it was reported from.
 An error while a switch is in flight now returns to the last size that was seen
 to deliver frames, or looks for one if nothing has yet, and says so in the log
 instead of in the user's face. The switch back after a capture is verified the
-same way a chosen size is, rather than assumed to have worked.
+same way a chosen size is, rather than assumed to have worked - and a second
+capture asked for while that verification is still running is refused outright
+as not ready, instead of waiting out a fixed budget into a pipeline mid-restart
+and then, once the flash deadline in a later commit catches it, silently
+putting the flash back out. Failing that way also used to leave the shutter
+permanently disabled: it was only ever re-enabled by the signal a capture that
+actually started emits on completion.
+
+Two of the search's own endpoints never cleared the flag that says a switch is
+in flight, because the verification that clears it elsewhere was never wired up
+for them: settling on the largest size after nothing else kept up, and going
+back to the last size known to work after a mid-switch pipeline error. Neither
+looked broken before this, because nothing checked that flag outside the search
+itself - it is the new capture-time check above that turns a merely incomplete
+switch into a permanent one, so both are fixed here too.
 
 The idle inhibitor is part of the same failure. It was released whenever the
 viewfinder left Ready - which it does on every resolution change - so the idle
@@ -26,25 +40,40 @@ mapped, and some 28000 unhandled IOMMU faults later the camera was dead until
 the application restarted. Loading now keeps the inhibitor; only NoCameras and
 Error release it.
 
+The viewfinder no longer measures the camera at startup either. It starts on
+the offered size closest to the screen and remembers it; measuring is a
+"Recalibrate View Size" row in the preferences, only run when asked, and shown
+as a cancellable progress overlay on the viewfinder rather than a silent
+preferences-dialog freeze - the dialog closes as soon as the row is activated,
+since the result is only visible on the viewfinder behind it. When it does
+measure, it keeps the largest size that stays smooth rather than the smallest
+that streams: buffers counted over the settling window are a frame rate, so the
+probe that was already running is the measurement.
+
 Also adds what the size question was missing on both sides: a photo resolution
 of its own, rather than always the sensor's largest, and a JPEG quality with an
-estimate of what a picture will cost at it. The estimate is labelled as one -
-what a JPEG actually costs depends on the picture, and no formula can be right.
+estimate of what a picture will cost at it. The estimate is measured, not
+computed - an earlier version carried a bytes-per-pixel formula, and it was
+wrong by a factor of two on the first camera it met. What a JPEG costs is a
+property of the scene, so the estimate now encodes the frame the camera is
+showing at the moment the quality slider moves, debounced against the slider
+emitting a value for every step it is dragged through.
 
 And a flash photograph focuses again once the light is on. The focus the
 viewfinder was holding was reached in the dark, which is the situation the flash
 exists to fix; focusing before the light measures the wrong scene.
 ---
- aperture/src/viewfinder.rs             | 331 ++++++++++++++++++++++---
+ aperture/src/viewfinder.rs             | 507 +++++++++++++++++++++++++++---
  data/org.gnome.Snapshot.gschema.xml.in |  11 +
- src/widgets/camera.rs                  | 106 +++++++-
- src/widgets/camera_settings.rs         | 158 +++++++++++-
- src/widgets/preferences_window.rs      |  19 +-
+ data/resources/ui/camera.ui            |  43 +++
+ src/widgets/camera.rs                  | 126 +++++++-
+ src/widgets/camera_settings.rs         | 195 +++++++++++-
+ src/widgets/preferences_window.rs      |  29 +-
  src/widgets/window.rs                  |  16 +-
- 6 files changed, 593 insertions(+), 48 deletions(-)
+ 7 files changed, 927 insertions(+), 51 deletions(-)
 
 diff --git a/aperture/src/viewfinder.rs b/aperture/src/viewfinder.rs
-index ef2e204..9a9d9b9 100644
+index ef2e204..5645d61 100644
 --- a/aperture/src/viewfinder.rs
 +++ b/aperture/src/viewfinder.rs
 @@ -17,6 +17,9 @@ use crate::code_detector::QrCodeDetector;
@@ -78,7 +107,7 @@ index ef2e204..9a9d9b9 100644
          #[property(get = Self::max_zoom, type = f64)]
          max_zoom: PhantomData<f64>,
  
-@@ -114,6 +131,10 @@ mod imp {
+@@ -114,6 +131,22 @@ mod imp {
          pub probe_hi: Cell<usize>,
          pub probe_found: Cell<bool>,
          pub probe_timeout: RefCell<Option<glib::SourceId>>,
@@ -86,10 +115,22 @@ index ef2e204..9a9d9b9 100644
 +        pub good_res: Cell<Option<usize>>,
 +        /// Set while a resolution change is being applied to the pipeline.
 +        pub switching: Cell<bool>,
++        /// When the size currently being probed was asked for.
++        pub probe_started: Cell<Option<std::time::Instant>>,
++        /// Whether a size measurement is running, and how far along it is.
++        #[property(get)]
++        pub is_measuring: Cell<bool>,
++        #[property(get)]
++        pub measure_progress: Cell<f64>,
++        /// Sizes tried so far, and what the bisection is expected to need.
++        pub measure_step: Cell<u32>,
++        pub measure_steps: Cell<u32>,
++        /// What to go back to if the measurement is called off.
++        pub measure_restore: RefCell<Option<String>>,
  
          pub picture: gtk::Picture,
          pub offload: gtk::GraphicsOffload,
-@@ -241,6 +262,38 @@ mod imp {
+@@ -241,6 +274,38 @@ mod imp {
              self.obj().apply_preview_resolution();
          }
  
@@ -128,7 +169,7 @@ index ef2e204..9a9d9b9 100644
          pub(crate) fn set_state(&self, state: ViewfinderState) {
              if state != self.state.replace(state) {
                  self.obj().notify_state();
-@@ -727,6 +780,14 @@ impl Viewfinder {
+@@ -727,6 +792,14 @@ impl Viewfinder {
      const MAX_VIEWFINDER_PIXELS: i64 = 1920 * 1080;
      /// How long a size gets to prove it streams before it is believed.
      const PROBE_SECONDS: u32 = 3;
@@ -143,7 +184,23 @@ index ef2e204..9a9d9b9 100644
      /// How many 100 ms waits to allow the pipeline for coming back up after
      /// switching resolution for a picture.
      const CAPTURE_WAIT_TRIES: u32 = 50;
-@@ -1049,9 +1110,16 @@ impl Viewfinder {
+@@ -777,6 +850,15 @@ impl Viewfinder {
+             return Err(crate::CaptureError::NotReady);
+         }
+ 
++        // A resolution switch left running - most often the previous shot's
++        // own restore back to the preview size - races with this one if it is
++        // not checked here too: `state()` stays `Ready` throughout, so
++        // without this the capture would wait out `capture_when_running`'s
++        // fixed budget and then fire into a pipeline mid-restart.
++        if imp.switching.get() {
++            return Err(crate::CaptureError::NotReady);
++        }
++
+         if imp.is_taking_picture.get() {
+             return Err(crate::CaptureError::SnapshotInProgress);
+         }
+@@ -1049,9 +1131,16 @@ impl Viewfinder {
      fn on_image_done(&self, file: &gio::File) {
          self.imp().is_taking_picture.set(false);
  
@@ -161,10 +218,41 @@ index ef2e204..9a9d9b9 100644
          }
  
          self.emit_picture_done(Some(file));
-@@ -1081,6 +1149,34 @@ impl Viewfinder {
-             return;
-         }
+@@ -1075,9 +1164,62 @@ impl Viewfinder {
+             err.debug()
+         );
  
++        // ☠️ Only the source gets a say in whether a size works. A single failed
++        // pipeline start posts a burst of errors from elements that have
++        // nothing to do with the preview: camerabin's still-image and video
++        // sinks each complain that they have no filename, twice, because
++        // nothing is being recorded. Measured here: six errors from three
++        // elements inside 36 ms. Feeding all of them to the size search spent
++        // the entire bisection - six sizes "tried" and rejected in a single
++        // frame's worth of time, none of them actually measured - and left the
++        // viewfinder dead with "No size the camera offers would stream". The
++        // sinks' complaints are noise from branches that are not in use.
++        let from_source = err
++            .src()
++            .map(|src| {
++                let path = src.path_string();
++                path.contains("pipewiresrc") || path.contains("camerabinsrc")
++            })
++            .unwrap_or(false);
++
+         // A size being tried failed to stream: that is an answer, not a
+         // breakdown. Move on to the next one instead of giving up the camera.
+-        if self.probe_failed() {
++        if from_source && self.probe_failed() {
++            return;
++        }
++
++        if !from_source && self.imp().probe.get().is_some() {
++            // A probe is in flight and this error is not about it. Leave it
++            // running: it decides on frames arriving, not on silence here.
++            return;
++        }
++
 +        // ☠️ The same is true of every other resolution change, and this used to
 +        // be where they turned into "Could not play camera stream" in the user's
 +        // face. Only the probe was recognised as deliberate; a size chosen from
@@ -181,6 +269,7 @@ index ef2e204..9a9d9b9 100644
 +                    log::warn!("That size did not play; going back to the last one that did");
 +                    self.imp().restore_res.set(None);
 +                    self.switch_source_resolution(good);
++                    self.verify_chosen_resolution();
 +                    return;
 +                }
 +            }
@@ -190,13 +279,10 @@ index ef2e204..9a9d9b9 100644
 +            self.imp().preview_resolution.replace(String::new());
 +            self.notify_preview_resolution();
 +            self.start_probe();
-+            return;
-+        }
-+
-         self.cancel_current_operation();
+             return;
+         }
  
-         if self.imp().camerabin().current_state() != gst::State::Playing {
-@@ -1196,7 +1292,7 @@ impl Viewfinder {
+@@ -1196,7 +1338,7 @@ impl Viewfinder {
          let image_properties_map = ElementProperties::builder_map()
              .item(
                  ElementPropertiesMapItem::builder("jpegenc")
@@ -205,7 +291,7 @@ index ef2e204..9a9d9b9 100644
                      // idct-method "float": Slowest, most accurate method.
                      .field("idct-method", 2)
                      .build(),
-@@ -1507,6 +1603,10 @@ impl Viewfinder {
+@@ -1507,6 +1649,10 @@ impl Viewfinder {
          imp.capture_res.set(0);
          self.set_autofocus(imp.autofocus.get());
          imp.restore_res.set(None);
@@ -216,7 +302,7 @@ index ef2e204..9a9d9b9 100644
          self.apply_preview_resolution();
      }
  
-@@ -1515,7 +1615,16 @@ impl Viewfinder {
+@@ -1515,7 +1661,16 @@ impl Viewfinder {
          self.imp().resolutions.borrow().clone()
      }
  
@@ -234,7 +320,7 @@ index ef2e204..9a9d9b9 100644
      fn apply_preview_resolution(&self) {
          let imp = self.imp();
  
-@@ -1540,7 +1649,125 @@ impl Viewfinder {
+@@ -1540,7 +1695,236 @@ impl Viewfinder {
                  self.switch_source_resolution(index);
                  self.verify_chosen_resolution();
              }
@@ -314,13 +400,124 @@ index ef2e204..9a9d9b9 100644
 +    /// The size it settles on is written back to
 +    /// [`property@Viewfinder:preview-resolution`], so it is asked for once.
 +    pub fn find_best_preview_resolution(&self) {
-+        if self.imp().resolutions.borrow().is_empty() {
++        let imp = self.imp();
++        let count = imp.resolutions.borrow().len();
++        if count == 0 {
 +            return;
 +        }
 +
 +        log::info!("Measuring the camera for the largest size that keeps up");
++
++        // What to put back if this is called off half way: the size in use
++        // now, which is by definition one that was working a moment ago.
++        imp.measure_restore
++            .replace(Some(self.preview_resolution()));
++
++        // A bisection over `count` sizes takes about log2(count) steps. This
++        // is what the progress is measured against, so it is an estimate and
++        // the bar can reach the end a step early or late - it is honest about
++        // how many sizes are left to try, not about seconds.
++        imp.measure_steps
++            .set((count as f64).log2().ceil().max(1.0) as u32);
++        imp.measure_step.set(0);
++        imp.measure_progress.set(0.0);
++        imp.is_measuring.set(true);
++        self.notify_measure_progress();
++        self.notify_is_measuring();
++
 +        self.stop_probe();
 +        self.start_probe();
++    }
++
++    /// What one frame of what the camera is seeing right now costs as a JPEG.
++    ///
++    /// Returns the encoded byte count and the size of the frame it encoded, so
++    /// a caller can scale it to a picture taken at some other resolution. This
++    /// exists because the alternative is a formula, and a formula cannot know
++    /// what the camera is pointed at: the same quality on a blank wall and on a
++    /// tree differ several times over. The one thing that does know is the
++    /// encoder, applied to the actual scene.
++    ///
++    /// ☠️ It encodes the *preview* frame, which is smaller than the photograph
++    /// will be, and bytes do not scale quite linearly with pixels - downscaling
++    /// averages away the fine detail that costs the most to keep. Scaling this
++    /// up by pixel count therefore reads low on a detailed scene. It is a
++    /// measurement of the right scene at the right quality, and an estimate of
++    /// the right size; the caller is expected to say so.
++    ///
++    /// Returns None when there is no frame to encode - a viewfinder that has
++    /// not started yet, or a paintable that does not hand out a texture - which
++    /// is a reason to show nothing rather than to invent a number.
++    pub fn encode_current_frame(&self, quality: u32) -> Option<(u64, u64)> {
++        let paintable = self.imp().picture.paintable()?;
++
++        // current_image() is the documented way to take an immutable copy of
++        // whatever a paintable is showing; for a video sink that copy is the
++        // texture itself.
++        let texture = paintable.current_image().downcast::<gdk::Texture>().ok()?;
++        // Deprecated since GTK 4.12, and kept deliberately: the replacement is
++        // to download the texture and build a pixbuf from the bytes, which
++        // means getting the premultiplied Cairo byte order right by hand for no
++        // gain. This is one call and it is exactly what it says.
++        #[allow(deprecated)]
++        let pixbuf = gdk::pixbuf_get_from_texture(&texture)?;
++        let pixels = pixbuf.width() as u64 * pixbuf.height() as u64;
++        if pixels == 0 {
++            return None;
++        }
++
++        let quality = quality.clamp(1, 100).to_string();
++        let bytes = pixbuf
++            .save_to_bufferv("jpeg", &[("quality", quality.as_str())])
++            .map_err(|err| log::warn!("Could not encode a frame to size it: {err}"))
++            .ok()?;
++
++        Some((bytes.len() as u64, pixels))
++    }
++
++    /// Stops a running measurement and puts the previous size back.
++    pub fn cancel_measuring(&self) {
++        let imp = self.imp();
++        if !imp.is_measuring.get() {
++            return;
++        }
++
++        log::info!("Size measurement called off; going back to the previous one");
++        self.stop_probe();
++        self.finish_measuring();
++
++        if let Some(previous) = imp.measure_restore.take() {
++            imp.preview_resolution.replace(previous);
++            self.notify_preview_resolution();
++            self.apply_preview_resolution();
++        }
++    }
++
++    fn finish_measuring(&self) {
++        let imp = self.imp();
++        if !imp.is_measuring.replace(false) {
++            return;
++        }
++        imp.measure_progress.set(1.0);
++        self.notify_measure_progress();
++        self.notify_is_measuring();
++    }
++
++    /// One more size has been asked for; move the bar along.
++    fn measure_stepped(&self) {
++        let imp = self.imp();
++        if !imp.is_measuring.get() {
++            return;
++        }
++
++        let step = imp.measure_step.get() + 1;
++        imp.measure_step.set(step);
++        let steps = imp.measure_steps.get().max(1);
++        // Never quite full while it is still running: a bar that sits at the
++        // end for several seconds reads as a hang.
++        imp.measure_progress
++            .set((step as f64 / steps as f64).min(0.95));
++        self.notify_measure_progress();
 +    }
 +
 +    /// Points captures at the chosen size, or at the largest one.
@@ -361,7 +558,7 @@ index ef2e204..9a9d9b9 100644
          }
      }
  
-@@ -1561,6 +1788,10 @@ impl Viewfinder {
+@@ -1561,6 +1945,10 @@ impl Viewfinder {
                      imp.probe_timeout.take();
  
                      if imp.frame_count.load(std::sync::atomic::Ordering::Relaxed) > 0 {
@@ -372,7 +569,7 @@ index ef2e204..9a9d9b9 100644
                          return;
                      }
  
-@@ -1578,7 +1809,7 @@ impl Viewfinder {
+@@ -1578,7 +1966,7 @@ impl Viewfinder {
          self.imp().probe_timeout.replace(Some(source));
      }
  
@@ -381,7 +578,7 @@ index ef2e204..9a9d9b9 100644
      ///
      /// A camera advertises sizes it cannot always deliver: asked for one of
      /// those, the pipeline answers 'Failed to start streaming: Resource busy'
-@@ -1586,22 +1817,31 @@ impl Viewfinder {
+@@ -1586,22 +1974,31 @@ impl Viewfinder {
      /// of the camera and its driver, not something an application can know, so
      /// the only honest way to find out is to ask for one and see.
      ///
@@ -421,7 +618,7 @@ index ef2e204..9a9d9b9 100644
          imp.probe_lo.set(0);
          imp.probe_hi.set(last);
          imp.probe_found.set(false);
-@@ -1616,16 +1856,27 @@ impl Viewfinder {
+@@ -1616,16 +2013,27 @@ impl Viewfinder {
          let hi = imp.probe_hi.get();
  
          if lo >= hi {
@@ -456,7 +653,16 @@ index ef2e204..9a9d9b9 100644
      }
  
      fn try_probe(&self, index: usize) {
-@@ -1652,8 +1903,7 @@ impl Viewfinder {
+@@ -1637,6 +2045,8 @@ impl Viewfinder {
+ 
+         log::info!("Trying {size} for the preview");
+         imp.probe.set(Some(index));
++        imp.probe_started.set(Some(std::time::Instant::now()));
++        self.measure_stepped();
+         imp.frame_count.store(0, std::sync::atomic::Ordering::Relaxed);
+         self.switch_source_resolution(index);
+ 
+@@ -1652,8 +2062,7 @@ impl Viewfinder {
          imp.probe_timeout.replace(Some(source));
      }
  
@@ -466,7 +672,7 @@ index ef2e204..9a9d9b9 100644
      ///
      /// Not erroring is not the same as working. A size this camera cannot
      /// deliver fails loudly through libcamera - 'Resource busy' - but quietly
-@@ -1662,6 +1912,11 @@ impl Viewfinder {
+@@ -1662,6 +2071,11 @@ impl Viewfinder {
      /// settled on 1024x600 on that evidence and the viewfinder stayed dark.
      /// So the test is buffers at the video sink, which is the only thing that
      /// distinguishes a working size from a silent one.
@@ -478,7 +684,7 @@ index ef2e204..9a9d9b9 100644
      fn probe_succeeded(&self) {
          let imp = self.imp();
          imp.probe_timeout.take();
-@@ -1672,25 +1927,39 @@ impl Viewfinder {
+@@ -1672,25 +2086,39 @@ impl Viewfinder {
  
          let frames = imp.frame_count.load(std::sync::atomic::Ordering::Relaxed);
          if frames == 0 {
@@ -524,15 +730,41 @@ index ef2e204..9a9d9b9 100644
      fn probe_failed(&self) -> bool {
          let imp = self.imp();
  
-@@ -1702,12 +1971,13 @@ impl Viewfinder {
+@@ -1698,16 +2126,37 @@ impl Viewfinder {
+             return false;
+         };
+ 
++        // ☠️ One error, one verdict. Errors arrive in bursts, and a burst that
++        // outruns the size it is about will step the search through several
++        // sizes without measuring any of them - which is how a working camera
++        // ended up reporting that none of its sizes would stream. Anything
++        // arriving before the size has had a moment is left to the frame
++        // counter to decide, three seconds later and on evidence.
++        if let Some(started) = imp.probe_started.get()
++            && started.elapsed() < std::time::Duration::from_millis(250)
++        {
++            imp.probe.set(Some(index));
++            return true;
++        }
++
+         if let Some(source) = imp.probe_timeout.take() {
              source.remove();
          }
  
 -        if index == 0 {
+-            log::warn!("No size the camera offers would stream");
+-            return false;
 +        let last = imp.resolutions.borrow().len().saturating_sub(1);
 +        if index >= last {
-             log::warn!("No size the camera offers would stream");
-             return false;
++            // ☠️ Not a place to stop. Giving up here left the viewfinder black
++            // for the rest of the session with nothing to recover it, and the
++            // camera was working the whole time. The largest size is the
++            // sensor's own mode and the likeliest to stream, so end up there
++            // rather than nowhere.
++            log::warn!("Nothing kept up; falling back to the largest size");
++            imp.probe_found.set(false);
++            self.probe_settle(0);
++            return true;
          }
  
 -        imp.probe_hi.set(index - 1);
@@ -540,7 +772,41 @@ index ef2e204..9a9d9b9 100644
          self.probe_step();
          true
      }
-@@ -1838,6 +2108,7 @@ impl Viewfinder {
+@@ -1720,9 +2169,33 @@ impl Viewfinder {
+         };
+ 
+         log::info!("Preview settled at {size}");
++        self.finish_measuring();
++        imp.measure_restore.take();
++        imp.frame_count.store(0, std::sync::atomic::Ordering::Relaxed);
+         self.switch_source_resolution(index);
+         imp.preview_resolution.replace(size.to_string());
+         self.notify_preview_resolution();
++
++        // switch_source_resolution left `switching` set, and unlike a probed
++        // size or a chosen one, nothing else ever clears it for a settle:
++        // this is the search's own last resort, with nowhere left to fall
++        // back to. Without this a capture taken while the fallback pipeline
++        // is still starting up finds `switching` stuck forever - refused, not
++        // hung, but refused for the rest of the session.
++        glib::timeout_add_seconds_local_once(
++            Self::PROBE_SECONDS,
++            glib::clone!(
++                #[weak(rename_to = obj)]
++                self,
++                move || {
++                    let imp = obj.imp();
++                    if imp.frame_count.load(std::sync::atomic::Ordering::Relaxed) > 0 {
++                        imp.good_res.set(Some(index));
++                    }
++                    imp.switching.set(false);
++                }
++            ),
++        );
+     }
+ 
+     fn stop_probe(&self) {
+@@ -1838,6 +2311,7 @@ impl Viewfinder {
              return;
          }
  
@@ -570,8 +836,62 @@ index 284864b..5d9b66b 100644
      <key name="camera-controls" type="a{sd}">
        <default>{}</default>
        <summary>Camera controls chosen by the user</summary>
+diff --git a/data/resources/ui/camera.ui b/data/resources/ui/camera.ui
+index 94d5e39..0bb2a98 100644
+--- a/data/resources/ui/camera.ui
++++ b/data/resources/ui/camera.ui
+@@ -135,6 +135,49 @@
+                             </child>
+                           </object>
+                         </child>
++                        <child type="overlay">
++                          <object class="GtkRevealer" id="measure_revealer">
++                            <property name="halign">center</property>
++                            <property name="valign">center</property>
++                            <property name="transition-type">crossfade</property>
++                            <property name="reveal-child">False</property>
++                            <child>
++                              <object class="GtkBox">
++                                <property name="orientation">vertical</property>
++                                <property name="spacing">12</property>
++                                <property name="margin-top">18</property>
++                                <property name="margin-bottom">18</property>
++                                <property name="margin-start">18</property>
++                                <property name="margin-end">18</property>
++                                <style>
++                                  <class name="osd"/>
++                                  <class name="card"/>
++                                </style>
++                                <child>
++                                  <object class="GtkLabel">
++                                    <property name="label" translatable="yes">Recalibrating view size</property>
++                                    <style>
++                                      <class name="heading"/>
++                                    </style>
++                                  </object>
++                                </child>
++                                <child>
++                                  <object class="GtkProgressBar" id="measure_progress">
++                                    <property name="width-request">200</property>
++                                    <property name="valign">center</property>
++                                  </object>
++                                </child>
++                                <child>
++                                  <object class="GtkButton" id="measure_cancel">
++                                    <property name="label" translatable="yes">Stop</property>
++                                    <property name="halign">center</property>
++                                    <signal name="clicked" handler="cancel_measuring" swapped="true"/>
++                                  </object>
++                                </child>
++                              </object>
++                            </child>
++                          </object>
++                        </child>
+                         <child type="overlay">
+                           <object class="AdwMultiLayoutView" id="multi_layout_view">
+                             <child type="top-buttons">
 diff --git a/src/widgets/camera.rs b/src/widgets/camera.rs
-index 511fad4..af33fd6 100644
+index 511fad4..fa2cb1b 100644
 --- a/src/widgets/camera.rs
 +++ b/src/widgets/camera.rs
 @@ -13,6 +13,22 @@ use super::CameraControls;
@@ -607,7 +927,32 @@ index 511fad4..af33fd6 100644
  
          #[property(get, set = Self::set_capture_mode, explicit_notify, default)]
          capture_mode: Cell<crate::CaptureMode>,
-@@ -314,6 +333,18 @@ mod imp {
+@@ -75,6 +94,11 @@ mod imp {
+         #[template_child]
+         pub flash_button: TemplateChild<gtk::MenuButton>,
+ 
++        #[template_child]
++        pub measure_revealer: TemplateChild<gtk::Revealer>,
++        #[template_child]
++        pub measure_progress: TemplateChild<gtk::ProgressBar>,
++
+         #[template_child]
+         pub camera_controls: TemplateChild<crate::CameraControls>,
+ 
+@@ -126,6 +150,12 @@ mod imp {
+                 .get_or_init(|| gio::Settings::new(config::APP_ID))
+         }
+ 
++        /// The Stop button on the recalibration overlay.
++        #[template_callback]
++        fn cancel_measuring(&self) {
++            self.viewfinder.cancel_measuring();
++        }
++
+         #[template_callback]
+         fn change_breakpoint(&self, breakpoint: adw::Breakpoint) {
+             let obj = self.obj();
+@@ -314,6 +344,18 @@ mod imp {
                  .bind("preview-resolution", &*self.viewfinder, "preview-resolution")
                  .build();
  
@@ -626,7 +971,22 @@ index 511fad4..af33fd6 100644
              self.viewfinder.set_autofocus(settings.boolean("autofocus"));
              settings.connect_changed(
                  Some("autofocus"),
-@@ -400,15 +431,30 @@ mod imp {
+@@ -397,18 +439,45 @@ mod imp {
+                 }
+             ));
+ 
++            // The recalibration overlay follows the viewfinder: it is the
++            // viewfinder that knows whether a measurement is running, and the
++            // only way to call one off is through it.
++            self.viewfinder
++                .bind_property("is-measuring", &self.measure_revealer.get(), "reveal-child")
++                .sync_create()
++                .build();
++            self.viewfinder
++                .bind_property("measure-progress", &self.measure_progress.get(), "fraction")
++                .sync_create()
++                .build();
++
              // Inhibit idle (screen blanking and locking) the whole time the
              // viewfinder is active, not only while recording, so the display
              // does not turn off mid-capture. See GNOME/snapshot#366.
@@ -661,7 +1021,7 @@ index 511fad4..af33fd6 100644
                  }
              });
  
-@@ -654,9 +700,22 @@ impl Camera {
+@@ -654,13 +723,29 @@ impl Camera {
          // picture would come out as overexposed as the light was late. It goes
          // out again when the picture is stored, or here if the capture never
          // starts.
@@ -685,7 +1045,14 @@ index 511fad4..af33fd6 100644
          }
  
          if let Err(err) = imp.viewfinder.take_picture(path) {
-@@ -730,10 +789,45 @@ impl Camera {
+             self.set_flash_lit(false);
++            // picture-stored, the signal that normally re-enables it, only
++            // fires for a capture that actually started.
++            window.set_shutter_enabled(true);
+             return Err(err.into());
+         }
+         imp.flash_bin.flash();
+@@ -730,10 +815,45 @@ impl Camera {
          }
      }
  
@@ -733,7 +1100,7 @@ index 511fad4..af33fd6 100644
  
      /// Show the chosen mode on the button itself, so it does not take a menu
 diff --git a/src/widgets/camera_settings.rs b/src/widgets/camera_settings.rs
-index a7c8328..9ae72c5 100644
+index a7c8328..a1885b5 100644
 --- a/src/widgets/camera_settings.rs
 +++ b/src/widgets/camera_settings.rs
 @@ -13,7 +13,7 @@ use std::collections::HashMap;
@@ -770,7 +1137,7 @@ index a7c8328..9ae72c5 100644
      row.set_model(Some(&model));
  
      let stored = settings.string("preview-resolution");
-@@ -101,6 +102,151 @@ pub fn resolution_row(
+@@ -101,6 +102,194 @@ pub fn resolution_row(
      Some(row)
  }
  
@@ -838,61 +1205,99 @@ index a7c8328..9ae72c5 100644
 +    format!("{mp:.1} MP")
 +}
 +
-+/// JPEG bytes per pixel at a given quality, for the size estimate below.
++/// A row for the JPEG quality, showing what a picture costs at it.
 +///
-+/// ☠️ This is an estimate and the row says so. What a JPEG actually costs
-+/// depends on the picture - a wall and a tree at the same quality differ by
-+/// several times - so no formula can be right. The curve here is the usual
-+/// shape, anchored so that quality 85 lands near a quarter of a byte per pixel,
-+/// which is where ordinary photographs sit. It is meant to answer "roughly how
-+/// much does moving this slider cost me", not to predict a file.
-+fn bytes_per_pixel(quality: u32) -> f64 {
-+    let q = quality as f64 / 100.0;
-+    0.06 + 0.9 * q.powi(4)
-+}
-+
-+/// A row for the JPEG quality, showing what it costs.
++/// ☠️ The number is measured, not computed. An earlier version carried a
++/// bytes-per-pixel formula, and it was wrong by a factor of two on the first
++/// camera it met - it promised 7.3 MB for pictures that came out at 3.45. No
++/// formula can be right, because what a JPEG costs is a property of the scene:
++/// a blank wall and a tree at the same quality differ several times over. So
++/// the encoder is asked instead, on the frame the camera is showing at that
++/// moment.
 +pub fn jpeg_quality_row(
 +    resolutions: &[aperture::utils::Size],
 +    settings: &gio::Settings,
++    encode: impl Fn(u32) -> Option<(u64, u64)> + 'static,
 +) -> adw::SpinRow {
 +    let row = adw::SpinRow::with_range(1.0, 100.0, 1.0);
 +    row.set_title(&gettext("JPEG Quality"));
 +    row.set_value(settings.uint("jpeg-quality") as f64);
 +
-+    // The size shown is for the size photographs are actually taken at, which
-+    // is the stored photo resolution, or the largest the camera offers.
++    // The estimate is for the size photographs are actually taken at, which is
++    // the stored photo resolution, or the largest the camera offers.
 +    let stored = settings.string("photo-resolution");
-+    let size = aperture::utils::Size::parse(&stored)
++    let target = aperture::utils::Size::parse(&stored)
 +        .filter(|size| resolutions.contains(size))
-+        .or_else(|| resolutions.first().copied());
++        .or_else(|| resolutions.first().copied())
++        .map(|size| size.width as u64 * size.height as u64);
++
++    let encode = std::rc::Rc::new(encode);
 +
 +    // Takes the row as an argument rather than capturing it: a closure that
 +    // holds the widget it is connected to keeps that widget alive for ever.
-+    fn show_estimate(row: &adw::SpinRow, size: Option<aperture::utils::Size>, quality: u32) {
-+        let text = match size {
-+            Some(size) => {
-+                let pixels = size.width as f64 * size.height as f64;
-+                let bytes = pixels * bytes_per_pixel(quality);
++    fn show_estimate(
++        row: &adw::SpinRow,
++        encode: &dyn Fn(u32) -> Option<(u64, u64)>,
++        target: Option<u64>,
++        quality: u32,
++    ) {
++        let text = match (encode(quality), target) {
++            (Some((bytes, pixels)), Some(target)) if pixels > 0 => {
++                // Scaled from the preview frame to the size a photograph is
++                // taken at. Detail does not survive downscaling, so this reads
++                // low on a busy scene - hence "about".
++                let scaled = bytes.saturating_mul(target) / pixels;
 +                // Translators: an estimated file size, e.g. "About 2.4 MB per picture".
-+                gettext("About {} per picture, give or take")
-+                    .replace("{}", &glib::format_size(bytes as u64))
++                gettext("About {} per picture, at what the camera sees now")
++                    .replace("{}", &glib::format_size(scaled))
 +            }
-+            None => String::new(),
++            // No frame to encode means no measurement, and inventing one here
++            // is exactly what this row exists to stop doing.
++            _ => gettext("Point the camera at something to size a picture"),
 +        };
 +        row.set_subtitle(&text);
 +    }
 +
-+    show_estimate(&row, size, settings.uint("jpeg-quality"));
++    show_estimate(
++        &row,
++        &*encode,
++        target,
++        settings.uint("jpeg-quality"),
++    );
++
++    // ☠️ Encoding a frame is not free, and the slider emits a value for every
++    // step it is dragged through. Without this the row encodes a full frame
++    // dozens of times on one drag, on a phone, on the main thread. The estimate
++    // catches up when the slider stops instead.
++    let pending: std::rc::Rc<std::cell::RefCell<Option<glib::SourceId>>> = Default::default();
 +
 +    row.connect_value_notify({
 +        let settings = settings.clone();
 +        move |row| {
 +            let quality = row.value().round() as u32;
-+            show_estimate(row, size, quality);
 +            if let Err(err) = settings.set_uint("jpeg-quality", quality) {
 +                log::warn!("Could not store the JPEG quality: {err}");
 +            }
++
++            if let Some(source) = pending.borrow_mut().take() {
++                source.remove();
++            }
++            let source = glib::timeout_add_local_once(
++                std::time::Duration::from_millis(250),
++                glib::clone!(
++                    #[weak]
++                    row,
++                    #[strong]
++                    encode,
++                    #[strong]
++                    pending,
++                    move || {
++                        pending.borrow_mut().take();
++                        show_estimate(&row, &*encode, target, quality);
++                    }
++                ),
++            );
++            pending.borrow_mut().replace(source);
 +        }
 +    });
 +
@@ -905,10 +1310,15 @@ index a7c8328..9ae72c5 100644
 +/// per size tried and several seconds of black viewfinder - acceptable when it
 +/// was asked for, not when somebody has just opened a camera. So it is an
 +/// action, and it writes its answer into the setting above.
++///
++/// Activating it closes the preferences: what it does is only visible on the
++/// viewfinder, and leaving the dialog covering it would hide the whole point.
 +pub fn measure_resolution_row(run: impl Fn() + 'static) -> adw::ActionRow {
 +    let row = adw::ActionRow::new();
-+    row.set_title(&gettext("Find Best Size"));
-+    row.set_subtitle(&gettext("Try sizes on this camera and keep the largest smooth one"));
++    row.set_title(&gettext("Recalibrate View Size"));
++    row.set_subtitle(&gettext(
++        "Measure the camera and keep the largest viewfinder size that still runs smoothly. Photos are unaffected.",
++    ));
 +    row.set_activatable(true);
 +
 +    let icon = gtk::Image::from_icon_name("view-refresh-symbolic");
@@ -923,25 +1333,33 @@ index a7c8328..9ae72c5 100644
  pub fn group(
      controls: &[CameraControl],
 diff --git a/src/widgets/preferences_window.rs b/src/widgets/preferences_window.rs
-index 67d3952..90a0d3d 100644
+index 67d3952..7f65e06 100644
 --- a/src/widgets/preferences_window.rs
 +++ b/src/widgets/preferences_window.rs
-@@ -111,6 +111,7 @@ impl PreferencesWindow {
+@@ -111,6 +111,8 @@ impl PreferencesWindow {
          resolutions: &[aperture::utils::Size],
          controls: &[aperture::CameraControl],
          apply: impl Fn(&aperture::CameraControl, f64) + Clone + 'static,
 +        measure: impl Fn() + 'static,
++        encode: impl Fn(u32) -> Option<(u64, u64)> + 'static,
      ) {
          let settings = self.imp().settings.get().unwrap();
  
-@@ -123,8 +124,22 @@ impl PreferencesWindow {
+@@ -123,8 +125,33 @@ impl PreferencesWindow {
          if let Some(row) = camera_settings::resolution_row(resolutions, settings) {
              /* First, because it is the one that changes what is on screen. */
              group.add(&row);
 -            self.imp().general_page.add(&group);
 -        } else if group.parent().is_none() && !resolutions.is_empty() {
 +            /* Directly under it: the way to have that one filled in for you. */
-+            group.add(&camera_settings::measure_resolution_row(measure));
++            group.add(&camera_settings::measure_resolution_row({
++                let dialog = self.clone();
++                move || {
++                    /* Out of the way first - the result is on the viewfinder. */
++                    dialog.close();
++                    measure();
++                }
++            }));
 +        }
 +
 +        /*
@@ -952,7 +1370,11 @@ index 67d3952..90a0d3d 100644
 +         */
 +        if let Some(row) = camera_settings::photo_resolution_row(resolutions, settings) {
 +            group.add(&row);
-+            group.add(&camera_settings::jpeg_quality_row(resolutions, settings));
++            group.add(&camera_settings::jpeg_quality_row(
++                resolutions,
++                settings,
++                encode,
++            ));
 +        }
 +
 +        if group.parent().is_none() && !resolutions.is_empty() {
@@ -960,10 +1382,10 @@ index 67d3952..90a0d3d 100644
          }
      }
 diff --git a/src/widgets/window.rs b/src/widgets/window.rs
-index eb90e2c..1f8b30b 100644
+index eb90e2c..c99e456 100644
 --- a/src/widgets/window.rs
 +++ b/src/widgets/window.rs
-@@ -460,10 +460,18 @@ impl Window {
+@@ -460,10 +460,22 @@ impl Window {
          let preferences = crate::PreferencesWindow::new(is_recording);
  
          let viewfinder = self.imp().camera.viewfinder();
@@ -982,10 +1404,13 @@ index eb90e2c..1f8b30b 100644
 +                let viewfinder = viewfinder.clone();
 +                move || viewfinder.find_best_preview_resolution()
 +            },
++            {
++                let viewfinder = viewfinder.clone();
++                move |quality| viewfinder.encode_current_frame(quality)
++            },
 +        );
  
          preferences.present(Some(self));
      }
 -- 
 2.53.0
-
