@@ -67,9 +67,24 @@ the mismatch shows up as *"no camera found"* in every app —
 |---|---|
 | [`focus-sweep.py`](focus-sweep.py) | does the lens move, and where in the control range this scene comes into focus — headless, prints numbers |
 | [`focus-view.py`](focus-view.py) | what the lens is doing *right now*, to a human — a live viewfinder with a focus slider, the same sharpness number, and zoom |
+| [`flash-check.py`](flash-check.py) | does the flash actually put light on the scene — the camera as the photometer, torch toggled under one held capture |
+| [`stream-restart-test.sh`](stream-restart-test.sh) | how many times the camera stream can be reconfigured before it stops answering — headless, no camera app, no screen |
+| [`resolution-sweep.sh`](resolution-sweep.sh) | which viewfinder sizes a running camera app can actually stream, one at a time |
 
-Both open `/dev/video0` **exclusively**, so they cannot run at the same time as
-each other or alongside a camera app.
+The two `focus-*` tools open `/dev/video0` **exclusively**, so they cannot run at
+the same time as each other or alongside a camera app. The two `.sh` ones are the
+opposite: `stream-restart-test.sh` needs the camera *free*, and
+`resolution-sweep.sh` needs a camera app holding it and visible on screen.
+
+☠️ **`resolution-sweep.sh` is the one to read before writing another
+measurement here**, not because of what it measures but because of the two ways
+it has already been wrong. It once reported all 47 sizes working, from an
+application that had never opened a camera — silence read as success. Rebuilt to
+demand positive evidence, it then reported nine sizes broken, all nine of which
+were merely the ones tried after the screen blanked and took the stream with it.
+Both guards it now carries — the screen check and the control size re-measured
+after every failure — exist because the sweep had already produced a confident
+answer without them.
 
 ## `focus-sweep.py`
 
