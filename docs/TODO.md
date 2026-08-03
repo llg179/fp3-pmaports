@@ -577,6 +577,41 @@ something new to blink — see the missed-call item above.
 `/dev/v4l-subdev` exists for it and libcamera cannot drive the flash yet; that
 was kept out so the bring-up measured one change.
 
+## Parked: the camera, after a WirePlumber crash traced to our own AF code
+
+Measured 2026-08-03, `linux-fp3` and `snapshot-50.0-r26` both otherwise fine.
+WirePlumber itself segfaulted mid-session — not the Snapshot app, not the
+kernel — with a C++ assertion inside our own autofocus algorithm:
+
+```
+.../bits/stl_vector.h:1282: ... operator[](size_type) const ...:
+  Assertion '__n < this->size()' failed.
+```
+
+The stack trace goes straight through
+[`0101-simple-autofocus.patch`](../userspace-camera/libcamera/0101-simple-autofocus.patch)'s
+own code: `libcamera::ipa::soft::algorithms::Af::interpolatePeak()` indexed a
+`std::vector<double>` out of bounds while interpolating the sharpness peak from
+the contrast-detection statistics. Not yet localised to a specific input (which
+zone table, which frame shape) that triggers it - only that it happened once,
+live, during ordinary preview use.
+
+systemd restarted WirePlumber on its own, but the app that had a camera stream
+open when it died could not reattach - every resolution the viewfinder tried
+came back with the same "Element failed to change its state", because the
+PipeWire/portal session itself was gone, not the chosen size. This is the same
+shape as the documented "restart wireplumber after a libcamera upgrade" trap in
+[`userspace-camera/README.md`](../userspace-camera/README.md), just triggered by
+a crash instead of an upgrade: killing and relaunching the app (which reopens
+the portal session fresh) recovered it immediately, and no amount of
+resolution-probing on the app side could have.
+
+**Decision: camera work is paused here rather than chased further tonight.**
+Next step when picked back up: reproduce `interpolatePeak()`'s crash
+deliberately (short of that, read the algorithm's zone-grid bounds against
+whatever statistics shape can currently reach it) before touching anything
+else in that patch.
+
 ## Untested: interconnect path for the SCM/crypto node
 
 An idea from the SLIMbus framer investigation that was never confirmed:
