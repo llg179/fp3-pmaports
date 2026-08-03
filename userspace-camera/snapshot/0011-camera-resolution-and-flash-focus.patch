@@ -1,4 +1,4 @@
-From 3ecc2ed207cf43219a1a1e0d22e672d3070ff1e0 Mon Sep 17 00:00:00 2001
+From f07d177966064594b54c536d737db1fd92097e70 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Lajosh=C3=A1zi=2C=20L=C3=A1szl=C3=B3=20Gergely?=
  <lajoshazilg@gmail.com>
 Date: Mon, 3 Aug 2026 11:46:20 +0200
@@ -35,15 +35,16 @@ And a flash photograph focuses again once the light is on. The focus the
 viewfinder was holding was reached in the dark, which is the situation the flash
 exists to fix; focusing before the light measures the wrong scene.
 ---
- aperture/src/viewfinder.rs             | 141 ++++++++++++++++++++++++-
- data/org.gnome.Snapshot.gschema.xml.in |  11 ++
- src/widgets/camera.rs                  |  61 ++++++++++-
- src/widgets/camera_settings.rs         | 127 +++++++++++++++++++++-
- src/widgets/preferences_window.rs      |  16 ++-
- 5 files changed, 346 insertions(+), 10 deletions(-)
+ aperture/src/viewfinder.rs             | 331 ++++++++++++++++++++++---
+ data/org.gnome.Snapshot.gschema.xml.in |  11 +
+ src/widgets/camera.rs                  | 106 +++++++-
+ src/widgets/camera_settings.rs         | 158 +++++++++++-
+ src/widgets/preferences_window.rs      |  19 +-
+ src/widgets/window.rs                  |  16 +-
+ 6 files changed, 593 insertions(+), 48 deletions(-)
 
 diff --git a/aperture/src/viewfinder.rs b/aperture/src/viewfinder.rs
-index ef2e204..02596be 100644
+index ef2e204..9a9d9b9 100644
 --- a/aperture/src/viewfinder.rs
 +++ b/aperture/src/viewfinder.rs
 @@ -17,6 +17,9 @@ use crate::code_detector::QrCodeDetector;
@@ -127,7 +128,22 @@ index ef2e204..02596be 100644
          pub(crate) fn set_state(&self, state: ViewfinderState) {
              if state != self.state.replace(state) {
                  self.obj().notify_state();
-@@ -1049,9 +1102,16 @@ impl Viewfinder {
+@@ -727,6 +780,14 @@ impl Viewfinder {
+     const MAX_VIEWFINDER_PIXELS: i64 = 1920 * 1080;
+     /// How long a size gets to prove it streams before it is believed.
+     const PROBE_SECONDS: u32 = 3;
++
++    /// The rate a preview has to reach for its size to be worth keeping.
++    ///
++    /// Not a hardware figure and not tuned to one phone: it is where a
++    /// viewfinder stops looking like a live picture. Where the camera cannot
++    /// reach it at any size the search keeps the smallest rather than refusing,
++    /// since a slow viewfinder beats none.
++    const MIN_PREVIEW_FPS: u32 = 20;
+     /// How many 100 ms waits to allow the pipeline for coming back up after
+     /// switching resolution for a picture.
+     const CAPTURE_WAIT_TRIES: u32 = 50;
+@@ -1049,9 +1110,16 @@ impl Viewfinder {
      fn on_image_done(&self, file: &gio::File) {
          self.imp().is_taking_picture.set(false);
  
@@ -145,7 +161,7 @@ index ef2e204..02596be 100644
          }
  
          self.emit_picture_done(Some(file));
-@@ -1081,6 +1141,34 @@ impl Viewfinder {
+@@ -1081,6 +1149,34 @@ impl Viewfinder {
              return;
          }
  
@@ -180,7 +196,7 @@ index ef2e204..02596be 100644
          self.cancel_current_operation();
  
          if self.imp().camerabin().current_state() != gst::State::Playing {
-@@ -1196,7 +1284,7 @@ impl Viewfinder {
+@@ -1196,7 +1292,7 @@ impl Viewfinder {
          let image_properties_map = ElementProperties::builder_map()
              .item(
                  ElementPropertiesMapItem::builder("jpegenc")
@@ -189,7 +205,7 @@ index ef2e204..02596be 100644
                      // idct-method "float": Slowest, most accurate method.
                      .field("idct-method", 2)
                      .build(),
-@@ -1507,6 +1595,10 @@ impl Viewfinder {
+@@ -1507,6 +1603,10 @@ impl Viewfinder {
          imp.capture_res.set(0);
          self.set_autofocus(imp.autofocus.get());
          imp.restore_res.set(None);
@@ -200,10 +216,113 @@ index ef2e204..02596be 100644
          self.apply_preview_resolution();
      }
  
-@@ -1544,6 +1636,44 @@ impl Viewfinder {
-         }
+@@ -1515,7 +1615,16 @@ impl Viewfinder {
+         self.imp().resolutions.borrow().clone()
      }
  
+-    /// Puts the viewfinder on the chosen size, or goes looking for one.
++    /// Puts the viewfinder on the chosen size, or on one that suits the screen.
++    ///
++    /// ☠️ Starting the camera does not measure anything. It used to: with no
++    /// size stored, the viewfinder probed its way through the list on every
++    /// first run, which is half a dozen pipeline restarts in front of somebody
++    /// who has just opened a camera and would like to see a picture. Worse,
++    /// reconfiguring is the one thing this pipeline does not do indefinitely,
++    /// so the search spent the budget before the user got a shot. The measuring
++    /// is still there, and better than it was, but it happens when it is asked
++    /// for - see [`fn@Viewfinder::find_best_preview_resolution`].
+     fn apply_preview_resolution(&self) {
+         let imp = self.imp();
+ 
+@@ -1540,7 +1649,125 @@ impl Viewfinder {
+                 self.switch_source_resolution(index);
+                 self.verify_chosen_resolution();
+             }
+-            None => self.start_probe(),
++            // Nothing usable stored: this is a first run, or the camera has
++            // changed. Start where the screen is, which is the one size that
++            // is neither a guess nor a measurement - anything larger than the
++            // display cannot be seen, and anything much smaller is thrown away
++            // detail.
++            None => {
++                let index = self.index_nearest_screen();
++                let size = imp.resolutions.borrow()[index];
++                log::info!("Preview at {size}, the size nearest this screen");
++                imp.frame_count.store(0, std::sync::atomic::Ordering::Relaxed);
++                self.switch_source_resolution(index);
++                imp.preview_resolution.replace(size.to_string());
++                self.notify_preview_resolution();
++                self.verify_chosen_resolution();
++            }
++        }
++    }
++
++    /// The offered size whose pixel count is closest to the screen's.
++    ///
++    /// Ties go to the larger, and a display that cannot be read at all - no
++    /// monitor, which happens under a nested compositor - falls back to the
++    /// largest the camera offers rather than to a guess.
++    fn index_nearest_screen(&self) -> usize {
++        let imp = self.imp();
++        let resolutions = imp.resolutions.borrow();
++
++        let Some(screen) = self.screen_pixels() else {
++            return 0;
++        };
++
++        let mut best = 0;
++        let mut best_distance = u64::MAX;
++        for (index, size) in resolutions.iter().enumerate() {
++            let pixels = size.width as u64 * size.height as u64;
++            let distance = pixels.abs_diff(screen);
++            // Strictly less, and the list runs largest first, so an exact tie
++            // keeps the earlier - which is the larger - entry.
++            if distance < best_distance {
++                best_distance = distance;
++                best = index;
++            }
++        }
++        best
++    }
++
++    /// The screen's pixel count, in real pixels rather than logical ones.
++    fn screen_pixels(&self) -> Option<u64> {
++        let display = gdk::Display::default()?;
++        let monitor = display
++            .monitors()
++            .item(0)?
++            .downcast::<gdk::Monitor>()
++            .ok()?;
++
++        let geometry = monitor.geometry();
++        // geometry() is in logical pixels; on a scaled display the panel has
++        // more than that, and it is the panel this is being compared against.
++        let scale = monitor.scale_factor().max(1) as i64;
++        let width = geometry.width() as i64 * scale;
++        let height = geometry.height() as i64 * scale;
++        if width <= 0 || height <= 0 {
++            return None;
++        }
++        Some((width * height) as u64)
++    }
++
++    /// Measures the camera and keeps the largest size that stays smooth.
++    ///
++    /// This is what the startup probe used to do unasked. It costs a pipeline
++    /// restart per size tried and several seconds of black viewfinder, which is
++    /// worth it when somebody has asked for it and is not when they have not.
++    /// The size it settles on is written back to
++    /// [`property@Viewfinder:preview-resolution`], so it is asked for once.
++    pub fn find_best_preview_resolution(&self) {
++        if self.imp().resolutions.borrow().is_empty() {
++            return;
++        }
++
++        log::info!("Measuring the camera for the largest size that keeps up");
++        self.stop_probe();
++        self.start_probe();
++    }
++
 +    /// Points captures at the chosen size, or at the largest one.
 +    ///
 +    /// Nothing about the running pipeline changes here. The index is only read
@@ -239,13 +358,10 @@ index ef2e204..02596be 100644
 +    fn apply_jpeg_quality(&self) {
 +        if self.imp().camerabin.get().is_some() {
 +            self.setup_recording();
-+        }
-+    }
-+
-     /// A size that was chosen rather than found still has to deliver.
-     ///
-     /// The one stored may have come from an older version, another camera, or
-@@ -1561,6 +1691,10 @@ impl Viewfinder {
+         }
+     }
+ 
+@@ -1561,6 +1788,10 @@ impl Viewfinder {
                      imp.probe_timeout.take();
  
                      if imp.frame_count.load(std::sync::atomic::Ordering::Relaxed) > 0 {
@@ -256,16 +372,175 @@ index ef2e204..02596be 100644
                          return;
                      }
  
-@@ -1679,6 +1813,8 @@ impl Viewfinder {
+@@ -1578,7 +1809,7 @@ impl Viewfinder {
+         self.imp().probe_timeout.replace(Some(source));
+     }
+ 
+-    /// Looks for the smallest size that actually streams.
++    /// Looks for the largest size that still keeps up.
+     ///
+     /// A camera advertises sizes it cannot always deliver: asked for one of
+     /// those, the pipeline answers 'Failed to start streaming: Resource busy'
+@@ -1586,22 +1817,31 @@ impl Viewfinder {
+     /// of the camera and its driver, not something an application can know, so
+     /// the only honest way to find out is to ask for one and see.
+     ///
++    /// ☠️ This used to look for the *smallest* size that streamed, on the
++    /// assumption that a smaller preview is a cheaper one. Measured, that
++    /// assumption does not hold: on a Fairphone 3 every size from 160x120 up to
++    /// 1920x1080 delivered the same rate to within the noise, because what
++    /// costs the time is reading the sensor out and running the software ISP
++    /// over its full frame, neither of which the preview size changes. The
++    /// search therefore ended on the smallest size the camera offered and the
++    /// viewfinder ran at 160x120 for no gain whatsoever. What does eventually
++    /// cost frames is the very top of the range, so the question worth asking
++    /// is not "what is cheapest" but "how large can this go and still keep up".
++    ///
+     /// The search is a bisection rather than a walk. A camera can offer dozens
+     /// of sizes - one measured here offers 47 - and trying them one by one
+     /// costs a pipeline restart each, in front of a user looking at a black
+     /// screen. Bisecting the list, which is ordered by pixel count, finds the
+-    /// boundary in about six attempts instead of thirty.
+-    ///
+-    /// What the bisection assumes is that a size which streams stays streaming
+-    /// as it grows. Where that does not hold the result is merely not the
+-    /// smallest one that works - never a size that does not, since only a size
+-    /// seen to stream is ever settled on.
++    /// boundary in about six attempts instead of thirty. What it assumes is
++    /// that the rate does not improve as the size grows, which is what makes
++    /// the boundary a boundary; where that does not hold the answer is merely
++    /// not the largest one that would have worked.
+     fn start_probe(&self) {
+         let imp = self.imp();
+         let last = imp.resolutions.borrow().len().saturating_sub(1);
+ 
+-        // Index 0 is the largest, and the sensor's own mode: the likeliest to
+-        // work, so it is where the search falls back to rather than starts.
++        // The answer is somewhere in [0, last], 0 being the largest size. The
++        // bisection narrows it to the first index that keeps up.
+         imp.probe_lo.set(0);
+         imp.probe_hi.set(last);
+         imp.probe_found.set(false);
+@@ -1616,16 +1856,27 @@ impl Viewfinder {
+         let hi = imp.probe_hi.get();
+ 
+         if lo >= hi {
+-            if imp.probe_found.get() || lo == 0 {
+-                self.probe_settle(lo);
+-            } else {
+-                // Nothing was ever seen to stream; the largest is untried.
+-                self.try_probe(0);
+-            }
++            // Either the boundary, or - if nothing kept up - the smallest size
++            // the camera offers, which is the likeliest to stream at all.
++            self.try_probe_final(lo);
+             return;
          }
  
-         log::debug!("{frames} frames arrived while trying that size");
+-        self.try_probe(lo + (hi - lo).div_ceil(2));
++        // Floor, so the midpoint is always below hi and the range shrinks.
++        self.try_probe(lo + (hi - lo) / 2);
++    }
++
++    /// The bisection has converged; settle here, but only on a size seen to
++    /// deliver. An index nothing has ever streamed at is still worth trying
++    /// once rather than settling on blind.
++    fn try_probe_final(&self, index: usize) {
++        // Converging means this index has already been measured, unless nothing
++        // has streamed at all - in which case it is the last one left untried.
++        if self.imp().probe_found.get() {
++            self.probe_settle(index);
++        } else {
++            self.try_probe(index);
++        }
+     }
+ 
+     fn try_probe(&self, index: usize) {
+@@ -1652,8 +1903,7 @@ impl Viewfinder {
+         imp.probe_timeout.replace(Some(source));
+     }
+ 
+-    /// The size being tried has streamed: smaller ones are still worth trying.
+-    /// The settling time is up: decide by whether pictures actually arrived.
++    /// The settling time is up: decide by how many pictures actually arrived.
+     ///
+     /// Not erroring is not the same as working. A size this camera cannot
+     /// deliver fails loudly through libcamera - 'Resource busy' - but quietly
+@@ -1662,6 +1912,11 @@ impl Viewfinder {
+     /// settled on 1024x600 on that evidence and the viewfinder stayed dark.
+     /// So the test is buffers at the video sink, which is the only thing that
+     /// distinguishes a working size from a silent one.
++    ///
++    /// Counting them rather than merely noticing them turns the same probe into
++    /// a rate measurement, which is what decides whether the size is worth
++    /// keeping: buffers over the settling time is frames per second, at the
++    /// sink, on this device, under whatever else is running.
+     fn probe_succeeded(&self) {
+         let imp = self.imp();
+         imp.probe_timeout.take();
+@@ -1672,25 +1927,39 @@ impl Viewfinder {
+ 
+         let frames = imp.frame_count.load(std::sync::atomic::Ordering::Relaxed);
+         if frames == 0 {
+-            log::info!("Nothing arrived at that size; trying a larger one");
++            log::info!("Nothing arrived at that size; trying a smaller one");
+             imp.probe.set(Some(index));
+             self.probe_failed();
+             return;
+         }
+ 
+-        log::debug!("{frames} frames arrived while trying that size");
+-        imp.probe_lo.set(index);
++        // This size streams, whatever its rate, so it is somewhere to fall back
++        // to if a larger one turns out not to.
 +        imp.good_res.set(Some(index));
 +        imp.switching.set(false);
-         imp.probe_lo.set(index);
          imp.probe_found.set(true);
  
-@@ -1838,6 +1974,7 @@ impl Viewfinder {
+-        if index >= imp.probe_hi.get() {
++        let fps = frames / Self::PROBE_SECONDS;
++        log::info!("{frames} frames in {}s: {fps} fps", Self::PROBE_SECONDS);
++
++        if fps >= Self::MIN_PREVIEW_FPS {
++            // Keeps up. Everything smaller does too, so the answer is here or
++            // larger.
++            imp.probe_hi.set(index);
++        } else if index >= imp.probe_hi.get() {
++            // Nothing kept up anywhere, and this is the smallest there is.
+             self.probe_settle(index);
++            return;
+         } else {
+-            self.probe_step();
++            // Too slow: the answer is smaller than this.
++            imp.probe_lo.set(index + 1);
+         }
++
++        self.probe_step();
+     }
+ 
+     /// Called when the pipeline fails while a size is being tried: that size
+-    /// and everything smaller is out.
++    /// and everything larger is out.
+     fn probe_failed(&self) -> bool {
+         let imp = self.imp();
+ 
+@@ -1702,12 +1971,13 @@ impl Viewfinder {
+             source.remove();
+         }
+ 
+-        if index == 0 {
++        let last = imp.resolutions.borrow().len().saturating_sub(1);
++        if index >= last {
+             log::warn!("No size the camera offers would stream");
+             return false;
+         }
+ 
+-        imp.probe_hi.set(index - 1);
++        imp.probe_lo.set(index + 1);
+         self.probe_step();
+         true
+     }
+@@ -1838,6 +2108,7 @@ impl Viewfinder {
              return;
          }
  
@@ -296,10 +571,10 @@ index 284864b..5d9b66b 100644
        <default>{}</default>
        <summary>Camera controls chosen by the user</summary>
 diff --git a/src/widgets/camera.rs b/src/widgets/camera.rs
-index 511fad4..311438f 100644
+index 511fad4..af33fd6 100644
 --- a/src/widgets/camera.rs
 +++ b/src/widgets/camera.rs
-@@ -13,6 +13,17 @@ use super::CameraControls;
+@@ -13,6 +13,22 @@ use super::CameraControls;
  use crate::enums::ControlsLayout;
  use crate::{config, utils};
  
@@ -314,10 +589,25 @@ index 511fad4..311438f 100644
 +/// so this is a wait, not a wait-for.
 +const FOCUS_SETTLE_MS: u64 = 900;
 +
++/// How long the flash may stay lit before it is put out regardless. Comfortably
++/// past a slow capture at full resolution, and far short of anything that would
++/// heat the LED or the battery.
++const FLASH_MAX_LIT_MS: u64 = 15_000;
++
  mod imp {
      use std::cell::{Cell, OnceCell, RefCell};
  
-@@ -314,6 +325,18 @@ mod imp {
+@@ -39,6 +55,9 @@ mod imp {
+         /// The camera flash, if this device has one that can be driven from
+         /// here. Looked up once: the LED does not come and go.
+         pub flash: OnceCell<Option<crate::flash::Flash>>,
++        /// Deadline on the lit flash, so a capture that never finishes cannot
++        /// leave a torch burning.
++        pub flash_timeout: RefCell<Option<glib::SourceId>>,
+ 
+         #[property(get, set = Self::set_capture_mode, explicit_notify, default)]
+         capture_mode: Cell<crate::CaptureMode>,
+@@ -314,6 +333,18 @@ mod imp {
                  .bind("preview-resolution", &*self.viewfinder, "preview-resolution")
                  .build();
  
@@ -336,7 +626,7 @@ index 511fad4..311438f 100644
              self.viewfinder.set_autofocus(settings.boolean("autofocus"));
              settings.connect_changed(
                  Some("autofocus"),
-@@ -400,15 +423,30 @@ mod imp {
+@@ -400,15 +431,30 @@ mod imp {
              // Inhibit idle (screen blanking and locking) the whole time the
              // viewfinder is active, not only while recording, so the display
              // does not turn off mid-capture. See GNOME/snapshot#366.
@@ -371,7 +661,7 @@ index 511fad4..311438f 100644
                  }
              });
  
-@@ -654,9 +692,22 @@ impl Camera {
+@@ -654,9 +700,22 @@ impl Camera {
          // picture would come out as overexposed as the light was late. It goes
          // out again when the picture is stored, or here if the capture never
          // starts.
@@ -395,8 +685,55 @@ index 511fad4..311438f 100644
          }
  
          if let Err(err) = imp.viewfinder.take_picture(path) {
+@@ -730,10 +789,45 @@ impl Camera {
+         }
+     }
+ 
++    /// Lights the flash, or puts it out, with a deadline on the lit state.
++    ///
++    /// ☠️ The light is put out when the picture is stored, and a capture that
++    /// never stores one would otherwise leave a torch burning indefinitely -
++    /// measured on a Fairphone 3, where a shutter press that produced no file
++    /// left the LED at full brightness until it was written by hand. That is a
++    /// battery and a heat problem, and it outlives the window it happened in.
++    /// So every lighting arms a deadline, and putting the light out cancels it;
++    /// the deadline only ever fires when nothing else did.
+     fn set_flash_lit(&self, lit: bool) {
+-        if let Some(Some(flash)) = self.imp().flash.get() {
++        let imp = self.imp();
++
++        if let Some(source) = imp.flash_timeout.take() {
++            source.remove();
++        }
++
++        if let Some(Some(flash)) = imp.flash.get() {
+             flash.set_lit(lit);
+         }
++
++        if !lit {
++            return;
++        }
++
++        let source = glib::timeout_add_local_once(
++            std::time::Duration::from_millis(FLASH_MAX_LIT_MS),
++            glib::clone!(
++                #[weak(rename_to = obj)]
++                self,
++                move || {
++                    obj.imp().flash_timeout.take();
++                    log::warn!("The capture never finished; putting the flash out");
++                    if let Some(Some(flash)) = obj.imp().flash.get() {
++                        flash.set_lit(false);
++                    }
++                }
++            ),
++        );
++        imp.flash_timeout.replace(Some(source));
+     }
+ 
+     /// Show the chosen mode on the button itself, so it does not take a menu
 diff --git a/src/widgets/camera_settings.rs b/src/widgets/camera_settings.rs
-index a7c8328..1aac408 100644
+index a7c8328..9ae72c5 100644
 --- a/src/widgets/camera_settings.rs
 +++ b/src/widgets/camera_settings.rs
 @@ -13,7 +13,7 @@ use std::collections::HashMap;
@@ -408,7 +745,32 @@ index a7c8328..1aac408 100644
  
  /// What the user is shown instead of libcamera's name, where there is a better
  /// one. Anything missing here is shown under the name the camera gave.
-@@ -101,6 +101,131 @@ pub fn resolution_row(
+@@ -47,10 +47,11 @@ fn title_for(control: &CameraControl) -> String {
+ 
+ /// A row for choosing what size the viewfinder runs at.
+ ///
+-/// The list is what this camera offers, plus an entry for letting the
+-/// application decide. Choosing a size the camera cannot actually stream is
+-/// not fatal: the viewfinder answers by looking for one that works, and writes
+-/// that back.
++/// The list is what this camera offers, plus "Automatic", which means the
++/// offered size closest to this screen - not a measurement. Measuring is the
++/// row below, and only when asked. Choosing a size the camera cannot actually
++/// stream is not fatal: the viewfinder answers by looking for one that works,
++/// and writes that back.
+ pub fn resolution_row(
+     resolutions: &[aperture::utils::Size],
+     settings: &gio::Settings,
+@@ -70,7 +71,7 @@ pub fn resolution_row(
+ 
+     let row = adw::ComboRow::new();
+     row.set_title(&gettext("Viewfinder Resolution"));
+-    row.set_subtitle(&gettext("Smaller is faster; the picture is taken at full size either way"));
++    row.set_subtitle(&gettext("Automatic follows this screen; the photo size is set separately"));
+     row.set_model(Some(&model));
+ 
+     let stored = settings.string("preview-resolution");
+@@ -101,6 +102,151 @@ pub fn resolution_row(
      Some(row)
  }
  
@@ -537,19 +899,49 @@ index a7c8328..1aac408 100644
 +    row
 +}
 +
++/// A row that measures the camera and picks the viewfinder size for you.
++///
++/// The measuring is not done at startup, because it costs a pipeline restart
++/// per size tried and several seconds of black viewfinder - acceptable when it
++/// was asked for, not when somebody has just opened a camera. So it is an
++/// action, and it writes its answer into the setting above.
++pub fn measure_resolution_row(run: impl Fn() + 'static) -> adw::ActionRow {
++    let row = adw::ActionRow::new();
++    row.set_title(&gettext("Find Best Size"));
++    row.set_subtitle(&gettext("Try sizes on this camera and keep the largest smooth one"));
++    row.set_activatable(true);
++
++    let icon = gtk::Image::from_icon_name("view-refresh-symbolic");
++    icon.add_css_class("dimmed");
++    row.add_suffix(&icon);
++
++    row.connect_activated(move |_| run());
++    row
++}
++
  /// Builds the group, or nothing if the camera has nothing to offer.
  pub fn group(
      controls: &[CameraControl],
 diff --git a/src/widgets/preferences_window.rs b/src/widgets/preferences_window.rs
-index 67d3952..030d9da 100644
+index 67d3952..90a0d3d 100644
 --- a/src/widgets/preferences_window.rs
 +++ b/src/widgets/preferences_window.rs
-@@ -123,8 +123,20 @@ impl PreferencesWindow {
+@@ -111,6 +111,7 @@ impl PreferencesWindow {
+         resolutions: &[aperture::utils::Size],
+         controls: &[aperture::CameraControl],
+         apply: impl Fn(&aperture::CameraControl, f64) + Clone + 'static,
++        measure: impl Fn() + 'static,
+     ) {
+         let settings = self.imp().settings.get().unwrap();
+ 
+@@ -123,8 +124,22 @@ impl PreferencesWindow {
          if let Some(row) = camera_settings::resolution_row(resolutions, settings) {
              /* First, because it is the one that changes what is on screen. */
              group.add(&row);
 -            self.imp().general_page.add(&group);
 -        } else if group.parent().is_none() && !resolutions.is_empty() {
++            /* Directly under it: the way to have that one filled in for you. */
++            group.add(&camera_settings::measure_resolution_row(measure));
 +        }
 +
 +        /*
@@ -566,6 +958,33 @@ index 67d3952..030d9da 100644
 +        if group.parent().is_none() && !resolutions.is_empty() {
              self.imp().general_page.add(&group);
          }
+     }
+diff --git a/src/widgets/window.rs b/src/widgets/window.rs
+index eb90e2c..1f8b30b 100644
+--- a/src/widgets/window.rs
++++ b/src/widgets/window.rs
+@@ -460,10 +460,18 @@ impl Window {
+         let preferences = crate::PreferencesWindow::new(is_recording);
+ 
+         let viewfinder = self.imp().camera.viewfinder();
+-        preferences.add_camera_controls(&viewfinder.resolutions(), &viewfinder.camera_controls(), {
+-            let viewfinder = viewfinder.clone();
+-            move |control, value| viewfinder.set_camera_control(control, value)
+-        });
++        preferences.add_camera_controls(
++            &viewfinder.resolutions(),
++            &viewfinder.camera_controls(),
++            {
++                let viewfinder = viewfinder.clone();
++                move |control, value| viewfinder.set_camera_control(control, value)
++            },
++            {
++                let viewfinder = viewfinder.clone();
++                move || viewfinder.find_best_preview_resolution()
++            },
++        );
+ 
+         preferences.present(Some(self));
      }
 -- 
 2.53.0

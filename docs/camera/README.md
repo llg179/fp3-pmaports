@@ -399,3 +399,36 @@ released whenever the viewfinder left `Ready`, which it does on every resolution
 change, so the camera handed the idle timer a window each time it did anything.
 Fixed in
 [`snapshot/0011`](../../userspace-camera/snapshot/0011-camera-resolution-and-flash-focus.patch).
+
+☠️ **A smaller viewfinder is not a cheaper one here, and the size the camera app
+picks by itself used to assume it was.** Measured 2026-08-03 through
+`pipewiresrc` with the start-up cost removed — each size run for a small and a
+large number of buffers, the rate taken as the slope, so the fixed pipeline
+start does not inflate the small sizes:
+
+| preview size | fps |
+|---|---|
+| 160×120 | 21.6 |
+| 320×240 | 22.9 |
+| 640×480 | 22.4 |
+| 800×600 | 23.1 |
+| 1280×720 | 22.1 |
+| **1920×1080** | **21.0 – 23.0** (n=4) |
+| **2160×1080** | **18.4 – 19.3** (n=3) |
+| 2560×1440 | 16.5 – 16.9 |
+| 3840×2400 | 6.6 |
+
+Everything from 160×120 to 1920×1080 is the same rate to within the spread,
+because what costs the time is reading the sensor out and running the software
+ISP over its full 4032×3024 frame — neither of which the preview size changes.
+Only the top of the range costs frames. A search for the *smallest* size that
+streams therefore ended on 160×120 and bought nothing at all; the useful
+question is how large it can go and still keep up.
+
+☠️ **The screen-matched default lands just under that on this phone.** The panel
+is 1080×2160 = 2 332 800 pixels and the camera offers 2160×1080, which is the
+same pixel count exactly — so the first-run default is an exact match rather
+than an approximation. It measures 18.4–19.3 fps against 21.0–23.0 for
+1920×1080: a real difference, though only about twice the spread, so it is a
+close call rather than a clear one. *Find Best Size* in the preferences moves it
+to 1920×1080; the default stays where the screen is.
