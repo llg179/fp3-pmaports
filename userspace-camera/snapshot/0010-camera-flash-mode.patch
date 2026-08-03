@@ -1,0 +1,469 @@
+From d1097db99dbb0d759f66d3f51df4fa40f5c7440d Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Lajosh=C3=A1zi=2C=20L=C3=A1szl=C3=B3=20Gergely?=
+ <lajoshazilg@gmail.com>
+Date: Mon, 3 Aug 2026 05:40:10 +0200
+Subject: [PATCH] camera: choose when the flash fires
+
+Snapshot has no flash control at all, so a phone with a camera flash
+carries a lamp its camera app cannot switch on. Add the three modes a
+camera app is expected to offer - off, automatic, always - as a menu
+button beside the countdown one, backed by a setting so the choice
+survives a restart.
+
+The flash is driven as a torch through the kernel's LED flash class,
+found by looking for the flash class's own attributes rather than by
+name, so this is not tied to one device: a machine with no flash, or one
+whose LED is not writable, shows no button instead of a button that
+does nothing.
+
+Two things are deliberate. The light comes on 600 ms before the capture
+rather than with it, because the exposure loop has to be given time to
+answer it - a torch lit at the instant the shutter runs is metered as
+though it were not there. And the automatic mode reads the ambient light
+sensor rather than the viewfinder's own brightness: automatic exposure
+holds that near mid-grey whether the room is lit or not, so measuring it
+would measure the exposure loop. The signal that would really describe
+the frame is the exposure time and gain the algorithm settled on, and
+libcamera does not publish those back through PipeWire.
+
+The countdown slot in the layouts becomes a two-button box and is
+renamed accordingly, so all four layouts place both buttons without
+each having to name them.
+---
+ data/org.gnome.Snapshot.gschema.xml.in |  10 ++
+ data/resources/ui/camera.ui            |  67 +++++++++---
+ src/flash.rs                           | 138 +++++++++++++++++++++++++
+ src/main.rs                            |   1 +
+ src/widgets/camera.rs                  |  63 ++++++++++-
+ src/widgets/window.rs                  |  13 +++
+ 6 files changed, 278 insertions(+), 14 deletions(-)
+ create mode 100644 src/flash.rs
+
+diff --git a/data/org.gnome.Snapshot.gschema.xml.in b/data/org.gnome.Snapshot.gschema.xml.in
+index 14a8f8f..284864b 100644
+--- a/data/org.gnome.Snapshot.gschema.xml.in
++++ b/data/org.gnome.Snapshot.gschema.xml.in
+@@ -64,6 +64,16 @@
+       <summary>Countdown timer</summary>
+       <description>The duration of the countdown for taking photos, in seconds</description>
+     </key>
++    <key name="flash-mode" type="s">
++      <default>"off"</default>
++      <choices>
++        <choice value="off"/>
++        <choice value="auto"/>
++        <choice value="on"/>
++      </choices>
++      <summary>Flash mode</summary>
++      <description>Whether to light the camera flash when taking a picture: never, only when the scene is dark, or every time</description>
++    </key>
+     <key name="capture-mode" enum="org.gnome.Snapshot.CaptureMode">
+       <default>"picture"</default>
+       <summary>Capture mode</summary>
+diff --git a/data/resources/ui/camera.ui b/data/resources/ui/camera.ui
+index fcaf293..94d5e39 100644
+--- a/data/resources/ui/camera.ui
++++ b/data/resources/ui/camera.ui
+@@ -137,17 +137,38 @@
+                         </child>
+                         <child type="overlay">
+                           <object class="AdwMultiLayoutView" id="multi_layout_view">
+-                            <child type="countdown-button">
+-                              <object class="GtkMenuButton">
+-                                <property name="menu-model">countdown_menu</property>
+-                                <property name="icon-name">camera-timer-symbolic</property>
++                            <child type="top-buttons">
++                              <object class="GtkBox">
++                                <property name="orientation">horizontal</property>
++                                <property name="spacing">6</property>
+                                 <property name="valign">center</property>
+                                 <property name="halign">center</property>
+-                                <property name="tooltip-text" translatable="yes">Countdown</property>
+-                                <style>
+-                                  <class name="circular" />
+-                                  <class name="flat" />
+-                                </style>
++                                <child>
++                                  <object class="GtkMenuButton" id="flash_button">
++                                    <property name="menu-model">flash_menu</property>
++                                    <property name="icon-name">thunderbolt-symbolic</property>
++                                    <property name="valign">center</property>
++                                    <property name="halign">center</property>
++                                    <property name="tooltip-text" translatable="yes">Flash</property>
++                                    <style>
++                                      <class name="circular" />
++                                      <class name="flat" />
++                                    </style>
++                                  </object>
++                                </child>
++                                <child>
++                                  <object class="GtkMenuButton">
++                                    <property name="menu-model">countdown_menu</property>
++                                    <property name="icon-name">camera-timer-symbolic</property>
++                                    <property name="valign">center</property>
++                                    <property name="halign">center</property>
++                                    <property name="tooltip-text" translatable="yes">Countdown</property>
++                                    <style>
++                                      <class name="circular" />
++                                      <class name="flat" />
++                                    </style>
++                                  </object>
++                                </child>
+                               </object>
+                             </child>
+                             <child type="primary-menu">
+@@ -270,7 +291,7 @@
+                                         </child>
+                                         <child type="end">
+                                           <object class="AdwLayoutSlot">
+-                                            <property name="id">countdown-button</property>
++                                            <property name="id">top-buttons</property>
+                                           </object>
+                                         </child>
+                                       </object>
+@@ -327,7 +348,7 @@
+                                         </child>
+                                         <child type="end">
+                                           <object class="AdwLayoutSlot">
+-                                            <property name="id">countdown-button</property>
++                                            <property name="id">top-buttons</property>
+                                           </object>
+                                         </child>
+                                       </object>
+@@ -420,7 +441,7 @@
+                                         </style>
+                                         <child type="start">
+                                           <object class="AdwLayoutSlot">
+-                                            <property name="id">countdown-button</property>
++                                            <property name="id">top-buttons</property>
+                                           </object>
+                                         </child>
+                                         <child type="center">
+@@ -466,7 +487,7 @@
+                                             </child>
+                                             <child>
+                                               <object class="AdwLayoutSlot">
+-                                                <property name="id">countdown-button</property>
++                                                <property name="id">top-buttons</property>
+                                               </object>
+                                             </child>
+                                           </object>
+@@ -581,6 +602,26 @@
+       </object>
+     </child>
+   </template>
++  <menu id="flash_menu">
++    <section>
++      <attribute name="label" translatable="yes">Flash</attribute>
++      <item>
++        <attribute name="action">win.flash-mode</attribute>
++        <attribute name="label" translatable="yes" comments="TRANSLATORS the flash never fires">Off</attribute>
++        <attribute name="target">off</attribute>
++      </item>
++      <item>
++        <attribute name="action">win.flash-mode</attribute>
++        <attribute name="label" translatable="yes" comments="TRANSLATORS the flash fires only when it is dark">Automatic</attribute>
++        <attribute name="target">auto</attribute>
++      </item>
++      <item>
++        <attribute name="action">win.flash-mode</attribute>
++        <attribute name="label" translatable="yes" comments="TRANSLATORS the flash fires for every picture">Always On</attribute>
++        <attribute name="target">on</attribute>
++      </item>
++    </section>
++  </menu>
+   <menu id="countdown_menu">
+     <section>
+       <attribute name="label" translatable="yes">Countdown</attribute>
+diff --git a/src/flash.rs b/src/flash.rs
+new file mode 100644
+index 0000000..39d2cba
+--- /dev/null
++++ b/src/flash.rs
+@@ -0,0 +1,138 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++//! The camera flash, as the kernel's LED flash class exposes it.
++//!
++//! Nothing here is specific to one phone: a flash LED is found by looking for
++//! the attributes the flash class defines rather than by name, and a device
++//! that has none simply reports no flash, which hides the button.
++//!
++//! Only the torch is used - `brightness` held on across the capture - and not
++//! `flash_strobe`. A strobe is a single timed pulse the kernel fires and the
++//! app cannot align with the moment the frame is actually read out, since the
++//! capture goes through PipeWire and GStreamer; a torch that is already lit
++//! when the shutter runs needs no such alignment.
++
++use std::path::{Path, PathBuf};
++
++const LEDS: &str = "/sys/class/leds";
++const IIO: &str = "/sys/bus/iio/devices";
++
++/// Below this many lux the scene counts as dark enough for the automatic mode
++/// to light the flash. Twilight is around 10 lux and a lit room 100-300, so
++/// this sits well inside "the lamps are off".
++const DARK_LUX: f64 = 12.0;
++
++#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
++pub enum FlashMode {
++    #[default]
++    Off,
++    Auto,
++    On,
++}
++
++impl FlashMode {
++    pub fn from_setting(value: &str) -> Self {
++        match value {
++            "auto" => Self::Auto,
++            "on" => Self::On,
++            _ => Self::Off,
++        }
++    }
++}
++
++/// A flash LED, found once and remembered.
++#[derive(Debug)]
++pub struct Flash {
++    path: PathBuf,
++    max_brightness: u32,
++}
++
++impl Flash {
++    /// The first LED that carries the flash class's own attributes.
++    ///
++    /// `flash_brightness` is what distinguishes a camera flash from the
++    /// notification LED next to it, and it is the kernel's marker rather than
++    /// a naming convention, so this does not need a list of devices.
++    pub fn find() -> Option<Self> {
++        let entries = std::fs::read_dir(LEDS).ok()?;
++        for entry in entries.flatten() {
++            let path = entry.path();
++            if !path.join("flash_brightness").exists() {
++                continue;
++            }
++            let Some(max_brightness) = read_u32(&path.join("max_brightness")) else {
++                continue;
++            };
++            if max_brightness == 0 {
++                continue;
++            }
++            return Some(Self {
++                path,
++                max_brightness,
++            });
++        }
++        None
++    }
++
++    /// Whether the LED can actually be driven from here.
++    ///
++    /// Finding the LED is not the same as being allowed to write it: the
++    /// attribute belongs to root unless a udev rule hands it to the seat. The
++    /// button is only worth showing if a write would land.
++    pub fn is_writable(&self) -> bool {
++        std::fs::OpenOptions::new()
++            .write(true)
++            .open(self.path.join("brightness"))
++            .is_ok()
++    }
++
++    pub fn set_lit(&self, lit: bool) {
++        let value = if lit { self.max_brightness } else { 0 };
++        if let Err(err) = std::fs::write(self.path.join("brightness"), value.to_string()) {
++            log::warn!("Could not set the flash brightness: {err}");
++        }
++    }
++
++    /// Whether this mode wants the flash lit for the shot about to be taken.
++    pub fn wants_light(&self, mode: FlashMode) -> bool {
++        match mode {
++            FlashMode::Off => false,
++            FlashMode::On => true,
++            FlashMode::Auto => match ambient_lux() {
++                Some(lux) => lux < DARK_LUX,
++                // Without a light sensor the automatic mode has nothing to
++                // decide on, and firing a flash nobody asked for is the worse
++                // of the two mistakes.
++                None => false,
++            },
++        }
++    }
++}
++
++/// The ambient light, in lux, from whichever IIO device reports it.
++///
++/// ☠️ This measures the light falling on the *phone*, not on what the camera is
++/// pointed at - the sensor sits by the earpiece, facing the user. It is used
++/// here because it is the one brightness signal that is independent of the
++/// camera: the viewfinder's own brightness is held near mid-grey by automatic
++/// exposure, so reading it would measure the exposure loop rather than the
++/// scene. The signal that would actually describe the frame is the exposure
++/// time and gain the algorithm settled on, and libcamera does not publish
++/// those back through PipeWire.
++fn ambient_lux() -> Option<f64> {
++    let entries = std::fs::read_dir(IIO).ok()?;
++    for entry in entries.flatten() {
++        let file = entry.path().join("in_illuminance_input");
++        if let Some(value) = read_number(&file) {
++            return Some(value);
++        }
++    }
++    None
++}
++
++fn read_number(path: &Path) -> Option<f64> {
++    std::fs::read_to_string(path).ok()?.trim().parse().ok()
++}
++
++fn read_u32(path: &Path) -> Option<u32> {
++    std::fs::read_to_string(path).ok()?.trim().parse().ok()
++}
+diff --git a/src/main.rs b/src/main.rs
+index 302bb1d..53044d4 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -3,6 +3,7 @@
+ mod config;
+ mod application;
+ mod enums;
++mod flash;
+ mod utils;
+ mod widgets;
+ 
+diff --git a/src/widgets/camera.rs b/src/widgets/camera.rs
+index 24cbc95..511fad4 100644
+--- a/src/widgets/camera.rs
++++ b/src/widgets/camera.rs
+@@ -36,6 +36,10 @@ mod imp {
+         pub recording_source: RefCell<Option<glib::source::SourceId>>,
+         pub zoom_source: RefCell<Option<glib::source::SourceId>>,
+ 
++        /// The camera flash, if this device has one that can be driven from
++        /// here. Looked up once: the LED does not come and go.
++        pub flash: OnceCell<Option<crate::flash::Flash>>,
++
+         #[property(get, set = Self::set_capture_mode, explicit_notify, default)]
+         capture_mode: Cell<crate::CaptureMode>,
+ 
+@@ -68,6 +72,9 @@ mod imp {
+         #[template_child]
+         pub guidelines: TemplateChild<crate::GuidelinesBin>,
+ 
++        #[template_child]
++        pub flash_button: TemplateChild<gtk::MenuButton>,
++
+         #[template_child]
+         pub camera_controls: TemplateChild<crate::CameraControls>,
+ 
+@@ -486,6 +493,13 @@ mod imp {
+                     }
+                 }
+             ));
++
++            // A device without a flash, or one whose LED we may not write,
++            // gets no button rather than a button that does nothing.
++            let flash = crate::flash::Flash::find().filter(|flash| flash.is_writable());
++            self.flash_button.set_visible(flash.is_some());
++            let _ = self.flash.set(flash);
++            obj.update_flash_button();
+         }
+     }
+ 
+@@ -634,7 +648,21 @@ impl Camera {
+         let filename = utils::picture_file_name(format);
+         let path = utils::pictures_dir()?.join(filename);
+ 
+-        imp.viewfinder.take_picture(path)?;
++        // Light the flash before the capture, not with it, and give the
++        // exposure loop time to answer: a torch switched on at the instant the
++        // shutter runs would be metered as though it were not there, and the
++        // picture would come out as overexposed as the light was late. It goes
++        // out again when the picture is stored, or here if the capture never
++        // starts.
++        if self.flash_wants_light() {
++            self.set_flash_lit(true);
++            glib::timeout_future(std::time::Duration::from_millis(600)).await;
++        }
++
++        if let Err(err) = imp.viewfinder.take_picture(path) {
++            self.set_flash_lit(false);
++            return Err(err.into());
++        }
+         imp.flash_bin.flash();
+ 
+         let settings = imp.settings();
+@@ -689,6 +717,38 @@ impl Camera {
+         self.imp().players.replace(Some(player));
+     }
+ 
++    /// The flash mode the user has chosen, from the setting the menu drives.
++    fn flash_mode(&self) -> crate::flash::FlashMode {
++        crate::flash::FlashMode::from_setting(&self.imp().settings().string("flash-mode"))
++    }
++
++    /// Whether the flash should be lit for the picture about to be taken.
++    fn flash_wants_light(&self) -> bool {
++        match self.imp().flash.get() {
++            Some(Some(flash)) => flash.wants_light(self.flash_mode()),
++            _ => false,
++        }
++    }
++
++    fn set_flash_lit(&self, lit: bool) {
++        if let Some(Some(flash)) = self.imp().flash.get() {
++            flash.set_lit(lit);
++        }
++    }
++
++    /// Show the chosen mode on the button itself, so it does not take a menu
++    /// to find out whether the flash is about to fire.
++    pub fn update_flash_button(&self) {
++        let button = &self.imp().flash_button;
++        button.remove_css_class("accent");
++        button.remove_css_class("dimmed");
++        match self.flash_mode() {
++            crate::flash::FlashMode::Off => button.add_css_class("dimmed"),
++            crate::flash::FlashMode::On => button.add_css_class("accent"),
++            crate::flash::FlashMode::Auto => (),
++        }
++    }
++
+     pub fn set_countdown(&self, countdown: u32) {
+         self.imp().camera_controls.set_countdown(countdown);
+     }
+@@ -736,6 +796,7 @@ impl Camera {
+             self,
+             move |_, file| {
+                 let window = obj.root().and_downcast::<crate::Window>().unwrap();
++                obj.set_flash_lit(false);
+                 window.set_shutter_enabled(true);
+                 // TODO Maybe report error via toast on None
+                 if let Some(file) = file {
+diff --git a/src/widgets/window.rs b/src/widgets/window.rs
+index 5299120..eb90e2c 100644
+--- a/src/widgets/window.rs
++++ b/src/widgets/window.rs
+@@ -269,6 +269,19 @@ impl Window {
+         );
+         self.add_action(&countdown_action);
+ 
++        // The flash mode is only ever read when a picture is taken, so there
++        // is nothing to react to here - the setting is the state.
++        let flash_mode_action = imp.settings.create_action("flash-mode");
++        self.add_action(&flash_mode_action);
++        imp.settings.connect_changed(
++            Some("flash-mode"),
++            glib::clone!(
++                #[weak(rename_to = window)]
++                self,
++                move |_, _| window.imp().camera.update_flash_button()
++            ),
++        );
++
+         imp.camera.connect_capture_mode_notify(glib::clone!(
+             #[weak(rename_to = window)]
+             self,
+-- 
+2.53.0
+

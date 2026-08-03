@@ -32,6 +32,7 @@ kind, and both are written to be offered upstream.
 | [`snapshot/0007-camera-only-set-controls-that-exist.patch`](snapshot/0007-camera-only-set-controls-that-exist.patch) | never writes a control the camera does not publish |
 | [`snapshot/0008-camera-pan-the-zoomed-viewfinder.patch`](snapshot/0008-camera-pan-the-zoomed-viewfinder.patch) | **aims the zoom**: drag the viewfinder to move the framed window. Moves the zoom off camerabin's centre-only crop onto a `videocrop` inside the source bin, upstream of the tee, so the still and the video are cropped exactly as framed |
 | [`snapshot/0009-gallery-zoom-and-pan.patch`](snapshot/0009-gallery-zoom-and-pan.patch) | **zoom and pan in the viewer**: pinch, scroll or double tap a saved picture and drag it around, so a shot can be checked for sharpness without leaving the app. Claims the drag only while magnified, leaving the gallery's swipe intact at fit size |
+| [`snapshot/0010-camera-flash-mode.patch`](snapshot/0010-camera-flash-mode.patch) | **the flash**, which Snapshot has no control for at all: off, automatic and always, as a menu button beside the countdown one. Driven as a torch through the kernel's LED flash class, found by the class's own attributes rather than by name, so a machine without one shows no button. The light comes on 600 ms **before** the capture, because a torch lit with the shutter is metered as though it were not there |
 
 They are applied by the `libcamera` and `snapshot` aports in the pmaports
 checkout; the copies here are the source of truth for this port.
