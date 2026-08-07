@@ -101,10 +101,40 @@ story.
 Three changes, in the order they were found. The register-level detail is in
 [Part II](#11-the-three-fixes-in-detail); here is what each one was.
 
-![The audio path on a Fairphone 3, and the three changes that fixed it: an undocumented bit in the
-ADSP control block, a misspelled pin-state name that meant the codec's clock never physically
-arrived, and a digital gain sitting at zero on a mixer branch nobody would think to look
-at.](signal-chain.jpg)
+```mermaid
+flowchart LR
+    AP["Application processor<br/>running mainline Linux"]
+    ADSP["ADSP<br/>separate audio co-processor<br/>signed firmware<br/>runs the SLIMbus framer"]
+    CODEC["WCD9335<br/>the audio codec"]
+    OUT["Earpiece, microphones,<br/>headphone jack<br/>silent for four years"]
+    PMIC["Power-management chip<br/>one pin carries the codec's<br/>master clock, MCLK"]
+    AMP["Amplifier<br/>on a much simpler bus"]
+    SPK["Loudspeaker<br/>worked all along, so the<br/>phone could at least ring"]
+
+    AP -- QMI --> ADSP
+    ADSP -- SLIMbus --> CODEC
+    CODEC --> OUT
+    PMIC -- MCLK --> CODEC
+    AP -- MI2S --> AMP
+    AMP --> SPK
+
+    F1["Fix 1 - one undocumented bit<br/>0x10b to 0x103, at the right moment"]
+    F2["Fix 2 - one misspelled word<br/>pin state active renamed to default"]
+    F3["Fix 3 - a gain nobody would guess<br/>RX1/RX2 Mix Digital Volume off zero"]
+    F1 -.-> ADSP
+    F2 -.-> PMIC
+    F3 -.-> CODEC
+
+    classDef fix fill:#fff4ed,stroke:#c2410c,color:#7c2d12
+    classDef dead fill:#fdecec,stroke:#b91c1c,color:#7f1d1d
+    classDef ok fill:#e8f5ec,stroke:#15803d,color:#14532d
+    class F1,F2,F3 fix
+    class OUT dead
+    class AMP,SPK ok
+```
+
+*Where the sound goes on this phone, and where the three fixes landed. The loudspeaker never touched
+the broken path at all, which is why it worked throughout.*
 
 **Fix 1 — one bit in an undocumented register.** There is a register in the ADSP control block that
 appears in no datasheet, sitting literally between two documented ones. Its value differs between the
@@ -502,9 +532,16 @@ contributed to this project.
 
 Read the "Result" column and notice what it says.
 
-![Thirty-two investigations, shown as a grid: twenty-eight came back identical on both sides, two
-inconclusive, one differing (the symptom itself), one out of reach. Every measurement was true; the
-conclusion drawn from them was false.](thirty-two-investigations.jpg)
+```mermaid
+pie showData
+    title Thirty-two two-sided investigations
+    "Identical on both sides" : 28
+    "Inconclusive" : 2
+    "Differs - but this is the symptom, not a cause" : 1
+    "Out of reach" : 1
+```
+
+*Every one of these measurements was true. The conclusion drawn from them was false.*
 
 | # | What we examined | How | Result |
 |---|---|---|---|
