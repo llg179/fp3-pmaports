@@ -15,6 +15,11 @@ Without this, the [kernel branches](https://github.com/llg179org/linux) are only
 source: nothing records which config was used, which symbols had to be turned
 on by hand, or how the thing was actually built.
 
+**[The story of making the first phone call with mainline kernel on FP3 with a
+jacked headset](docs/first-call/README.md)** — a four-year-old bug, the three
+small things that turned out to cause it, the thirty-two measurements that
+missed them, and where the fix may go.
+
 ## The goal, and why the names have no version in them
 
 [`llg179org/linux`](https://github.com/llg179org/linux) is a **rolling forward-port**

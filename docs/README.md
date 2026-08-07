@@ -11,6 +11,10 @@ The [top-level README](../README.md) says what this repository is, how the
 branches are named and where the work may go. Everything longer than that lives
 here.
 
+If you would rather read the narrative than the reference: **[The story of
+making the first phone call with mainline kernel on FP3 with a jacked
+headset](first-call/README.md)**.
+
 ## How the device works
 
 | page | what it answers |
