@@ -7,7 +7,7 @@
 > anything prepared for the LKML carries `Assisted-by:` instead and never a
 > `Signed-off-by` from the assistant, since only a human can certify the DCO.
 
-## How a four-year-old audio bug fell to about forty lines of code — found by someone who isn't a kernel developer, mostly overnight. And what happens to a fix like this once it works.
+## Four years, thirty-two investigations that all missed it, and one confidently wrong public conclusion — then about forty lines of code, found by someone who isn't a kernel developer. And what happens to a fix like this once it works.
 
 ---
 
