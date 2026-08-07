@@ -1,4 +1,4 @@
-# Fixed After Four Years of Silence — And the Fixer Is Banned
+# The First Phone Call on a Mainline Fairphone 3
 
 > ⚠️ **AI-generated.** This page — and the code, device tree and tooling it
 > describes — was written by Claude (Opus 5) working under the direction of
