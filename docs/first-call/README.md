@@ -7,7 +7,7 @@
 > anything prepared for the LKML carries `Assisted-by:` instead and never a
 > `Signed-off-by` from the assistant, since only a human can certify the DCO.
 
-## A Linux port bug nobody could crack, solved by someone who isn't a kernel developer. The two projects closest to the phone won't take the patch.
+## How a four-year-old audio bug fell to about forty lines of code — found by someone who isn't a kernel developer, mostly overnight. And what happens to a fix like this once it works.
 
 ---
 
