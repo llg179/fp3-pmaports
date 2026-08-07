@@ -16,7 +16,7 @@
 - **The bug.** On mainline Linux, a Fairphone 3 had no earpiece, no microphone and no headphone jack. Four years, two public attempts, one unanswered mailing-list post. The loudspeaker played, so the phone could ring — but it could not take a call.
 - **The cause.** Three things, none of them where anyone was looking: an undocumented co-processor register bit left in the wrong state by the mainline boot path; a pin-configuration state with the wrong *name*, so the codec's clock was never physically switched on; and a digital gain sitting at zero on a mixer branch whose name gives no hint that it is the one that matters.
 - **The fix.** Roughly forty lines. Readable over coffee.
-- **Finding it.** Two weeks of AI work, most of it running overnight in autonomous mode while I slept.
+- **Finding it.** Two weeks of experiments, thirty-two of them documented, most running unattended overnight — and a fortnight of confidently wrong answers before the right one.
 - **The outcome.** The fix works on the device and is fully published. The downstream fork it lives on and the distribution that would ship it both decline it — not because of what it does, but because of how it was made. Mainline Linux, which has the highest bar, is the only open road.
 
 ### Highlights
