@@ -90,6 +90,7 @@ Measured on the device unless a row says otherwise.
 |---|---|
 | charging works | yes, since the charger node was enabled |
 | capacity | **integrated from the PMIC's QG fuel gauge since `r42`**, corrected against the OCV table only while the current is low — [what it was before, and why it had to change](#the-capacity-was-a-voltmeter) |
+| a finished charge reads as full | **yes since `r43`** — the completion is remembered through the inhibit that follows it, instead of being caught in the instant the charger passes through termination — [why the reading stopped in the low nineties](#ninety-one-percent-on-a-charger-that-had-finished) |
 | battery current and open-circuit voltage | **reported since `r42`** — `current_now` and `voltage_ocv` on `pmi632-battery`, both from the QG peripheral |
 | battery temperature | yes — [how, and why the curve is approximate](../kernel/README.md#battery-temperature) |
 | hardware JEITA | **running the whole time**, but on the PMIC's generic defaults until `r20` (see below) |
@@ -395,7 +396,55 @@ all above that. A poll more than a minute late means the machine was suspended,
 and a suspended phone is a rested battery — the one state where the table needs
 no correction at all — so those re-anchor outright rather than integrating a
 current nobody drew. Charge termination is taken from the charger, which knows
-that better than any gauge does.
+that better than any gauge does — but it has to be *remembered* rather than
+caught, for the reason in the next section.
+
+### Ninety-one percent on a charger that had finished
+
+Measured 2026-08-08 on `r42`, on a phone that had been left on a wall charger
+and had stopped climbing. The reported capacity sat in the low nineties and the
+user interface said the charge was over, which read as a charger that gave up
+early. It was not: the charger had done everything right and the *gauge* was
+refusing to say so.
+
+| register | read | meaning |
+|---|---|---|
+| `0x1006` | `0x40` | `CC_SOFT_TERMINATE` set, status code 0 — **inhibit**, not a fault |
+| `0x1007` | `0x28` | no `BAT_OV` (that is bit 1 on SMB5) |
+| `0x100d` | `0x00` | no JEITA zone active |
+| `0x1070` | `0x4f` | float voltage 4.39 V, exactly what the device tree asks for |
+| QG `0x48c0` | | 4.3149 V at **0 mA** into the pack |
+
+Two things were wrong, and both were in the gauge.
+
+**Termination is a state the charger passes through, not one it sits in.** Once
+it has terminated, the cell is by definition above the recharge threshold, so
+the hardware moves straight to inhibit and stays there until the cable comes out
+or the voltage falls. A ten-second poll therefore has to land inside a window
+the hardware leaves as fast as it can — and even when it does, the next poll
+resumes correcting toward the OCV table at a quarter of the gap per poll, so a
+correctly latched hundred percent is walked back down within a minute.
+
+**And where it walks down to is not an error in the table.** The table's top
+entry is an OCV of 4.3756 V, which a cell held at a 4.39 V float only shows
+while it is still being held there. Let go, it settles some seventy millivolts
+lower — six percent down this curve. So a battery as full as this charger will
+ever make it reads in the mid nineties, and keeps reading that for as long as it
+stays on the cable.
+
+Since `r43` the driver remembers the completion instead of catching it. Inhibit
+on its own is not evidence of a full pack — it is equally what a charger does
+when handed a cell that was already above the threshold when the cable went in —
+but inhibit *after a charge that was actually running* is the tail of that
+charge. Tracking that pairing needs no knowledge of where the inhibit threshold
+sits, survives any polling interval, and clears itself when the input goes away
+or the charger starts charging again. The battery's status reads `Full` there
+too, which the status code alone cannot support saying.
+
+☠️ **Still open:** unplugging a full pack drops the reading to what the table
+says about a rested cell, because nothing has re-anchored the table's top to the
+OCV this pack actually rests at once full. Learning that anchor is a separate
+change and wants a charge and a discharge measured against the oracle.
 
 The gauge starts from the open-circuit voltage the PMIC measured with nothing
 drawing, rather than from a live sample taken while the machine is busy booting.

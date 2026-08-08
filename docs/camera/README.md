@@ -425,6 +425,108 @@ Only the top of the range costs frames. A search for the *smallest* size that
 streams therefore ended on 160×120 and bought nothing at all; the useful
 question is how large it can go and still keep up.
 
+### Why the sensor is always read out whole, and what it costs
+
+Measured 2026-08-08 on `linux-fp3-7.1.3-r42` (`#43-fp3`) with libcamera 0.7.1.
+The section above established that the preview size buys almost no frames
+because the sensor is read out whole regardless. This is *why*, and it turns out
+the frame rate was the wrong thing to have been measuring.
+
+**The pipeline handler does try to pick the smallest sensor mode.** `simple.cpp`
+walks the pipeline configurations and takes the smallest capture size whose
+**output** size can still accommodate every stream without upscaling. The
+software ISP's output is eight pixels narrower than its input, so the 1920×1080
+sensor mode offers a maximum output of 1912×1080 — and a request for exactly
+1920×1080 does not fit in it. There is no next size up short of the full sensor,
+so the handler falls through to 4032×3024 and reads out six times as much data
+for the same picture.
+
+Eight pixels either side of that line, with the output size held constant:
+
+| requested | sensor read out | CPU burned by the pipeline |
+|---|---|---|
+| 2160×1080 | 4032×3024 | **74 %** of one core |
+| 1920×1080 | 4032×3024 | **76 %** of one core |
+| **1912×1080** | **1920×1080** | **56 %** of one core |
+| 1280×720 | 1920×1080 | 40 % of one core |
+| 640×480 | 1920×1080 | 31 % of one core |
+
+Twenty percentage points of a core for eight pixels of requested width. Both
+sizes the camera app actually uses sit on the expensive side of it: the
+screen-matched default at 2160×1080, and *Find Best Size* at 1920×1080.
+
+☠️ **Frame rate could not have found this, and a frame-rate measurement is what
+had been made.** Across that same step the rate barely moves — 24.8 fps against
+22.8 — because the small sensor mode is capped near 30 fps anyway, so the saving
+shows up as idle time rather than as frames. But a viewfinder is not the only
+thing running: what a user sees is the *compositor* competing for the same
+cores, and that is why scrolling a preferences list goes choppy at the larger
+viewfinder sizes while the viewfinder itself looks fine. **Measure the processor
+time, not the frame rate, when the complaint is about something other than the
+video.**
+
+### The input buffer is copied on every frame, and the stride is why
+
+The GPU debayers, but it does not get to read the camera's buffer directly. Once
+per session:
+
+```
+INFO SimplePipeline simple.cpp:1586 Input buffer stride ignored by the driver. Requested 5120, got 5040
+INFO Debayer debayer_egl.cpp:520 Importing input buffer with DMABuf import failed, falling back to upload
+```
+
+The fallback is sticky — one failure and every frame for the life of the process
+is uploaded by the CPU: 2.6 MB per frame in the 1920×1080 sensor mode, 15.2 MB
+in the full one.
+
+**Ask the importer, not the allocator.** It is tempting to settle this by
+allocating a buffer and reading back the pitch GBM chose, which on this GPU pads
+a linear `R8` surface to a multiple of 64 — but what an allocator prefers and
+what an importer will accept are different questions. Importing one generously
+sized buffer repeatedly while claiming different pitches answers the second one
+directly (`egl_import_test.py` and the GBM probe in the porting skill's
+`scripts/`):
+
+| pitch claimed | | result |
+|---|---|---|
+| 2400 | 1920 mode, packed — what camss grants | **rejected**, `EGL_BAD_PARAMETER` |
+| 2432 | rounded up to 64 | imported |
+| 2560 | rounded up to 256 — what libcamera asks for | imported |
+| 5040 | 4032 mode, packed — what camss grants | **rejected**, `EGL_BAD_PARAMETER` |
+| 5056 | rounded up to 64 | imported |
+| 5120 | rounded up to 256 | imported |
+
+So the stride really is the whole of it, and **64 bytes is enough here** —
+libcamera's 256 is a deliberate superset chosen because no API exists to ask
+(`debayer_egl.cpp: info.stride(size.width, 0, 256)`).
+
+**Why camss cannot honour the request, stated precisely.** `camss-video.c`
+accepts a larger requested `bytesperline` only where `camss_video::line_based` is
+set, and `camss-vfe.c` sets that only for `VFE_LINE_PIX`. Loosening that flag
+would not be enough on its own: the write master's hardware mode is chosen
+separately, in `camss-vfe-gen1.c`, by `line->id != VFE_LINE_PIX`, and an RDI line
+is programmed through `wm_frame_based()` — which sets one bit and programs
+neither `WR_IMAGE_SIZE` nor `WR_BUFFER_CFG`. In frame-based mode there is no
+per-line stride for the hardware to pad with; the master writes the frame as one
+continuous run. The pair of registers that *does* express a stride —
+`WR_IMAGE_SIZE` carrying the words per line of actual data and `WR_BUFFER_CFG`
+the words per line of the buffer — is written only by `wm_line_based()`, whose
+words-per-line helper has cases for the YUV formats and none for raw Bayer.
+
+Making an RDI output honour a padded stride therefore means converting it to
+line-based write-master programming and teaching that helper about raw formats.
+Nothing upstream does this: the gen2 write master (`camss-vfe-17x.c`) reaches the
+same conclusion from the other end, writing a constant `WM_STRIDE_DEFAULT_STRIDE`
+under a comment that says *Configure stride for RDIs*. That makes it a change
+with no reference implementation to check against, which is why it has not been
+attempted here — see [FP3-TODO](../FP3-TODO.md).
+
+The saving it would buy is bounded by the table above: the readout step costs
+20 points of a core for 12.6 MB per frame of extra upload, so removing the
+remaining 2.6 MB per frame in the small sensor mode is worth roughly four, and
+the full mode's 15.2 MB roughly twenty-four. **Asking for 1912 pixels instead of
+1920 is the larger lever, and it needs no kernel change at all.**
+
 ☠️ **The screen-matched default lands just under that on this phone.** The panel
 is 1080×2160 = 2 332 800 pixels and the camera offers 2160×1080, which is the
 same pixel count exactly — so the first-run default is an exact match rather
