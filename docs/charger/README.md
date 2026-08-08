@@ -89,7 +89,8 @@ Measured on the device unless a row says otherwise.
 | | state |
 |---|---|
 | charging works | yes, since the charger node was enabled |
-| capacity | from the OCV table; no coulomb counter exists for this PMIC in mainline |
+| capacity | **integrated from the PMIC's QG fuel gauge since `r38`**, corrected against the OCV table only while the current is low — [what it was before, and why it had to change](#the-capacity-was-a-voltmeter) |
+| battery current and open-circuit voltage | **reported since `r38`** — `current_now` and `voltage_ocv` on `pmi632-battery`, both from the QG peripheral |
 | battery temperature | yes — [how, and why the curve is approximate](../kernel/README.md#battery-temperature) |
 | hardware JEITA | **running the whole time**, but on the PMIC's generic defaults until `r20` (see below) |
 | JEITA thresholds from this pack's characterisation | **programmed and read back**: soft `22 04 44 ff`, hard `19 87 56 75` — byte-identical to what the stock stack programs |
@@ -281,6 +282,89 @@ stack runs at, for a different and simpler reason.
 Downstream also registers the charger as a cooling device — `cooling_device9`,
 type `battery`, `max_state 6` for its six-entry mitigation table — driven by its
 thermal daemon rather than by a thermal zone.
+
+## The capacity was a voltmeter
+
+Until `r38` the reported capacity was the battery's terminal voltage looked up
+in the `ocv-capacity-table-0` of the battery node. That table is the downstream
+QG profile and it is correct — but it maps an **open-circuit** voltage, and a
+phone's terminal voltage is nothing like one. It also spends eighteen points of
+charge on the forty millivolts between 3.80 V and 3.84 V, so a small voltage
+error is a large capacity error exactly where the battery spends most of its
+life.
+
+Measured on 2026-08-08 against the oracle slot, alternating between the two on
+the same charge and the same cable:
+
+| | this port, before `r38` | stock (UT / 4.9, `qpnp-qg`) |
+|---|---|---|
+| at rest, charging at ~380 mA | 59–65 % | **55–57 %** |
+| terminal voltage, same moment | 3.96 V | 3.96 V |
+| after 3 min of eight-thread `sha256sum` | **6 %** | **57 %** |
+| terminal voltage under that load | 3.72 V | 3.64 V |
+
+Two things fall out of that pair of columns. The terminal voltages agree to
+within 1.3 mV, so nothing is wrong with the measurement — and the stock gauge
+does not move *at all* across a 330 mV swing, so it is plainly not reading the
+terminal voltage either. It coulomb-counts, and anchors to an open-circuit
+voltage only when the current is near zero.
+
+That also rules out the obvious cheap fix. Fitting a resistance to the load step
+gives ~380–420 mΩ on **both** systems, while the pack's actual internal
+resistance is 118–166 mΩ; the rest is the difference between a bursty load and
+an averaged current sample. Subtracting `I·R` from a heavily loaded terminal
+voltage does not recover the open-circuit one, and a resistance large enough to
+make it look like it did would be wrong everywhere else.
+
+### What the PMIC already had
+
+The PMI632's QG peripheral sits at `0x4800` on the same SPMI slave as the
+charger, and it is **already running under mainline** — the PMIC's own boot
+sequence starts it, so nothing here has to configure it. That is worth stating
+plainly because the earlier note in this file that "no coulomb counter exists
+for this PMIC in mainline" was about the absence of a *driver*, and was read as
+the absence of the hardware.
+
+Read-only, and confirmed live on this phone before any driver change, through
+the regmap debugfs (9 bytes per line, so the offset is the address times nine):
+
+```
+dd if=/sys/kernel/debug/regmap/0-02/registers bs=9 skip=$((0x48c0)) count=4
+```
+
+| register | what it holds |
+|---|---|
+| `0x48c0` `LAST_ADC_V` | battery voltage, 194.637 nV per LSB |
+| `0x48c2` `LAST_ADC_I` | battery current, signed, 152.588 nA per LSB, negative into the battery |
+| `0x4870` `S7_PON_OCV` | open-circuit voltage measured at power-on, before anything drew |
+| `0x4874` `S3_GOOD_OCV` | open-circuit voltage measured whenever the PMIC has seen the current near zero long enough |
+| `0x4888` … `0x488e` | hardware accumulators: summed V, summed I, sample count |
+
+The controls that make those trustworthy: `LAST_ADC_V` agreed with the
+independent ADC5 `vbat_sns` channel to within 1.3 mV, it followed the load step
+within one sample period, and `LAST_ADC_I` changed sign at the charge-to-
+discharge crossing.
+
+### What the driver does now
+
+`qcom_smbx` carries the gauge base per PMIC variant (`smb_variant.qg_base`),
+polls the voltage/current pair every ten seconds, and integrates it. The OCV
+table is still the reference, but it is only consulted as a correction, weighted
+by how quiet the current is: strongly below 50 mA, weakly below 150 mA, not at
+all above that. A poll more than a minute late means the machine was suspended,
+and a suspended phone is a rested battery — the one state where the table needs
+no correction at all — so those re-anchor outright rather than integrating a
+current nobody drew. Charge termination is taken from the charger, which knows
+that better than any gauge does.
+
+The gauge starts from the open-circuit voltage the PMIC measured with nothing
+drawing, rather than from a live sample taken while the machine is busy booting.
+
+The IR correction needs a resistance, which the board supplies as
+`factory-internal-resistance-micro-ohms`; this phone declares 120 mΩ, what the
+PMIC's own ESR measurement reports while the vendor stack runs it. Because the
+correction is only ever applied at low current, the choice between that and the
+profile's 166 mΩ is worth a few millivolts.
 
 ## Why 2 A, and what the ceilings would be on the other pack
 
@@ -510,6 +594,21 @@ were fixed on 2026-07-30.
 
 ## Known gaps
 
+* **The gauge has no learned capacity and no cycle counting.** It integrates
+  against `charge-full-design-microamp-hours`, so an aged pack reads optimistic
+  by however much it has faded. The PMIC's SDAM keeps a learned capacity and a
+  cycle-count table that the vendor stack maintains; nothing here writes or
+  reads them.
+* **State of charge does not survive a reboot.** It is re-seeded from the PMIC's
+  own power-on open-circuit measurement each boot, which is a good seed but not
+  a continuation — the SDAM slot that would carry it across (`0xb147`, still
+  holding whatever the vendor stack last wrote) is not read. Writing it would
+  also make the two stacks agree across a slot switch.
+* **`current_now` on `pmi632-charger` disagrees with the input current.** It
+  reports about 199 mA where the vendor stack reports 499 mA for the same
+  supply, and where the QG says 300–390 mA is reaching the battery — which
+  199 mA of input cannot deliver. The `usb_in_i` scaling is the suspect; this is
+  a separate measurement and is not fixed.
 * **No high-voltage negotiation**, so the input side caps the whole thing near
   1.9 A into the cell — just under the 2 A the charger is now programmed for.
   This is the next thing worth doing on this side, and it is a piece of work in
