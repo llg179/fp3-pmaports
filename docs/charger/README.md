@@ -482,6 +482,24 @@ program `CHGR_ADC_RECHARGE_THRESHOLD_MSB/LSB` from a new
 units the gauge reports, because it is the same ADC. This phone declares
 4.30 V, which is what its own downstream node asks for.
 
+**Measured after the change**, as a controlled A/B: the same load, driving the
+pack through the same voltage range, with only the recharge field different.
+
+| | charger status under load, at ~4.13 V |
+|---|---|
+| before | 147 consecutive samples of status code 0 — inhibit, `Not charging` |
+| after | status code 3, **`FULLON_CHARGE`**, post-JEITA current `0x28` (2 A), `Charging` |
+
+With the load removed the gauge measured **+302 to +371 mA into the pack** and
+the terminal voltage climbed past 4.40 V — the first current the battery had
+accepted all afternoon.
+
+Read back after the fix: `CHGR_CFG2 = 0x05` (VBAT recharge + inhibit),
+`CHGR_NO_SAMPLE_TERM_RCHG_CFG = 0x0f` (three samples), and the threshold
+registers at `0x544a` = 4.199 V — which is the PMIC's own power-on value, still
+in place because this test swapped only the module and the 4.30 V from the
+device tree needs the new DTB.
+
 ☠️ **A wrong register was written first, and the phone said so.** The same fix
 was attempted one revision earlier against `FG_UPDATE_CFG_2_SEL`, which is what
 the SMB2 half of the driver uses for this — but that is `CHGR + 0x7D`, and on
