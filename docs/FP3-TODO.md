@@ -689,6 +689,26 @@ payloads onto a fresh branch off `integration/7.1.3`: same tree object as
       "https://github.com/llg179org/linux/archive/<_commit>.tar.gz"   # 302, not 404
     ```
 
+33. **The camera app's *Find Best Size* measures the wrong quantity.** It
+    bisects the offered sizes and keeps the largest that still delivers frames —
+    but on this phone the step that matters is invisible to a frame-rate probe.
+    Asking for 1920x1080 rather than 1912x1080 makes libcamera read out the full
+    4032x3024 sensor instead of the 1920x1080 mode, which costs twenty
+    percentage points of a core while the frame rate moves by two. Both sizes
+    the app settles on today — the screen-matched 2160x1080 default and the
+    1920x1080 the search picks — sit on the expensive side. What should replace
+    the frame-rate criterion is the open question; the measurements are in
+    [`camera/README.md`](camera/README.md#why-the-sensor-is-always-read-out-whole-and-what-it-costs).
+
+34. **camss cannot pad an RDI line, so the GPU copies every input frame.** The
+    dmabuf import is rejected purely on stride (measured at the importer: packed
+    2400/5040 rejected, 64-aligned 2432/5056 accepted), and the fallback is
+    sticky for the life of the process. Fixing it means programming the RDI
+    write master line-based and teaching its words-per-line helper about raw
+    Bayer — a change with no upstream reference in either VFE generation. Worth
+    about four points of a core in the small sensor mode and twenty-four in the
+    full one, i.e. less than item 33 and much more work.
+
 ## The `vendor/*` and `archive/*` namespaces
 
 Neither is a base and neither is ever pruned when a base is rolled.
