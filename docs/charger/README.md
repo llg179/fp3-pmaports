@@ -296,7 +296,7 @@ life.
 Measured on 2026-08-08 against the oracle slot, alternating between the two on
 the same charge and the same cable:
 
-| | this port, before `r38` | stock (UT / 4.9, `qpnp-qg`) |
+| | this port, before the change | stock (UT / 4.9, `qpnp-qg`) |
 |---|---|---|
 | at rest, charging at ~380 mA | 59–65 % | **55–57 %** |
 | terminal voltage, same moment | 3.96 V | 3.96 V |
@@ -315,6 +315,29 @@ resistance is 118–166 mΩ; the rest is the difference between a bursty load an
 an averaged current sample. Subtracting `I·R` from a heavily loaded terminal
 voltage does not recover the open-circuit one, and a resistance large enough to
 make it look like it did would be wrong everywhere else.
+
+### What it reads now, measured the same way
+
+Same phone, same protocol, after the change — the load step is the one
+`52-fuel-gauge` runs, and the oracle reading is 80 seconds after the pmOS one
+with the phone charging throughout:
+
+| | this port, after | stock, same charge |
+|---|---|---|
+| at rest, charging at ~360 mA | 82 % | **85 %** |
+| across a 30 s eight-thread burn | **82 % → 82 %** | (not re-run; it held 57 % before) |
+| terminal voltage across that burn | 4.229 V → 3.995 V | — |
+| battery current across it | +343 mA → −277 mA | — |
+
+So the load sensitivity is gone outright: 233 mV of sag moved the reported
+capacity by zero points, where the same step used to move it by tens. What
+remains is a standing offset of about three points against the oracle, and the
+likeliest source is the seed — the gauge starts from the PMIC's power-on
+open-circuit measurement and integrates from there, so a seed a few points low
+stays a few points low until something anchors it. That is a measurement to
+make, not a conclusion: it has not been separated from the other candidates
+(the pack's aging, which nothing here tracks, or the OCV correction being
+optimistic at a steady third of an amp).
 
 ### What the PMIC already had
 
