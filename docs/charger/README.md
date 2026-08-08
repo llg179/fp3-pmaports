@@ -89,8 +89,8 @@ Measured on the device unless a row says otherwise.
 | | state |
 |---|---|
 | charging works | yes, since the charger node was enabled |
-| capacity | **integrated from the PMIC's QG fuel gauge since `r38`**, corrected against the OCV table only while the current is low — [what it was before, and why it had to change](#the-capacity-was-a-voltmeter) |
-| battery current and open-circuit voltage | **reported since `r38`** — `current_now` and `voltage_ocv` on `pmi632-battery`, both from the QG peripheral |
+| capacity | **integrated from the PMIC's QG fuel gauge since `r42`**, corrected against the OCV table only while the current is low — [what it was before, and why it had to change](#the-capacity-was-a-voltmeter) |
+| battery current and open-circuit voltage | **reported since `r42`** — `current_now` and `voltage_ocv` on `pmi632-battery`, both from the QG peripheral |
 | battery temperature | yes — [how, and why the curve is approximate](../kernel/README.md#battery-temperature) |
 | hardware JEITA | **running the whole time**, but on the PMIC's generic defaults until `r20` (see below) |
 | JEITA thresholds from this pack's characterisation | **programmed and read back**: soft `22 04 44 ff`, hard `19 87 56 75` — byte-identical to what the stock stack programs |
@@ -285,7 +285,7 @@ thermal daemon rather than by a thermal zone.
 
 ## The capacity was a voltmeter
 
-Until `r38` the reported capacity was the battery's terminal voltage looked up
+Until `r42` the reported capacity was the battery's terminal voltage looked up
 in the `ocv-capacity-table-0` of the battery node. That table is the downstream
 QG profile and it is correct — but it maps an **open-circuit** voltage, and a
 phone's terminal voltage is nothing like one. It also spends eighteen points of
@@ -324,20 +324,37 @@ with the phone charging throughout:
 
 | | this port, after | stock, same charge |
 |---|---|---|
-| at rest, charging at ~360 mA | 82 % | **85 %** |
-| across a 30 s eight-thread burn | **82 % → 82 %** | (not re-run; it held 57 % before) |
-| terminal voltage across that burn | 4.229 V → 3.995 V | — |
-| battery current across it | +343 mA → −277 mA | — |
+| mid-charge, at ~360 mA | 82 % | **85 %** |
+| near full, in taper at ~300 mA | 90 % | **96 %** |
+| across a 30 s eight-thread burn | **90 % → 90 %** | (not re-run; it held 57 % before) |
+| terminal voltage across that burn | 4.413 V → 4.183 V | — |
+| battery current across it | +276 mA → −274 mA | — |
 
-So the load sensitivity is gone outright: 233 mV of sag moved the reported
-capacity by zero points, where the same step used to move it by tens. What
-remains is a standing offset of about three points against the oracle, and the
-likeliest source is the seed — the gauge starts from the PMIC's power-on
-open-circuit measurement and integrates from there, so a seed a few points low
-stays a few points low until something anchors it. That is a measurement to
-make, not a conclusion: it has not been separated from the other candidates
-(the pack's aging, which nothing here tracks, or the OCV correction being
-optimistic at a steady third of an amp).
+The load sensitivity is gone outright: 229 mV of sag moves the reported capacity
+by zero points, where the same step used to move it by tens. Each oracle reading
+above is 60–90 s after the pmOS one it sits beside, with the phone charging
+across the slot switch.
+
+**What is left is a lag, and it is worst near the top of the charge**: three
+points behind the oracle mid-charge, six near full. The cause is visible in the
+gauge's own numbers — near full it reported 90 % while its *own* open-circuit
+estimate put the pack at 98 %, so the integral is drifting and the correction
+that would catch it is switched off. It is switched off because the gate is on
+current, and this phone charges at about 300 mA the whole way, which is above
+the 150 mA band.
+
+The gate is on the wrong quantity. What decides whether an OCV reading is worth
+anything is not the current but **how much a millivolt of error in it costs**,
+and that varies enormously along this curve: forty millivolts covers eighteen
+points of charge in the flat middle and about two at either end. So the same IR
+uncertainty that makes the OCV useless at 30 % makes it perfectly usable at
+95 %. Evaluating the table at both ends of a plausible resistance range and
+trusting the OCV whenever the two agree would gate on exactly that, and would
+need no current threshold at all.
+
+That is the next change, and it is deliberately not made here: settling its one
+threshold honestly needs a full charge and discharge measured against the
+oracle, not the handful of points above.
 
 ### What the PMIC already had
 
@@ -617,6 +634,13 @@ were fixed on 2026-07-30.
 
 ## Known gaps
 
+* **The charge status was wrong at both ends of a charge until `r41`**, and the
+  two causes are worth knowing because both are generation-dependent fields
+  that looked generation-independent: BAT_OV is bit 5 of `STATUS_2` on SMB2 and
+  bit 1 on SMB5, and the eight `BATTERY_CHARGER_STATUS_1` codes were renumbered
+  (INHIBIT 6 -> 0, PAUSE into the vacated 6). Codes 3, 4, 5 and 7 agree, so the
+  SMB2 table read correctly through the middle of every charge. Found because
+  the phone said *Not charging* while the QG showed 300 mA going in.
 * **The gauge has no learned capacity and no cycle counting.** It integrates
   against `charge-full-design-microamp-hours`, so an aged pack reads optimistic
   by however much it has faded. The PMIC's SDAM keeps a learned capacity and a
