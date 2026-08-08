@@ -441,6 +441,13 @@ sensor mode offers a maximum output of 1912×1080 — and a request for exactly
 so the handler falls through to 4032×3024 and reads out six times as much data
 for the same picture.
 
+☠️ **The test is on both dimensions, and reading it as a width limit is a trap
+this page fell into first.** 1600×1200 is comfortably under 1912 wide and still
+takes the full readout, because 1200 is over 1080 — measured at **78 %** of a
+core against 1680×1050's 53 %, while looking like the safer choice. The usable
+rule is that the whole size must fit inside 1912×1080; on this camera's offered
+ladder the largest that does is **1680×1050**.
+
 Eight pixels either side of that line, with the output size held constant:
 
 | requested | sensor read out | CPU burned by the pipeline |
@@ -451,9 +458,26 @@ Eight pixels either side of that line, with the output size held constant:
 | 1280×720 | 1920×1080 | 40 % of one core |
 | 640×480 | 1920×1080 | 31 % of one core |
 
-Twenty percentage points of a core for eight pixels of requested width. Both
-sizes the camera app actually uses sit on the expensive side of it: the
-screen-matched default at 2160×1080, and *Find Best Size* at 1920×1080.
+Twenty percentage points of a core for eight pixels of requested width. Every
+size the camera app offers as a sensible default sits on the expensive side of
+it: the screen-matched 2160×1080, and the 1920×1080 that *Find Best Size*
+settles on.
+
+And at the top of the range what it costs is frames, not only processor time.
+Measured with the app's stored `preview-resolution` as it was actually found:
+
+| requested | sensor read out | frame rate |
+|---|---|---|
+| 3840×2400 (what the app had settled on) | 4032×3024 | **7.1 fps** |
+| 1680×1050 | 1920×1080 | **22.8 fps** |
+
+Three times the frame rate, for a viewfinder still larger than the panel, which
+is 1080×2160. A seven-frame-per-second preview *is* the choppiness, and it needs
+no rebuild to fix:
+
+```sh
+gsettings set org.gnome.Snapshot preview-resolution "1680x1050"
+```
 
 ☠️ **Frame rate could not have found this, and a frame-rate measurement is what
 had been made.** Across that same step the rate barely moves — 24.8 fps against
