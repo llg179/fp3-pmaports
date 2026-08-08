@@ -90,6 +90,7 @@ Measured on the device unless a row says otherwise.
 |---|---|
 | charging works | yes, since the charger node was enabled |
 | capacity | **integrated from the PMIC's QG fuel gauge since `r42`**, corrected against the OCV table only while the current is low — [what it was before, and why it had to change](#the-capacity-was-a-voltmeter) |
+| a finished charge is restarted when the pack falls back | **yes since `r45`** — before that the SMB5 recharge field was left clear, so a charge that terminated never began again while the cable stayed in — [the measurement](#and-the-charger-really-had-stopped--a-recharge-that-could-never-happen) |
 | a finished charge reads as full | **yes since `r43`** — the completion is remembered through the inhibit that follows it, instead of being caught in the instant the charger passes through termination — [why the reading stopped in the low nineties](#ninety-one-percent-on-a-charger-that-had-finished) |
 | battery current and open-circuit voltage | **reported since `r42`** — `current_now` and `voltage_ocv` on `pmi632-battery`, both from the QG peripheral |
 | battery temperature | yes — [how, and why the curve is approximate](../kernel/README.md#battery-temperature) |
@@ -415,7 +416,8 @@ refusing to say so.
 | `0x1070` | `0x4f` | float voltage 4.39 V, exactly what the device tree asks for |
 | QG `0x48c0` | | 4.3149 V at **0 mA** into the pack |
 
-Two things were wrong, and both were in the gauge.
+**Three** things were wrong. Two were in the gauge; the third was in the
+charger, and it was the one that actually stopped the charge.
 
 **Termination is a state the charger passes through, not one it sits in.** Once
 it has terminated, the cell is by definition above the recharge threshold, so
@@ -445,6 +447,53 @@ too, which the status code alone cannot support saying.
 says about a rested cell, because nothing has re-anchored the table's top to the
 OCV this pack actually rests at once full. Learning that anchor is a separate
 change and wants a charge and a discharge measured against the oracle.
+
+#### And the charger really had stopped — a recharge that could never happen
+
+☠️ The two gauge bugs above were found first and made a tidy story: the charger
+had done its job and only the reporting was wrong. That story was tested by
+letting the pack fall, and it did not survive. At 4.24 V of a 4.39 V float,
+with 500 mA available at the input, the charger delivered **exactly zero**
+current. Pulling the cell to 4.14 V under a full-core load did not start it
+either — which is what rules out the inhibit threshold, since no inhibit
+setting on this part reaches that far down.
+
+`CHGR_CFG2` is where a recharge is configured, and **its lower bits are not the
+same on the two PMIC generations**. SMB2 has `AUTO_RECHG` at BIT(2) and
+`EN_ANALOG_DROP_IN_VBATT` at BIT(1). SMB5 replaces both with a single two-bit
+field naming what a recharge is decided *by*:
+
+| `CHGR_CFG2[2:1]` | meaning on SMB5 |
+|---|---|
+| `00` | nothing restarts a finished charge |
+| `10` (`VBAT_BASED_RECHG_BIT`) | the battery voltage |
+| `11` (`SOC_BASED_RECHG_BIT`) | the state of charge |
+
+`qcom_smbx`'s pmi632 init sequence was derived from the SMB2 one and carried
+the same value across, so the field came out `00` — the one setting under which
+a terminated charge is never restarted for as long as the cable stays in. State
+of charge would not have worked anyway: the gauge that reports one to the PMIC
+is Qualcomm's own `qpnp-qg`, which is not in mainline.
+
+Fixed in `r45`: select the battery voltage, take three comparator samples
+before acting as the vendor driver does whenever it makes that choice, and
+program `CHGR_ADC_RECHARGE_THRESHOLD_MSB/LSB` from a new
+`qcom,auto-recharge-microvolt` on the battery node — in the same 194637 nV
+units the gauge reports, because it is the same ADC. This phone declares
+4.30 V, which is what its own downstream node asks for.
+
+☠️ **A wrong register was written first, and the phone said so.** The same fix
+was attempted one revision earlier against `FG_UPDATE_CFG_2_SEL`, which is what
+the SMB2 half of the driver uses for this — but that is `CHGR + 0x7D`, and on
+SMB5 the same offset is `CHARGE_RCHG_SOC_THRESHOLD_CFG_REG`, a threshold rather
+than a selector. The bit read back exactly as programmed and nothing else
+changed, which is the signature of writing a register that is not the one you
+meant. The disproven commit is kept at
+`archive/wip-7.1.3-charger-smb2-recharge-register` with the verdict in its tag
+message. **What settled it was the vendor's own `smb5-reg.h`**, which is on
+disk with the rest of the downstream 4.9 tree; an earlier search for it had
+been abandoned when a `find` across the big disk timed out, and a timed-out
+search is not a negative result.
 
 The gauge starts from the open-circuit voltage the PMIC measured with nothing
 drawing, rather than from a live sample taken while the machine is busy booting.
@@ -501,6 +550,7 @@ fp3_battery: battery {
 	constant-charge-voltage-max-microvolt = <4390000>;
 
 	qcom,batt-id-ohm = <10000>;
+	qcom,auto-recharge-microvolt = <4300000>;
 	qcom,jeita-hard-thresholds = <0x5675 0x1987>;   /* cold 0 degC, hot 55 degC */
 	qcom,jeita-soft-thresholds = <0x44ff 0x2204>;   /* cool 15 degC, warm 45 degC */
 	qcom,jeita-soft-fcc-microamp = <600000 1000000>;
@@ -517,6 +567,13 @@ the hardware to do that, rather than trusting the device tree to match.
 
 An optional `qcom,batt-id-tolerance-percent` overrides the default 15, which is
 the window the vendor's `batt-id-range-pct` uses on this board.
+
+`qcom,auto-recharge-microvolt` is the voltage a finished charge is started again
+at. It sits on the battery because how far a cell may relax before it is worth
+cycling is a property of that cell, not of the board — and it is optional, since
+a comparator left at its power-on threshold still works and a made-up threshold
+for an unknown pack does not improve on it. SMB5 only: on SMB2 the same decision
+is configured elsewhere.
 
 **On the charger** — what belongs to the board rather than to the pack:
 
