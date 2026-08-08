@@ -1,0 +1,48 @@
+From: Lajosházi, László Gergely <lajoshazilg@gmail.com>
+Subject: [PATCH] pipeline: simple: carry the input stride request on multiplanar devices
+
+The software ISP asks the capture device for an input stride its GPU can
+import, by putting the number in planes[0].bpl of the V4L2DeviceFormat it
+passes to setFormat(). On a single-planar device that arrives:
+trySetFormatSingleplane() copies planes[0].bpl into the ioctl argument
+unconditionally.
+
+On a multiplanar one it does not. trySetFormatMultiplane() takes the plane
+count from V4L2DeviceFormat::planesCount, which defaults to zero and is never
+set here, and then copies bytesperline only for planes below that count - so
+the request leaves as num_planes = 0 with no bytesperline at all, and the
+driver answers with whatever the format needs. libcamera then reports the
+driver as having ignored a request it was never shown.
+
+Measured on a Fairphone 3, whose camss capture nodes are multiplanar: the
+kernel grants a requested bytesperline of 2560 through a direct VIDIOC_TRY_FMT
+and returns 2400 to libcamera for the same node in the same second. With the
+plane count set, the two agree and the input buffer imports instead of being
+uploaded a frame at a time.
+
+Set it alongside the stride, and only where a stride is actually being asked
+for, so nothing changes for a debayer that has no preference. One plane is the
+right count here for the same reason the request is: the software ISP's input
+is single-plane raw Bayer.
+
+Signed-off-by: Lajosházi, László Gergely <lajoshazilg@gmail.com>
+Assisted-by: Claude:claude-opus-5
+---
+ src/libcamera/pipeline/simple/simple.cpp | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+--- a/src/libcamera/pipeline/simple/simple.cpp
++++ b/src/libcamera/pipeline/simple/simple.cpp
+@@ -1545,7 +1545,11 @@ int SimplePipelineHandler::configure(Camera *camera, CameraConfiguration *c)
+ 	uint32_t requested_bpl = 0;
+ 	if (data->swIsp_)
+ 		requested_bpl = data->swIsp_->preferredInputStride(videoFormat.toPixelFormat(), pipeConfig->captureSize);
+-	captureFormat.planes[0].bpl = requested_bpl;
++	if (requested_bpl) {
++		/* A multiplanar device copies bytesperline only for the planes it is told about. */
++		captureFormat.planesCount = 1;
++		captureFormat.planes[0].bpl = requested_bpl;
++	}
+
+ 	ret = video->setFormat(&captureFormat);
+ 	if (ret)
