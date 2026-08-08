@@ -241,7 +241,7 @@ new file mode 100644
 index 0000000..cd6cb8c
 --- /dev/null
 +++ b/src/ipa/simple/algorithms/af.cpp
-@@ -0,0 +1,725 @@
+@@ -0,0 +1,740 @@
 +/* SPDX-License-Identifier: LGPL-2.1-or-later */
 +/*
 + * Copyright (C) 2026, Lajosházi, László Gergely
@@ -709,16 +709,21 @@ index 0000000..cd6cb8c
 +	drift_ = std::abs(drift);
 +	scores_.pop_back();
 +
-+	if (std::abs(drift) < 1e-9)
-+		return;
++	if (std::abs(drift) >= 1e-9) {
++		LOG(IPASoftAf, Debug)
++			<< "Pass drifted by " << drift << " over " << last
++			<< " samples; correcting";
 +
-+	LOG(IPASoftAf, Debug)
-+		<< "Pass drifted by " << drift << " over " << last
-+		<< " samples; correcting";
++		for (unsigned int i = 0; i < scores_.size(); i++)
++			scores_[i] -= drift * static_cast<double>(i) / last;
++	}
 +
-+	for (unsigned int i = 0; i < scores_.size(); i++)
-+		scores_[i] -= drift * static_cast<double>(i) / last;
-+
++	/*
++	 * The sample just dropped was a candidate while the pass was running
++	 * and may be the one that scored best, so the best has to be found
++	 * again over what is left - whether or not there was drift to correct.
++	 * A stale index points at a sample that no longer exists.
++	 */
 +	bestScore_ = 0.0;
 +	worstScore_ = 0.0;
 +	bestIndex_ = 0;
@@ -744,14 +749,24 @@ index 0000000..cd6cb8c
 + */
 +int32_t Af::interpolatePeak() const
 +{
++	/*
++	 * What bounds this is scores_, not positions_: planScan() appends a
++	 * revisit of the first position and detrend() drops its sample, so
++	 * scores_ is one entry shorter. Taking the bound from positions_ let
++	 * the neighbour lookups below read one past the end of scores_, which
++	 * is what a peak at the last swept position did every time.
++	 */
++	if (scores_.empty())
++		return bestPosition_;
++
 +	unsigned int i = bestIndex_;
 +
-+	if (positions_.size() < 3)
++	if (scores_.size() < 3)
 +		return positions_[i];
 +
 +	if (i == 0)
 +		i++;
-+	else if (i + 1 >= positions_.size())
++	else if (i + 1 >= scores_.size())
 +		i--;
 +
 +	double abx = positions_[i - 1] - positions_[i];
